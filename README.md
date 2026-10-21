@@ -5,7 +5,7 @@
 
 **English** · [Türkçe](#türkçe)
 
-A small desktop-style tool that turns your photos and short quotes into dark, cinematic, Instagram-ready images (4:5, 1080×1350). Built for quote / motivation pages: it renders the text, film grain, vignette and a brand signature, and schedules a publish time for every image.
+A small desktop-style tool that turns your photos and short quotes into dark, cinematic, Instagram-ready images (4:5, 1080×1350). Built for quote / motivation pages: it renders the text, film grain, vignette and a brand signature, and exports numbered JPEGs.
 
 ## Features
 - **Live preview** – what you see is exactly what gets exported.
@@ -46,7 +46,7 @@ npm run build        # then copy webui/dist to ./web
 
 # Türkçe
 
-Fotoğraflarını ve kısa sözlerini koyu, sinematik, Instagram'a hazır görsellere (4:5, 1080×1350) dönüştüren küçük bir masaüstü aracı. Söz/motivasyon sayfaları için yapıldı: yazıyı, film greni, vinyet ve marka imzasını ekler, her görsel için paylaşım zamanı planlar.
+Fotoğraflarını ve kısa sözlerini koyu, sinematik, Instagram'a hazır görsellere (4:5, 1080×1350) dönüştüren küçük bir masaüstü aracı. Söz/motivasyon sayfaları için yapıldı: yazıyı, film greni, vinyet ve marka imzasını ekler ve numaralı JPEG'ler olarak dışa aktarır.
 
 ## Özellikler
 - **Canlı önizleme** – ekranda gördüğün, dışa aktarılanla birebir aynıdır.
