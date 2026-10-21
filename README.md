@@ -17,14 +17,14 @@ A small desktop-style tool that turns your photos and short quotes into dark, ci
 - **Modern UI** – React + Tailwind + shadcn/ui, served by a tiny local Python server (nothing leaves your computer).
 
 ## Download (Windows)
-Get `Grainline-windows.zip` from the [Releases](../../releases) page, unzip it and run `Grainline.exe`. No Python needed.
+Get `Grainline-Setup.exe` from the [Releases](../../releases) page and run it (no admin rights needed). Then open **Grainline** from the Start menu or desktop. No Python needed.
 
 ## Run from source
 ```bash
 pip install -r requirements.txt
 python server.py
 ```
-The exe is built automatically by GitHub Actions (`.github/workflows/release.yml`) whenever a `v*` tag is pushed.
+The installer is built automatically by GitHub Actions (`.github/workflows/release.yml`) whenever a `v*` tag is pushed.
 
 ## Branding
 All branding (name, handle, colours, fonts, sizes) lives in `brand.json`.
@@ -58,14 +58,14 @@ Fotoğraflarını ve kısa sözlerini koyu, sinematik, Instagram'a hazır görse
 - **Modern arayüz** – React + Tailwind + shadcn/ui; küçük bir yerel Python sunucusuyla çalışır (hiçbir şey bilgisayarından çıkmaz).
 
 ## İndir (Windows)
-[Releases](../../releases) sayfasından `Grainline-windows.zip` dosyasını indir, zip'i aç ve `Grainline.exe` dosyasını çalıştır. Python gerekmez.
+[Releases](../../releases) sayfasından `Grainline-Setup.exe` dosyasını indirip çalıştır (yönetici izni gerekmez). Kurulumdan sonra Başlat menüsü ya da masaüstünden **Grainline**'ı aç. Python gerekmez.
 
 ## Kaynaktan çalıştırma
 ```bash
 pip install -r requirements.txt
 python server.py
 ```
-Exe, `v*` etiketi pushlandığında GitHub Actions (`.github/workflows/release.yml`) tarafından otomatik derlenir.
+Kurulum dosyası, `v*` etiketi pushlandığında GitHub Actions (`.github/workflows/release.yml`) tarafından otomatik derlenir.
 
 ## Marka ayarları
 İsim, kullanıcı adı, renkler, fontlar ve boyutlar `brand.json` içindedir.

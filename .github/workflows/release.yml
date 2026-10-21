@@ -26,11 +26,16 @@ jobs:
           Copy-Item web dist/Grainline/web -Recurse
           Copy-Item fonts dist/Grainline/fonts -Recurse
           Copy-Item brand.json dist/Grainline/brand.json
-          Compress-Archive -Path dist/Grainline -DestinationPath Grainline-windows.zip
+      - name: Build installer
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          $ver = if ("${{ github.ref }}".StartsWith("refs/tags/v")) { "${{ github.ref_name }}".TrimStart("v") } else { "1.0.${{ github.run_number }}" }
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$ver" installer/grainline.iss
       - name: Publish release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = if ("${{ github.ref }}".StartsWith("refs/tags/")) { "${{ github.ref_name }}" } else { "v1.0.${{ github.run_number }}" }
-          gh release create $tag Grainline-windows.zip --target "${{ github.sha }}" --title "Grainline $tag" --notes "Windows: unzip, run Grainline.exe. / Windows: zip'i aç, Grainline.exe dosyasını çalıştır."
+          gh release create $tag installer_out/Grainline-Setup.exe --target "${{ github.sha }}" --title "Grainline $tag" --notes "Windows: run Grainline-Setup.exe, then open Grainline from the Start menu or desktop. / Windows: Grainline-Setup.exe dosyasını çalıştır, kurulumdan sonra Başlat menüsü ya da masaüstünden Grainline'ı aç."
