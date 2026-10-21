@@ -13,17 +13,15 @@ A small desktop-style tool that turns your photos and short quotes into dark, ci
 - **Batch export** – numbered JPEGs and a `manifest.json` with a publish date/time for each image.
 - **Modern UI** – React + Tailwind + shadcn/ui, served by a tiny local Python server (nothing leaves your computer).
 
-## Quick start (Windows)
-1. Install Python 3.10+.
-2. Download the fonts (free, SIL OFL) into `fonts/` – see `fonts/README.txt`.
-3. Double-click `NegansVision.bat` (installs `Pillow` and `numpy` on first run).
+## Download (Windows)
+Get `NegansVision-windows.zip` from the [Releases](../../releases) page, unzip it and run `NegansVision.exe`. No Python needed.
 
-Or manually:
+## Run from source
 ```bash
 pip install -r requirements.txt
 python server.py
 ```
-Make a standalone `.exe` with `exe_olustur.bat` (PyInstaller). Output appears in `dist/NegansVision/`.
+The exe is built automatically by GitHub Actions (`.github/workflows/release.yml`) whenever a `v*` tag is pushed.
 
 ## Branding
 All branding (name, handle, colours, fonts, sizes, schedule time) lives in `brand.json`.
@@ -56,17 +54,15 @@ Fotoğraflarını ve kısa sözlerini koyu, sinematik, Instagram'a hazır görse
 - **Toplu üretim** – numaralı JPEG'ler ve her görsel için paylaşım tarihi/saati içeren `manifest.json`.
 - **Modern arayüz** – React + Tailwind + shadcn/ui; küçük bir yerel Python sunucusuyla çalışır (hiçbir şey bilgisayarından çıkmaz).
 
-## Hızlı başlangıç (Windows)
-1. Python 3.10+ kur.
-2. Fontları (ücretsiz, SIL OFL) `fonts/` klasörüne indir – bkz. `fonts/README.txt`.
-3. `NegansVision.bat` dosyasına çift tıkla (ilk açılışta `Pillow` ve `numpy` kurulur).
+## İndir (Windows)
+[Releases](../../releases) sayfasından `NegansVision-windows.zip` dosyasını indir, zip'i aç ve `NegansVision.exe` dosyasını çalıştır. Python gerekmez.
 
-Ya da elle:
+## Kaynaktan çalıştırma
 ```bash
 pip install -r requirements.txt
 python server.py
 ```
-`exe_olustur.bat` ile tek başına çalışan `.exe` üretebilirsin (PyInstaller). Çıktı `dist/NegansVision/` içinde olur.
+Exe, `v*` etiketi pushlandığında GitHub Actions (`.github/workflows/release.yml`) tarafından otomatik derlenir.
 
 ## Marka ayarları
 İsim, kullanıcı adı, renkler, fontlar, boyutlar ve paylaşım saati `brand.json` içindedir.
@@ -84,4 +80,4 @@ npm run build        # sonra webui/dist içeriğini ./web klasörüne kopyala
 - `webui/` – React kaynağı; `web/` – sunucunun servis ettiği derlenmiş arayüz.
 
 ## License / Lisans
-MIT (code). Fonts are under their own SIL OFL licences. / Kod MIT, fontlar kendi SIL OFL lisanslarına tabidir.
+MIT (code). Bundled fonts (Cormorant Garamond, Montserrat) are under SIL OFL; licences are in `fonts/`. / Kod MIT, dahil edilen fontlar (Cormorant Garamond, Montserrat) SIL OFL lisanslıdır, lisanslar `fonts/` içindedir.

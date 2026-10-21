@@ -10,4 +10,3 @@ oturum*.json
 build/
 dist/
 *.spec
-fonts/*/

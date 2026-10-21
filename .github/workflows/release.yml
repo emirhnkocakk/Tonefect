@@ -1,0 +1,41 @@
+name: Build Windows exe
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt pyinstaller
+      - name: Build exe
+        run: python -m PyInstaller --noconfirm --clean --onedir --noconsole --name NegansVision server.py
+      - name: Add web, fonts and config next to the exe
+        shell: pwsh
+        run: |
+          Copy-Item web dist/NegansVision/web -Recurse
+          Copy-Item fonts dist/NegansVision/fonts -Recurse
+          Copy-Item brand.json dist/NegansVision/brand.json
+          Compress-Archive -Path dist/NegansVision -DestinationPath NegansVision-windows.zip
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" NegansVision-windows.zip --title "Basic Photo Editor ${{ github.ref_name }}" --notes "Windows: unzip, run NegansVision.exe. / Windows: zip'i aç, NegansVision.exe dosyasını çalıştır."
+      - uses: actions/upload-artifact@v4
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        with:
+          name: NegansVision-windows
+          path: NegansVision-windows.zip
