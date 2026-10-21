@@ -1,0 +1,71 @@
+{
+  "brand": {
+    "name": "NEGANS VISION",
+    "handle": "@negansvision",
+    "signature_text": "NEGANS VISION"
+  },
+  "canvas": {
+    "width": 1080,
+    "height": 1350
+  },
+  "colors": {
+    "text": "#EDEAE4",
+    "accent": "#B89B5E"
+  },
+  "fonts": {
+    "_note": "Fontlar fonts/ altindaki alt klasorlerde.",
+    "quiet": "fonts/Cormorant_Garamond/static/CormorantGaramond-Medium.ttf",
+    "hard": "fonts/Montserrat/static/Montserrat-Bold.ttf",
+    "signature": "fonts/Montserrat/static/Montserrat-Bold.ttf"
+  },
+  "image": {
+    "saturation": 0.0,
+    "contrast": 1.12,
+    "brightness": 0.82,
+    "vignette": 0.55,
+    "grain": 0.035,
+    "color_saturation": 0.85
+  },
+  "layout": {
+    "margin_ratio": 0.08
+  },
+  "tones": {
+    "quiet": {
+      "uppercase": false,
+      "position": "lower_third",
+      "align": "left",
+      "font_size_start": 78,
+      "font_size_min": 44,
+      "line_spacing": 1.22,
+      "tracking_em": 0.0,
+      "max_lines": 5,
+      "max_height_ratio": 0.3,
+      "accent_line": true
+    },
+    "hard": {
+      "uppercase": true,
+      "position": "center",
+      "align": "center",
+      "font_size_start": 104,
+      "font_size_min": 52,
+      "line_spacing": 1.12,
+      "tracking_em": 0.04,
+      "max_lines": 5,
+      "max_height_ratio": 0.42,
+      "accent_line": false
+    }
+  },
+  "signature": {
+    "size": 16,
+    "tracking_em": 0.24,
+    "opacity": 0.7,
+    "bottom_margin_ratio": 0.045
+  },
+  "limits": {
+    "max_words": 15
+  },
+  "schedule": {
+    "time": "20:00",
+    "timezone": "Europe/Istanbul"
+  }
+}

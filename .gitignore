@@ -1,0 +1,13 @@
+node_modules/
+webui/dist/
+__pycache__/
+.venv/
+.webprofile/
+uploads/
+output/
+input/
+oturum*.json
+build/
+dist/
+*.spec
+fonts/*/
