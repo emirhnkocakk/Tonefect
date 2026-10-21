@@ -19,18 +19,18 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt pyinstaller
       - name: Build exe
-        run: python -m PyInstaller --noconfirm --clean --onedir --noconsole --name NegansVision server.py
+        run: python -m PyInstaller --noconfirm --clean --onedir --noconsole --name Grainline --icon assets/logo.ico server.py
       - name: Add web, fonts and config next to the exe
         shell: pwsh
         run: |
-          Copy-Item web dist/NegansVision/web -Recurse
-          Copy-Item fonts dist/NegansVision/fonts -Recurse
-          Copy-Item brand.json dist/NegansVision/brand.json
-          Compress-Archive -Path dist/NegansVision -DestinationPath NegansVision-windows.zip
+          Copy-Item web dist/Grainline/web -Recurse
+          Copy-Item fonts dist/Grainline/fonts -Recurse
+          Copy-Item brand.json dist/Grainline/brand.json
+          Compress-Archive -Path dist/Grainline -DestinationPath Grainline-windows.zip
       - name: Publish release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = if ("${{ github.ref }}".StartsWith("refs/tags/")) { "${{ github.ref_name }}" } else { "v1.0.${{ github.run_number }}" }
-          gh release create $tag NegansVision-windows.zip --target "${{ github.sha }}" --title "Basic Photo Editor $tag" --notes "Windows: unzip, run NegansVision.exe. / Windows: zip'i aç, NegansVision.exe dosyasını çalıştır."
+          gh release create $tag Grainline-windows.zip --target "${{ github.sha }}" --title "Grainline $tag" --notes "Windows: unzip, run Grainline.exe. / Windows: zip'i aç, Grainline.exe dosyasını çalıştır."

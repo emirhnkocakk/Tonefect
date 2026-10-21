@@ -1,4 +1,7 @@
-# Basic Photo Editor
+<p align="center"><img src="assets/logo.svg" width="112" alt="Grainline logo"></p>
+
+<h1 align="center">Grainline</h1>
+<p align="center"><i>basic-photo-editor</i></p>
 
 **English** · [Türkçe](#türkçe)
 
@@ -7,14 +10,14 @@ A small desktop-style tool that turns your photos and short quotes into dark, ci
 ## Features
 - **Live preview** – what you see is exactly what gets exported.
 - **Per-word styling** – colour, weight (Light → ExtraBold), italic and size for any word, via a floating format bar.
-- **Drag to place** – move the whole text block or single words; snaps to the centre, arrow keys for fine tuning.
+- **Drag to place** – move the whole text block or single words. Canva-style smart guides snap to the centre, margins and to the centres/edges of neighbouring words; arrow keys for fine tuning.
 - **Photo effects** – black & white on/off, film grain and vignette sliders, apply to all photos.
 - **Two tones** – *quiet* (serif, lower third) and *hard* (bold, centred, uppercase), plus an accent word.
-- **Batch export** – numbered JPEGs and a `manifest.json` with a publish date/time for each image.
+- **Batch export** – numbered JPEGs plus a `manifest.json` describing each image.
 - **Modern UI** – React + Tailwind + shadcn/ui, served by a tiny local Python server (nothing leaves your computer).
 
 ## Download (Windows)
-Get `NegansVision-windows.zip` from the [Releases](../../releases) page, unzip it and run `NegansVision.exe`. No Python needed.
+Get `Grainline-windows.zip` from the [Releases](../../releases) page, unzip it and run `Grainline.exe`. No Python needed.
 
 ## Run from source
 ```bash
@@ -24,7 +27,7 @@ python server.py
 The exe is built automatically by GitHub Actions (`.github/workflows/release.yml`) whenever a `v*` tag is pushed.
 
 ## Branding
-All branding (name, handle, colours, fonts, sizes, schedule time) lives in `brand.json`.
+All branding (name, handle, colours, fonts, sizes) lives in `brand.json`.
 
 ## Developing the UI
 ```bash
@@ -48,14 +51,14 @@ Fotoğraflarını ve kısa sözlerini koyu, sinematik, Instagram'a hazır görse
 ## Özellikler
 - **Canlı önizleme** – ekranda gördüğün, dışa aktarılanla birebir aynıdır.
 - **Kelime bazlı stil** – her kelimeye renk, kalınlık (İnce → Ekstra), italik ve boyut; yüzen biçim çubuğuyla.
-- **Sürükleyerek yerleştirme** – tüm metni ya da tek tek kelimeleri taşı; ortaya mıknatıs gibi yapışır, ok tuşlarıyla ince ayar.
+- **Sürükleyerek yerleştirme** – tüm metni ya da tek tek kelimeleri taşı. Canva tarzı akıllı kılavuz çizgileri ortaya, kenar boşluklarına ve yan kelimelerin merkez/kenarlarına yapışır; ok tuşlarıyla ince ayar.
 - **Fotoğraf efektleri** – siyah-beyaz aç/kapat, grain ve vinyet kaydırıcıları, hepsine uygula.
 - **İki ton** – *sessiz* (serif, alt üçte bir) ve *sert* (kalın, ortalı, büyük harf) ve vurgu kelimesi.
-- **Toplu üretim** – numaralı JPEG'ler ve her görsel için paylaşım tarihi/saati içeren `manifest.json`.
+- **Toplu üretim** – numaralı JPEG'ler ve her görseli anlatan `manifest.json`.
 - **Modern arayüz** – React + Tailwind + shadcn/ui; küçük bir yerel Python sunucusuyla çalışır (hiçbir şey bilgisayarından çıkmaz).
 
 ## İndir (Windows)
-[Releases](../../releases) sayfasından `NegansVision-windows.zip` dosyasını indir, zip'i aç ve `NegansVision.exe` dosyasını çalıştır. Python gerekmez.
+[Releases](../../releases) sayfasından `Grainline-windows.zip` dosyasını indir, zip'i aç ve `Grainline.exe` dosyasını çalıştır. Python gerekmez.
 
 ## Kaynaktan çalıştırma
 ```bash
@@ -65,7 +68,7 @@ python server.py
 Exe, `v*` etiketi pushlandığında GitHub Actions (`.github/workflows/release.yml`) tarafından otomatik derlenir.
 
 ## Marka ayarları
-İsim, kullanıcı adı, renkler, fontlar, boyutlar ve paylaşım saati `brand.json` içindedir.
+İsim, kullanıcı adı, renkler, fontlar ve boyutlar `brand.json` içindedir.
 
 ## Arayüzü geliştirmek
 ```bash

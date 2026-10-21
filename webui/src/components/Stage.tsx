@@ -3,7 +3,6 @@ import { ImagePlus, Loader2, Move, RotateCcw, Type } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { StyleBar } from "@/components/StyleBar"
-import { SNAP } from "@/lib/constants"
 import { useFit, usePreview } from "@/lib/hooks"
 import { commonStyle, words } from "@/lib/text"
 import { cn } from "@/lib/utils"
@@ -29,14 +28,18 @@ type Drag = {
   sy: number
   startBlock: [number, number]
   startOffs: Record<number, [number, number]>
-  cx: number
-  cy: number
+  ref: Rect
+  others: Rect[]
   moved: boolean
   shift: boolean
   rect: DOMRect
 }
 
 type Rect = [number, number, number, number]
+type Guide = { x1: number; y1: number; x2: number; y2: number }
+
+const THRESH = 8
+const MARGIN = 0.08
 
 export function Stage({ item, cfg, mode, setMode, selected, setSelected, update, applyStyle, resetPosition, pickFiles }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null)
@@ -48,7 +51,7 @@ export function Stage({ item, cfg, mode, setMode, selected, setSelected, update,
   const { preview, busy, error } = usePreview(item, pw)
 
   const [hover, setHover] = useState<"block" | number | null>(null)
-  const [guides, setGuides] = useState<{ v?: boolean; h?: boolean }>({})
+  const [guides, setGuides] = useState<Guide[]>([])
   const [dragging, setDragging] = useState(false)
 
   const W = cfg.canvas.w
@@ -97,6 +100,45 @@ export function Stage({ item, cfg, mode, setMode, selected, setSelected, update,
     return !!bb && gx >= bb[0] - 16 && gx <= bb[2] + 16 && gy >= bb[1] - 16 && gy <= bb[3] + 16
   }
 
+  // Canva tarzı hizalama: hareket eden kutunun sol/orta/sağ ve üst/orta/alt çizgileri
+  // başka kelimelerin ve tuvalin çizgilerine yaklaşınca yapışır, çizgi gösterilir.
+  const snap = (ref: Rect, others: Rect[], dx: number, dy: number) => {
+    const mv: Rect = [ref[0] + dx, ref[1] + dy, ref[2] + dx, ref[3] + dy]
+    type Cand = { pos: number; a0: number; a1: number }
+    const xs: Cand[] = [W * MARGIN, W / 2, W * (1 - MARGIN)].map((pos) => ({ pos, a0: 0, a1: H }))
+    const ys: Cand[] = [{ pos: H / 2, a0: 0, a1: W }]
+    for (const o of others) {
+      for (const pos of [o[0], (o[0] + o[2]) / 2, o[2]]) xs.push({ pos, a0: o[1], a1: o[3] })
+      for (const pos of [o[1], (o[1] + o[3]) / 2, o[3]]) ys.push({ pos, a0: o[0], a1: o[2] })
+    }
+    const best = (vals: number[], cands: Cand[]) => {
+      let r: { delta: number; pos: number } | null = null
+      for (const v of vals) for (const c of cands) {
+        const dd = c.pos - v
+        if (Math.abs(dd) <= THRESH && (!r || Math.abs(dd) < Math.abs(r.delta))) r = { delta: dd, pos: c.pos }
+      }
+      return r
+    }
+    const bx = best([mv[0], (mv[0] + mv[2]) / 2, mv[2]], xs)
+    const by = best([mv[1], (mv[1] + mv[3]) / 2, mv[3]], ys)
+    if (bx) dx += bx.delta
+    if (by) dy += by.delta
+    const fin: Rect = [ref[0] + dx, ref[1] + dy, ref[2] + dx, ref[3] + dy]
+    const guides: Guide[] = []
+    const near = (a: number, b: number) => Math.abs(a - b) < 0.75
+    if (bx) {
+      let y0 = fin[1], y1 = fin[3]
+      for (const c of xs) if (near(c.pos, bx.pos)) { y0 = Math.min(y0, c.a0); y1 = Math.max(y1, c.a1) }
+      guides.push({ x1: bx.pos, y1: y0, x2: bx.pos, y2: y1 })
+    }
+    if (by) {
+      let x0 = fin[0], x1 = fin[2]
+      for (const c of ys) if (near(c.pos, by.pos)) { x0 = Math.min(x0, c.a0); x1 = Math.max(x1, c.a1) }
+      guides.push({ x1: x0, y1: by.pos, x2: x1, y2: by.pos })
+    }
+    return { dx, dy, guides }
+  }
+
   const onPointerDown = (e: React.PointerEvent) => {
     if (e.button !== 0 || !item) return
     stageRef.current?.focus()
@@ -123,7 +165,7 @@ export function Stage({ item, cfg, mode, setMode, selected, setSelected, update,
     if (!ref) return
     dragRef.current = {
       target, clickWord: w, sx: e.clientX, sy: e.clientY, startBlock: [...item.block] as [number, number],
-      startOffs, cx: (ref[0] + ref[2]) / 2, cy: (ref[1] + ref[3]) / 2, moved: false, shift: e.shiftKey || e.ctrlKey || e.metaKey, rect,
+      startOffs, ref, others: target === "block" ? [] : boxes.filter((b) => !target.includes(b.idx)).map((b) => b.box as Rect), moved: false, shift: e.shiftKey || e.ctrlKey || e.metaKey, rect,
     }
     ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
   }
@@ -144,18 +186,10 @@ export function Stage({ item, cfg, mode, setMode, selected, setSelected, update,
     }
     let dx = ((e.clientX - d.sx) / d.rect.width) * W
     let dy = ((e.clientY - d.sy) / d.rect.height) * H
-    const g: { v?: boolean; h?: boolean } = {}
-    const cx = d.cx + dx
-    const cy = d.cy + dy
-    if (Math.abs(cx - W / 2) < SNAP) {
-      dx += W / 2 - cx
-      g.v = true
-    }
-    if (Math.abs(cy - H / 2) < SNAP) {
-      dy += H / 2 - cy
-      g.h = true
-    }
-    setGuides(g)
+    const snapped = snap(d.ref, d.others, dx, dy)
+    dx = snapped.dx
+    dy = snapped.dy
+    setGuides(snapped.guides)
     const t = d.target
     update((it) =>
       t === "block"
@@ -175,7 +209,7 @@ export function Stage({ item, cfg, mode, setMode, selected, setSelected, update,
   const onPointerUp = () => {
     const d = dragRef.current
     dragRef.current = null
-    setGuides({})
+    setGuides([])
     setDragging(false)
     if (d && !d.moved) {
       if (d.clickWord == null) setSelected([])
@@ -319,8 +353,17 @@ export function Stage({ item, cfg, mode, setMode, selected, setSelected, update,
                     />
                   ) : null
                 })()}
-              {guides.v && <div className="pointer-events-none absolute inset-y-0 left-1/2 w-px bg-primary/70" />}
-              {guides.h && <div className="pointer-events-none absolute inset-x-0 top-1/2 h-px bg-primary/70" />}
+              {guides.map((g, i) => (
+                <div
+                  key={i}
+                  className="pointer-events-none absolute bg-[#ff3d9a] shadow-[0_0_0_0.5px_rgba(255,61,154,0.35)]"
+                  style={
+                    g.x1 === g.x2
+                      ? { left: g.x1 * sx - 0.5, top: g.y1 * sy, width: 1, height: (g.y2 - g.y1) * sy }
+                      : { left: g.x1 * sx, top: g.y1 * sy - 0.5, width: (g.x2 - g.x1) * sx, height: 1 }
+                  }
+                />
+              ))}
             </div>
 
             {busy && (

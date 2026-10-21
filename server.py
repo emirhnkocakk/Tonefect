@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""NEGANS VISION - yerel sunucu ve uygulama penceresi.
+"""Grainline - yerel sunucu ve uygulama penceresi.
 
 Arayuz (web/ klasoru, React + shadcn/ui) bu sunucuyla konusur; gorsel uretim render.py motorunu kullanir.
 Calistir:  python server.py        (NegansVision.bat bunu yapar)
@@ -18,7 +18,6 @@ import time
 import traceback
 import uuid
 import webbrowser
-from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
@@ -180,9 +179,6 @@ def run_job(jid, d):
             out_dir = HERE / out_dir
         out_dir.mkdir(parents=True, exist_ok=True)
         job["outDir"] = str(out_dir)
-        hh, mm = (int(x) for x in str(d.get("time", "20:00")).split(":"))
-        start = datetime.strptime(d.get("start") or datetime.now().strftime("%Y-%m-%d"), "%Y-%m-%d")
-        start = start.replace(hour=hh, minute=mm)
         manifest = []
         for i, raw in enumerate(d["items"], start=1):
             try:
@@ -195,10 +191,8 @@ def run_job(jid, d):
                 manifest.append({
                     "image": raw.get("name", path.name), "text": item["text"], "tone": item["tone"],
                     "accent_word": item["accent"],
-                    "publish_at": (start + timedelta(days=i - 1)).strftime("%Y-%m-%d %H:%M"),
                     "caption": "", "output": str(out)})
-                job["files"].append({"name": out.name, "text": item["text"],
-                                     "publish_at": manifest[-1]["publish_at"]})
+                job["files"].append({"name": out.name, "text": item["text"]})
             except Exception as e:
                 job["errors"].append(f"{raw.get('name', '?')}: {e}")
             job["done"] = i
@@ -296,7 +290,7 @@ class Handler(BaseHTTPRequestHandler):
                 missing = [r for r in ("quiet", "hard", "signature") if engine.font_was_fallback(CFG, r)]
                 return self._json({
                     "canvas": {"w": W, "h": H}, "tones": TONES, "brand": CFG["brand"],
-                    "limits": CFG.get("limits", {}), "schedule": CFG.get("schedule", {}),
+                    "limits": CFG.get("limits", {}),
                     "fontWarn": missing, "outDir": str(DEFAULT_OUT)})
             if c == "/api/session" and m == "GET":
                 return self._json(load_session())
@@ -399,7 +393,7 @@ def main():
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     srv.daemon_threads = True
     url = f"http://127.0.0.1:{PORT}/"
-    print(f"NEGANS VISION çalışıyor: {url}")
+    print(f"Grainline çalışıyor: {url}")
     print("Kapatmak için uygulamadaki güç düğmesine bas ya da bu pencereyi kapat.")
     if "--no-window" not in sys.argv:
         threading.Timer(0.6, open_window, args=(url,)).start()

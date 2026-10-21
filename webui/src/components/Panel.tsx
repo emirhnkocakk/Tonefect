@@ -8,7 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { TONE_INFO } from "@/lib/constants"
-import { addDays, words } from "@/lib/text"
+import { words } from "@/lib/text"
 import { cn } from "@/lib/utils"
 import { api } from "@/lib/api"
 import type { Config, Fx, Item, Settings } from "@/types"
@@ -36,7 +36,7 @@ export function Panel({ item, items, cfg, selected, setSelected, setText, patch,
         <TabsList className="mx-4 mt-4 grid grid-cols-3">
           <TabsTrigger value="text">Metin</TabsTrigger>
           <TabsTrigger value="fx">Efekt</TabsTrigger>
-          <TabsTrigger value="publish">Yayın</TabsTrigger>
+          <TabsTrigger value="publish">Çıktı</TabsTrigger>
         </TabsList>
 
         <TabsContent value="text" className="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 pb-4">
@@ -153,16 +153,6 @@ export function Panel({ item, items, cfg, selected, setSelected, setText, patch,
         </TabsContent>
 
         <TabsContent value="publish" className="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 pb-4">
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-2">
-              <Label>İlk gün</Label>
-              <Input type="date" value={settings.start} onChange={(e) => setSettings({ ...settings, start: e.target.value })} />
-            </div>
-            <div className="space-y-2">
-              <Label>Saat</Label>
-              <Input type="time" value={settings.time} onChange={(e) => setSettings({ ...settings, time: e.target.value })} />
-            </div>
-          </div>
           <div className="space-y-2">
             <Label>Çıktı klasörü</Label>
             <div className="flex gap-2">
@@ -170,18 +160,6 @@ export function Panel({ item, items, cfg, selected, setSelected, setText, patch,
               <Button variant="secondary" size="icon-sm" aria-label="Klasörü aç" onClick={() => api.openFolder(settings.outDir).catch(() => {})}>
                 <FolderOpen className="h-4 w-4" />
               </Button>
-            </div>
-          </div>
-          <div className="space-y-2">
-            <Label>Paylaşım planı (İstanbul saati)</Label>
-            <div className="divide-y rounded-lg border text-xs">
-              {items.length === 0 && <p className="p-3 text-muted-foreground">Henüz fotoğraf yok.</p>}
-              {items.map((it, i) => (
-                <div key={it.id} className="flex items-center justify-between gap-2 px-3 py-2">
-                  <span className="truncate text-muted-foreground">{String(i + 1).padStart(2, "0")} · {it.text || "Metin yok"}</span>
-                  <span className="shrink-0 font-medium text-primary">{addDays(settings.start, i)} {settings.time}</span>
-                </div>
-              ))}
             </div>
           </div>
         </TabsContent>

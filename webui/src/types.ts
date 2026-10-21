@@ -20,7 +20,6 @@ export type Config = {
   tones: string[]
   brand: { name: string; handle: string; signature_text: string }
   limits: { max_words?: number }
-  schedule: { time?: string }
   fontWarn: string[]
   outDir: string
 }
@@ -40,10 +39,10 @@ export type PreviewData = {
 export type Job = {
   total: number
   done: number
-  files: { name: string; text: string; publish_at: string }[]
+  files: { name: string; text: string }[]
   errors: string[]
   finished: boolean
   outDir: string
 }
 
-export type Settings = { start: string; time: string; outDir: string }
+export type Settings = { outDir: string }

@@ -63,9 +63,5 @@
   },
   "limits": {
     "max_words": 15
-  },
-  "schedule": {
-    "time": "20:00",
-    "timezone": "Europe/Istanbul"
   }
 }

@@ -23,10 +23,7 @@ export function GenerateDialog({ open, onClose, job, jobId }: Props) {
         {job && job.files.length > 0 && jobId && (
           <div className="grid max-h-[46vh] grid-cols-4 gap-2 overflow-y-auto pr-1">
             {job.files.map((f) => (
-              <div key={f.name} className="space-y-1">
-                <img src={outputUrl(jobId, f.name)} alt="" className="aspect-[4/5] w-full rounded-md object-cover" loading="lazy" />
-                <p className="text-[10px] text-muted-foreground">{f.publish_at}</p>
-              </div>
+              <img key={f.name} src={outputUrl(jobId, f.name)} alt="" className="aspect-[4/5] w-full rounded-md object-cover" loading="lazy" />
             ))}
           </div>
         )}

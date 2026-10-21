@@ -8,7 +8,7 @@ import { Stage } from "@/components/Stage"
 import { Panel } from "@/components/Panel"
 import { GenerateDialog } from "@/components/GenerateDialog"
 import { api } from "@/lib/api"
-import { mergeStyle, naturalSort, remap, todayPlus, words } from "@/lib/text"
+import { mergeStyle, naturalSort, remap, words } from "@/lib/text"
 import type { Config, Item, Job, Mode, Settings, Style } from "@/types"
 
 const IMG = /\.(jpe?g|png|webp|bmp)$/i
@@ -19,7 +19,7 @@ export default function App() {
   const [currentId, setCurrentId] = useState<string | null>(null)
   const [selected, setSelected] = useState<number[]>([])
   const [mode, setMode] = useState<Mode>("block")
-  const [settings, setSettings] = useState<Settings>({ start: todayPlus(1), time: "20:00", outDir: "output" })
+  const [settings, setSettings] = useState<Settings>({ outDir: "output" })
   const [uploading, setUploading] = useState(false)
   const [loaded, setLoaded] = useState(false)
   const [job, setJob] = useState<Job | null>(null)
@@ -35,7 +35,7 @@ export default function App() {
         const [c, s] = await Promise.all([api.config(), api.session()])
         setCfg(c)
         const st = s.settings || {}
-        setSettings({ start: st.start || todayPlus(1), time: st.time || c.schedule.time || "20:00", outDir: st.outDir || c.outDir || "output" })
+        setSettings({ outDir: st.outDir || c.outDir || "output" })
         const its: Item[] = (s.items || []).map(normItem)
         setItems(its)
         setCurrentId(s.currentId && its.some((i) => i.id === s.currentId) ? s.currentId : its[0]?.id ?? null)
@@ -159,7 +159,7 @@ export default function App() {
   if (bye)
     return (
       <div className="grid h-full place-items-center text-muted-foreground">
-        <p className="text-sm">NEGANS VISION kapatıldı. Bu pencereyi kapatabilirsin.</p>
+        <p className="text-sm">Grainline kapatıldı. Bu pencereyi kapatabilirsin.</p>
       </div>
     )
   if (!cfg)
@@ -180,9 +180,9 @@ export default function App() {
         }}
       >
         <header className="flex h-12 shrink-0 items-center justify-between border-b px-4">
-          <div className="flex items-baseline gap-2">
-            <span className="text-sm font-semibold tracking-[0.2em] text-primary">{cfg.brand.name}</span>
-            <span className="text-xs text-muted-foreground">{cfg.brand.handle}</span>
+          <div className="flex items-center gap-2.5">
+            <img src="/logo.svg" alt="" className="h-7 w-7" />
+            <span className="text-sm font-semibold tracking-[0.22em] text-foreground">GRAINLINE</span>
           </div>
           <div className="flex items-center gap-2">
             <Button onClick={generate} disabled={!items.length} className="h-8 gap-1.5">
