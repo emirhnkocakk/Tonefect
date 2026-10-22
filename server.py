@@ -40,6 +40,7 @@ UPLOADS = HERE / "uploads"
 THUMBS = UPLOADS / ".thumbs"
 SESSION = HERE / "oturum_web.json"
 PREFS = HERE / "ayarlar.json"
+PENDING = Path(tempfile.gettempdir()) / "grainline_update_pending.json"
 DEFAULT_OUT = HERE / "output"
 
 CFG = json.loads((HERE / "brand.json").read_text(encoding="utf-8"))
@@ -209,6 +210,18 @@ def read_version():
 VERSION = read_version()
 
 
+def update_failure():
+    """Önceki güncelleme denemesi sürümü yükseltmediyse bir kez bildirir."""
+    try:
+        p = json.loads(PENDING.read_text(encoding="utf-8"))
+        PENDING.unlink()
+    except Exception:
+        return None
+    if vtuple(VERSION) >= vtuple(p.get("target", "0")):
+        return None
+    return p
+
+
 def vtuple(v):
     nums = re.findall(r"\d+", str(v))
     return tuple(int(n) for n in nums[:3]) if nums else (0,)
@@ -264,9 +277,11 @@ def run_update():
         if UPDATE["total"] and dest.stat().st_size != UPDATE["total"]:
             raise RuntimeError("İndirme eksik kaldı, tekrar dene.")
         UPDATE["state"] = "installing"
-        subprocess.Popen([str(dest), "/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS"],
-                         creationflags=0x00000008 | 0x00000200, close_fds=True)
-        time.sleep(0.8)
+        log = Path(tempfile.gettempdir()) / "grainline_update.log"
+        PENDING.write_text(json.dumps({"target": info["latest"], "log": str(log)}), encoding="utf-8")
+        # ShellExecute ile başlat: kurulum bizim işlem ağacımızdan ve kapanışımızdan bağımsız çalışır.
+        os.startfile(str(dest), "open", f'/SILENT /NORESTART /CLOSEAPPLICATIONS /LOG="{log}"')
+        time.sleep(2)
         os._exit(0)
     except Exception as e:
         UPDATE.update(state="error", error=str(e))
@@ -392,7 +407,7 @@ class Handler(BaseHTTPRequestHandler):
                 missing = [r for r in ("quiet", "hard", "signature") if engine.font_was_fallback(CFG, r)]
                 return self._json({
                     "canvas": {"w": W, "h": H}, "tones": TONES, "brand": CFG["brand"],
-                    "limits": CFG.get("limits", {}), "version": VERSION,
+                    "limits": CFG.get("limits", {}), "version": VERSION, "updateFailed": update_failure(),
                     "fontWarn": missing, "outDir": str(DEFAULT_OUT)})
             if c == "/api/signature" and m == "PUT":
                 return self._json({"signature": save_signature(json.loads(self._body()).get("text"))})

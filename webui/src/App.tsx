@@ -46,6 +46,7 @@ export default function App() {
         const its: Item[] = (s.items || []).map(normItem)
         setItems(its)
         setCurrentId(s.currentId && its.some((i) => i.id === s.currentId) ? s.currentId : its[0]?.id ?? null)
+        c.updateFailed && toast.error(`Güncelleme v${c.updateFailed.target} kurulamadı. Kurulum kaydı: ${c.updateFailed.log}`, { duration: 20000 })
         c.fontWarn?.length && toast.warning("Font bulunamadı: " + c.fontWarn.join(", "))
       } catch (e: any) {
         toast.error("Sunucuya bağlanılamadı: " + e.message)

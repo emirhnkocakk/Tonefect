@@ -10,7 +10,6 @@ AppPublisher=emirhnkocakk
 DefaultDirName={autopf}\Grainline
 DefaultGroupName=Grainline
 PrivilegesRequired=lowest
-PrivilegesRequiredOverridesAllowed=dialog
 OutputDir=..\installer_out
 OutputBaseFilename=Grainline-Setup
 SetupIconFile=..\assets\logo.ico
