@@ -10,6 +10,7 @@ import json
 import mimetypes
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -503,6 +504,8 @@ def open_window(url):
 
 def main():
     global PORT
+    # eski sürümlerden kalan ayrı tarayıcı profili artık kullanılmıyor
+    shutil.rmtree(HERE / ".webprofile", ignore_errors=True)
     PORT = free_port(int(os.environ.get("NV_PORT", 8765)))
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     srv.daemon_threads = True

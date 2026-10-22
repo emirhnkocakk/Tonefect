@@ -38,6 +38,9 @@ Name: "{autodesktop}\Grainline"; Filename: "{app}\Grainline.exe"; Tasks: desktop
 [Run]
 Filename: "{app}\Grainline.exe"; Description: "{cm:LaunchProgram,Grainline}"; Flags: nowait postinstall
 
+[InstallDelete]
+Type: filesandordirs; Name: "{app}\.webprofile"
+
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\.webprofile"
 Type: filesandordirs; Name: "{app}\uploads"
