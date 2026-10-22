@@ -21,6 +21,7 @@ export type Config = {
   brand: { name: string; handle: string; signature_text: string }
   limits: { max_words?: number }
   version: string
+  quitOnClose: boolean
   updateFailed?: { target: string; log: string } | null
   fontWarn: string[]
   outDir: string

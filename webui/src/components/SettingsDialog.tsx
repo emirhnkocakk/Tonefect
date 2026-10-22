@@ -22,6 +22,8 @@ type Props = {
   defaults: Settings
   signature: string
   onSignature: (s: string) => void
+  quitOnClose: boolean
+  onQuitOnClose: (v: boolean) => void
   version: string
   update: UpdateInfo | null
   onUpdate: (u: UpdateInfo) => void
@@ -39,7 +41,7 @@ function Row({ title, hint, children }: { title: string; hint?: string; children
   )
 }
 
-export function SettingsDialog({ open, onClose, cfg, settings, setSettings, defaults, signature, onSignature, version, update, onUpdate }: Props) {
+export function SettingsDialog({ open, onClose, cfg, settings, setSettings, defaults, signature, onSignature, quitOnClose, onQuitOnClose, version, update, onUpdate }: Props) {
   const [sig, setSig] = useState(signature)
   const [checking, setChecking] = useState(false)
   const [msg, setMsg] = useState("")
@@ -134,7 +136,13 @@ export function SettingsDialog({ open, onClose, cfg, settings, setSettings, defa
         <Separator />
 
         <section className="space-y-4">
-          <h3 className="text-xs font-semibold tracking-wider text-muted-foreground">DÜZENLEME</h3>
+          <h3 className="text-xs font-semibold tracking-wider text-muted-foreground">UYGULAMA</h3>
+          <Row
+            title="Pencereyi kapatınca tamamen kapat"
+            hint={quitOnClose ? "Pencere kapanınca Grainline arka planda da çalışmaz" : "Arka planda çalışmaya devam eder; yeniden açınca anında açılır"}
+          >
+            <Switch checked={quitOnClose} onCheckedChange={onQuitOnClose} />
+          </Row>
           <Row title="Akıllı kılavuz çizgileri" hint="Sürüklerken merkez ve komşu kelimelere hizalar, yapıştırır">
             <Switch checked={settings.guides} onCheckedChange={(v) => setSettings({ ...settings, guides: v })} />
           </Row>

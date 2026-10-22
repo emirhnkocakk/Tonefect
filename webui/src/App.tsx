@@ -31,6 +31,7 @@ export default function App() {
   const [bye, setBye] = useState(false)
   const [cog, setCog] = useState(false)
   const [signature, setSignature] = useState("")
+  const [quitOnClose, setQuitOnClose] = useState(true)
   const [upd, setUpd] = useState<UpdateInfo | null>(null)
   const [updOpen, setUpdOpen] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -43,6 +44,7 @@ export default function App() {
         const st = s.settings || {}
         setSettings({ ...DEFAULTS, ...st, fx: { ...DEFAULTS.fx, ...(st.fx || {}) }, outDir: st.outDir || c.outDir || "output" })
         setSignature(c.brand.signature_text)
+        setQuitOnClose(c.quitOnClose !== false)
         const its: Item[] = (s.items || []).map(normItem)
         setItems(its)
         setCurrentId(s.currentId && its.some((i) => i.id === s.currentId) ? s.currentId : its[0]?.id ?? null)
@@ -58,6 +60,20 @@ export default function App() {
       }).catch(() => {})
     })()
   }, [])
+
+  // Sunucuya "pencere açık" bilgisi: pencere kapanınca uygulama (ayar açıksa) tamamen kapanır
+  useEffect(() => {
+    if (!loaded) return
+    const beat = () => api.heartbeat().catch(() => {})
+    beat()
+    const t = setInterval(beat, 2000)
+    const bye = () => { api.closing().catch(() => {}) }
+    window.addEventListener("pagehide", bye)
+    return () => {
+      clearInterval(t)
+      window.removeEventListener("pagehide", bye)
+    }
+  }, [loaded])
 
   // oturumu otomatik kaydet
   useEffect(() => {
@@ -227,7 +243,7 @@ export default function App() {
         </div>
         <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => { addFiles([...(e.target.files || [])]); e.target.value = "" }} />
         <GenerateDialog open={dlg} onClose={() => setDlg(false)} job={job} jobId={jobId} />
-        <SettingsDialog open={cog} onClose={() => setCog(false)} cfg={cfg} settings={settings} setSettings={setSettings} defaults={DEFAULTS} signature={signature} onSignature={setSignature} version={cfg.version} update={upd} onUpdate={(u) => { setUpd(u); if (u.newer) { setCog(false); setUpdOpen(true) } }} />
+        <SettingsDialog open={cog} onClose={() => setCog(false)} cfg={cfg} settings={settings} setSettings={setSettings} defaults={DEFAULTS} signature={signature} onSignature={setSignature} quitOnClose={quitOnClose} onQuitOnClose={(v) => { setQuitOnClose(v); api.setPrefs({ quitOnClose: v }).catch((e) => toast.error(e.message)) }} version={cfg.version} update={upd} onUpdate={(u) => { setUpd(u); if (u.newer) { setCog(false); setUpdOpen(true) } }} />
         <UpdateDialog open={updOpen} onClose={() => setUpdOpen(false)} info={upd} />
         <Toaster theme="dark" position="bottom-center" />
       </div>

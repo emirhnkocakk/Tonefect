@@ -32,6 +32,9 @@ export const api = {
   updateCheck: (force = false) => fetch("/api/update/check" + (force ? "?force=1" : "")).then((r) => j<UpdateInfo>(r)),
   updateInstall: () => fetch("/api/update/install", json("POST", {})).then((r) => j(r)),
   updateStatus: () => fetch("/api/update/status").then((r) => j<UpdateStatus>(r)),
+  heartbeat: () => fetch("/api/heartbeat", json("POST", {})).then((r) => j(r)),
+  closing: () => fetch("/api/closing", { ...json("POST", {}), keepalive: true }).then((r) => j(r)),
+  setPrefs: (p: { quitOnClose: boolean }) => fetch("/api/prefs", json("PUT", p)).then((r) => j(r)),
   quit: () => fetch("/api/quit", json("POST", {})).then((r) => j(r)),
 }
 

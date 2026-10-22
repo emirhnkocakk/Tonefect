@@ -1,7 +1,8 @@
 ## What's new / Yenilikler
 
-- 🔧 **More reliable updater:** the installer is now launched independently of the app, always installs per-user, and if an update ever fails Grainline tells you on next start and points to the install log.
-  / **Daha güvenilir güncelleme:** Kurulum artık uygulamadan bağımsız başlatılıyor, her zaman kullanıcı bazlı kuruluyor; güncelleme başarısız olursa Grainline bir sonraki açılışta bunu söyler ve kurulum kaydının yerini gösterir.
-
-⚠️ If you are on v1.0.5–v1.0.7 and the in-app update did not work, install this version once manually with `Grainline-Setup.exe`.
-/ v1.0.5–v1.0.7 kullanıyorsan ve uygulama içi güncelleme çalışmadıysa, bu sürümü bir kez `Grainline-Setup.exe` ile elle kur.
+- 🚪 **Closing the window now fully quits Grainline** – no leftover process in Task Manager. A new setting (Settings → Application) lets you keep it running in the background instead for instant re-open.
+  / **Pencereyi kapatınca Grainline tamamen kapanır** – Görev Yöneticisi'nde arta kalan işlem yok. Yeni ayar (Ayarlar → Uygulama) ile istersen arka planda çalışmaya devam etmesini seçebilirsin; tekrar açınca anında açılır.
+- Launching Grainline twice reuses the running instance instead of starting a second copy.
+  / Grainline'ı ikinci kez açınca yeni kopya başlatmaz, çalışanı açar.
+- Fixed a rare request glitch in the local server.
+  / Yerel sunucudaki nadir bir istek hatası düzeltildi.

@@ -53,19 +53,34 @@ LOCK = threading.Lock()
 CROP, BASE, JOBS = {}, {}, {}
 
 
-def load_prefs():
+STATE = {"quit_on_close": True, "last_beat": 0.0, "closing_at": 0.0, "seen": False}
+
+
+def read_prefs():
     try:
-        sig = str(json.loads(PREFS.read_text(encoding="utf-8")).get("signature", "")).strip()
+        return json.loads(PREFS.read_text(encoding="utf-8"))
     except Exception:
-        return
+        return {}
+
+
+def write_prefs(**kw):
+    d = read_prefs()
+    d.update(kw)
+    PREFS.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
+
+
+def load_prefs():
+    d = read_prefs()
+    sig = str(d.get("signature", "")).strip()
     if sig:
         CFG["brand"]["signature_text"] = sig[:40]
+    STATE["quit_on_close"] = bool(d.get("quitOnClose", True))
 
 
 def save_signature(text):
     text = (text or "").strip()[:40] or "GRAINLINE"
     CFG["brand"]["signature_text"] = text
-    PREFS.write_text(json.dumps({"signature": text}, ensure_ascii=False), encoding="utf-8")
+    write_prefs(signature=text)
     return text
 
 
@@ -368,8 +383,11 @@ class Handler(BaseHTTPRequestHandler):
         self._json({"error": msg}, status)
 
     def _body(self):
-        n = int(self.headers.get("Content-Length") or 0)
-        return self.rfile.read(n) if n else b""
+        # Gövde her zaman tam okunur (keep-alive bağlantıda artık bayt kalırsa sonraki istek bozulur)
+        if not hasattr(self, "_cached_body"):
+            n = int(self.headers.get("Content-Length") or 0)
+            self._cached_body = self.rfile.read(n) if n else b""
+        return self._cached_body
 
     def _file(self, path, cache=False):
         data = Path(path).read_bytes()
@@ -395,6 +413,9 @@ class Handler(BaseHTTPRequestHandler):
     do_DELETE = do_POST
 
     def route(self):
+        self.__dict__.pop("_cached_body", None)
+        if self.command not in ("GET", "HEAD"):
+            self._body()
         if not self._allowed():
             return self._err(403, "izin yok")
         url = urlparse(self.path)
@@ -407,8 +428,20 @@ class Handler(BaseHTTPRequestHandler):
                 missing = [r for r in ("quiet", "hard", "signature") if engine.font_was_fallback(CFG, r)]
                 return self._json({
                     "canvas": {"w": W, "h": H}, "tones": TONES, "brand": CFG["brand"],
-                    "limits": CFG.get("limits", {}), "version": VERSION, "updateFailed": update_failure(),
+                    "limits": CFG.get("limits", {}), "version": VERSION, "quitOnClose": STATE["quit_on_close"], "updateFailed": update_failure(),
                     "fontWarn": missing, "outDir": str(DEFAULT_OUT)})
+            if c == "/api/ping" and m == "GET":
+                return self._json({"app": "grainline", "version": VERSION})
+            if c == "/api/heartbeat" and m == "POST":
+                STATE.update(last_beat=time.time(), closing_at=0.0, seen=True)
+                return self._json({"ok": True})
+            if c == "/api/closing" and m == "POST":
+                STATE["closing_at"] = time.time()
+                return self._json({"ok": True})
+            if c == "/api/prefs" and m == "PUT":
+                STATE["quit_on_close"] = bool(json.loads(self._body()).get("quitOnClose", True))
+                write_prefs(quitOnClose=STATE["quit_on_close"])
+                return self._json({"ok": True})
             if c == "/api/signature" and m == "PUT":
                 return self._json({"signature": save_signature(json.loads(self._body()).get("text"))})
             if c == "/api/session" and m == "GET":
@@ -510,15 +543,49 @@ def open_window(url):
                 # Ayrı profil (--user-data-dir) KULLANMA: yeni profil, Edge'in "Daha sonra / Özelleştir"
                 # karşılama ekranını tetikler ve Özelleştir edge ayarlarını açar.
                 subprocess.Popen([str(exe), f"--app={url}", "--window-size=1380,900",
-                                  "--no-default-browser-check", "--disable-session-crashed-bubble"])
+                                  "--no-default-browser-check", "--disable-session-crashed-bubble",
+                                  "--disable-background-mode"])
                 return
             except OSError:
                 continue
     webbrowser.open(url)
 
 
+def busy():
+    return UPDATE["state"] in ("downloading", "installing") or any(not j.get("finished") for j in JOBS.values())
+
+
+def watchdog():
+    """Pencere kapanınca (ve ayar açıksa) uygulamayı tamamen kapatır."""
+    while True:
+        time.sleep(1)
+        if not (STATE["quit_on_close"] and STATE["seen"]) or busy():
+            continue
+        now = time.time()
+        gone = (STATE["closing_at"] and now - STATE["closing_at"] > 5) or now - STATE["last_beat"] > 120
+        if gone:
+            os._exit(0)
+
+
+def running_instance():
+    """Zaten çalışan bir Grainline varsa adresini döndürür."""
+    for p in range(8765, 8795):
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{p}/api/ping", timeout=0.4) as r:
+                if json.loads(r.read().decode("utf-8")).get("app") == "grainline":
+                    return f"http://127.0.0.1:{p}/"
+        except Exception:
+            continue
+    return None
+
+
 def main():
     global PORT
+    if "--no-window" not in sys.argv and "NV_PORT" not in os.environ:
+        url = running_instance()
+        if url:  # ikinci kopya açma, mevcut olana pencere aç
+            open_window(url)
+            return
     # eski sürümlerden kalan ayrı tarayıcı profili artık kullanılmıyor
     shutil.rmtree(HERE / ".webprofile", ignore_errors=True)
     PORT = free_port(int(os.environ.get("NV_PORT", 8765)))
@@ -529,6 +596,7 @@ def main():
     print("Kapatmak için uygulamadaki güç düğmesine bas ya da bu pencereyi kapat.")
     if "--no-window" not in sys.argv:
         threading.Timer(0.6, open_window, args=(url,)).start()
+    threading.Thread(target=watchdog, daemon=True).start()
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
