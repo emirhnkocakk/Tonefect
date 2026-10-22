@@ -19,6 +19,8 @@ type Props = {
   applyStyle: (patch: Partial<Style>) => void
   resetPosition: () => void
   pickFiles: () => void
+  guides: boolean
+  rev: string
 }
 
 type Drag = {
@@ -41,14 +43,14 @@ type Guide = { x1: number; y1: number; x2: number; y2: number }
 const THRESH = 8
 const MARGIN = 0.08
 
-export function Stage({ item, cfg, mode, setMode, selected, setSelected, update, applyStyle, resetPosition, pickFiles }: Props) {
+export function Stage({ item, cfg, mode, setMode, selected, setSelected, update, applyStyle, resetPosition, pickFiles, guides: guidesOn, rev }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const stageRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef<Drag | null>(null)
   const size = useFit(wrapRef, cfg.canvas.w / cfg.canvas.h, 20)
   const dpr = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1
   const pw = Math.min(1080, Math.max(480, Math.ceil((size.w * dpr) / 80) * 80))
-  const { preview, busy, error } = usePreview(item, pw)
+  const { preview, busy, error } = usePreview(item, pw, rev)
 
   const [hover, setHover] = useState<"block" | number | null>(null)
   const [guides, setGuides] = useState<Guide[]>([])
@@ -186,10 +188,12 @@ export function Stage({ item, cfg, mode, setMode, selected, setSelected, update,
     }
     let dx = ((e.clientX - d.sx) / d.rect.width) * W
     let dy = ((e.clientY - d.sy) / d.rect.height) * H
-    const snapped = snap(d.ref, d.others, dx, dy)
-    dx = snapped.dx
-    dy = snapped.dy
-    setGuides(snapped.guides)
+    if (guidesOn) {
+      const snapped = snap(d.ref, d.others, dx, dy)
+      dx = snapped.dx
+      dy = snapped.dy
+      setGuides(snapped.guides)
+    }
     const t = d.target
     update((it) =>
       t === "block"

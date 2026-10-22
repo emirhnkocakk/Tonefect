@@ -45,4 +45,9 @@ export type Job = {
   outDir: string
 }
 
-export type Settings = { outDir: string }
+export type Settings = {
+  outDir: string
+  tone: string
+  fx: Fx
+  guides: boolean
+}

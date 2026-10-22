@@ -3,7 +3,7 @@ import { api } from "@/lib/api"
 import type { Item, PreviewData } from "@/types"
 
 /** Sunucudan önizleme ister; hızlı değişimlerde sadece en son isteği gönderir (aynı anda tek istek). */
-export function usePreview(item: Item | undefined, width: number) {
+export function usePreview(item: Item | undefined, width: number, rev = "") {
   const [preview, setPreview] = useState<PreviewData | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -19,7 +19,7 @@ export function usePreview(item: Item | undefined, width: number) {
   }, [])
 
   const key = item
-    ? JSON.stringify([item.id, item.text, item.tone, item.accent, item.styles, item.block, item.offsets, item.fx, width])
+    ? JSON.stringify([item.id, item.text, item.tone, item.accent, item.styles, item.block, item.offsets, item.fx, width, rev])
     : ""
 
   async function pump() {

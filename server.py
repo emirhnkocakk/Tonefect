@@ -36,6 +36,7 @@ WEB = HERE / "web"
 UPLOADS = HERE / "uploads"
 THUMBS = UPLOADS / ".thumbs"
 SESSION = HERE / "oturum_web.json"
+PREFS = HERE / "ayarlar.json"
 DEFAULT_OUT = HERE / "output"
 
 CFG = json.loads((HERE / "brand.json").read_text(encoding="utf-8"))
@@ -46,6 +47,25 @@ WEIGHTS = set(engine.WEIGHT_ALIASES.keys())
 
 LOCK = threading.Lock()
 CROP, BASE, JOBS = {}, {}, {}
+
+
+def load_prefs():
+    try:
+        sig = str(json.loads(PREFS.read_text(encoding="utf-8")).get("signature", "")).strip()
+    except Exception:
+        return
+    if sig:
+        CFG["brand"]["signature_text"] = sig[:40]
+
+
+def save_signature(text):
+    text = (text or "").strip()[:40] or "GRAINLINE"
+    CFG["brand"]["signature_text"] = text
+    PREFS.write_text(json.dumps({"signature": text}, ensure_ascii=False), encoding="utf-8")
+    return text
+
+
+load_prefs()
 PORT = 8765
 
 
@@ -292,6 +312,8 @@ class Handler(BaseHTTPRequestHandler):
                     "canvas": {"w": W, "h": H}, "tones": TONES, "brand": CFG["brand"],
                     "limits": CFG.get("limits", {}),
                     "fontWarn": missing, "outDir": str(DEFAULT_OUT)})
+            if c == "/api/signature" and m == "PUT":
+                return self._json({"signature": save_signature(json.loads(self._body()).get("text"))})
             if c == "/api/session" and m == "GET":
                 return self._json(load_session())
             if c == "/api/session" and m == "PUT":
@@ -380,6 +402,8 @@ def open_window(url):
         if exe.is_file():
             try:
                 subprocess.Popen([str(exe), f"--app={url}", "--window-size=1380,900", "--no-first-run",
+                                  "--no-default-browser-check", "--disable-session-crashed-bubble",
+                                  "--disable-features=Translate,msEdgeSidebar,msEdgeSplitWindow",
                                   f"--user-data-dir={HERE / '.webprofile'}"])
                 return
             except OSError:

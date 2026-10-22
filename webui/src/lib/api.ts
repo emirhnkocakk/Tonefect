@@ -28,6 +28,7 @@ export const api = {
   generate: (body: unknown) => fetch("/api/generate", json("POST", body)).then((r) => j<{ job: string }>(r)),
   job: (id: string) => fetch("/api/job/" + id).then((r) => j<Job>(r)),
   openFolder: (path: string) => fetch("/api/open-folder", json("POST", { path })).then((r) => j(r)),
+  signature: (text: string) => fetch("/api/signature", json("PUT", { text })).then((r) => j<{ signature: string }>(r)),
   quit: () => fetch("/api/quit", json("POST", {})).then((r) => j(r)),
 }
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { Loader2, Power, Sparkles } from "lucide-react"
+import { Loader2, Power, Settings as Cog, Sparkles } from "lucide-react"
 import { Toaster, toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { TooltipProvider } from "@/components/ui/tooltip"
@@ -7,10 +7,12 @@ import { Sidebar } from "@/components/Sidebar"
 import { Stage } from "@/components/Stage"
 import { Panel } from "@/components/Panel"
 import { GenerateDialog } from "@/components/GenerateDialog"
+import { SettingsDialog } from "@/components/SettingsDialog"
 import { api } from "@/lib/api"
 import { mergeStyle, naturalSort, remap, words } from "@/lib/text"
 import type { Config, Item, Job, Mode, Settings, Style } from "@/types"
 
+const DEFAULTS: Settings = { outDir: "output", tone: "quiet", fx: { bw: true, grain: 1, vignette: 1 }, guides: true }
 const IMG = /\.(jpe?g|png|webp|bmp)$/i
 
 export default function App() {
@@ -19,15 +21,16 @@ export default function App() {
   const [currentId, setCurrentId] = useState<string | null>(null)
   const [selected, setSelected] = useState<number[]>([])
   const [mode, setMode] = useState<Mode>("block")
-  const [settings, setSettings] = useState<Settings>({ outDir: "output" })
+  const [settings, setSettings] = useState<Settings>(DEFAULTS)
   const [uploading, setUploading] = useState(false)
   const [loaded, setLoaded] = useState(false)
   const [job, setJob] = useState<Job | null>(null)
   const [jobId, setJobId] = useState<string | null>(null)
   const [dlg, setDlg] = useState(false)
   const [bye, setBye] = useState(false)
+  const [cog, setCog] = useState(false)
+  const [signature, setSignature] = useState("")
   const fileRef = useRef<HTMLInputElement>(null)
-  const defFx = useRef({ bw: true, grain: 1, vignette: 1 })
 
   useEffect(() => {
     ;(async () => {
@@ -35,7 +38,8 @@ export default function App() {
         const [c, s] = await Promise.all([api.config(), api.session()])
         setCfg(c)
         const st = s.settings || {}
-        setSettings({ outDir: st.outDir || c.outDir || "output" })
+        setSettings({ ...DEFAULTS, ...st, fx: { ...DEFAULTS.fx, ...(st.fx || {}) }, outDir: st.outDir || c.outDir || "output" })
+        setSignature(c.brand.signature_text)
         const its: Item[] = (s.items || []).map(normItem)
         setItems(its)
         setCurrentId(s.currentId && its.some((i) => i.id === s.currentId) ? s.currentId : its[0]?.id ?? null)
@@ -97,7 +101,7 @@ export default function App() {
     for (const f of list) {
       try {
         const r = await api.upload(f)
-        const it = newItem(r.id, r.name, defFx.current)
+        const it = newItem(r.id, r.name, settings.fx, settings.tone)
         setItems((a) => [...a, it])
         last = last ?? r.id
       } catch (e: any) {
@@ -136,7 +140,7 @@ export default function App() {
     setJob(null)
     setDlg(true)
     try {
-      const { job: id } = await api.generate({ items, ...settings })
+      const { job: id } = await api.generate({ items, outDir: settings.outDir })
       setJobId(id)
       for (;;) {
         const j = await api.job(id)
@@ -188,6 +192,9 @@ export default function App() {
             <Button onClick={generate} disabled={!items.length} className="h-8 gap-1.5">
               <Sparkles className="!size-4" /> Görselleri üret
             </Button>
+            <Button variant="ghost" size="icon-sm" aria-label="Ayarlar" onClick={() => setCog(true)}>
+              <Cog className="h-4 w-4" />
+            </Button>
             <Button variant="ghost" size="icon-sm" aria-label="Kapat" onClick={quit}>
               <Power className="h-4 w-4" />
             </Button>
@@ -198,22 +205,24 @@ export default function App() {
           <Stage
             item={item} cfg={cfg} mode={mode} setMode={setMode} selected={selected} setSelected={setSelected}
             update={update} applyStyle={applyStyle} resetPosition={resetPosition} pickFiles={() => fileRef.current?.click()}
+            guides={settings.guides} rev={signature}
           />
           <Panel
             item={item} items={items} cfg={cfg} selected={selected} setSelected={setSelected} setText={setText}
-            patch={(p, all) => (all && p.fx ? patchAllFx() : patch(p, all))} settings={settings} setSettings={setSettings}
+            patch={(p, all) => (all && p.fx ? patchAllFx() : patch(p, all))} 
           />
         </div>
         <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => { addFiles([...(e.target.files || [])]); e.target.value = "" }} />
         <GenerateDialog open={dlg} onClose={() => setDlg(false)} job={job} jobId={jobId} />
+        <SettingsDialog open={cog} onClose={() => setCog(false)} cfg={cfg} settings={settings} setSettings={setSettings} defaults={DEFAULTS} signature={signature} onSignature={setSignature} />
         <Toaster theme="dark" position="bottom-center" />
       </div>
     </TooltipProvider>
   )
 }
 
-function newItem(id: string, name: string, fx: Item["fx"]): Item {
-  return { id, name, text: "", tone: "quiet", accent: "", styles: [], block: [0, 0], offsets: {}, fx: { ...fx } }
+function newItem(id: string, name: string, fx: Item["fx"], tone = "quiet"): Item {
+  return { id, name, text: "", tone, accent: "", styles: [], block: [0, 0], offsets: {}, fx: { ...fx } }
 }
 
 function normItem(r: any): Item {

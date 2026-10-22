@@ -1,4 +1,3 @@
-import { FolderOpen } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -10,8 +9,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { TONE_INFO } from "@/lib/constants"
 import { words } from "@/lib/text"
 import { cn } from "@/lib/utils"
-import { api } from "@/lib/api"
-import type { Config, Fx, Item, Settings } from "@/types"
+import type { Config, Fx, Item } from "@/types"
 
 type Props = {
   item?: Item
@@ -21,11 +19,9 @@ type Props = {
   setSelected: (s: number[]) => void
   setText: (t: string) => void
   patch: (p: Partial<Item>, all?: boolean) => void
-  settings: Settings
-  setSettings: (s: Settings) => void
 }
 
-export function Panel({ item, items, cfg, selected, setSelected, setText, patch, settings, setSettings }: Props) {
+export function Panel({ item, items, cfg, selected, setSelected, setText, patch }: Props) {
   const ws = item ? words(item.text) : []
   const max = cfg.limits.max_words
   const setFx = (p: Partial<Fx>, all = false) => item && patch({ fx: { ...item.fx, ...p } }, all)
@@ -33,10 +29,9 @@ export function Panel({ item, items, cfg, selected, setSelected, setText, patch,
   return (
     <aside className="flex h-full w-[340px] shrink-0 flex-col border-l bg-card/40">
       <Tabs defaultValue="text" className="flex min-h-0 flex-1 flex-col">
-        <TabsList className="mx-4 mt-4 grid grid-cols-3">
+        <TabsList className="mx-4 mt-4 grid grid-cols-2">
           <TabsTrigger value="text">Metin</TabsTrigger>
           <TabsTrigger value="fx">Efekt</TabsTrigger>
-          <TabsTrigger value="publish">Çıktı</TabsTrigger>
         </TabsList>
 
         <TabsContent value="text" className="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 pb-4">
@@ -152,17 +147,6 @@ export function Panel({ item, items, cfg, selected, setSelected, setText, patch,
           )}
         </TabsContent>
 
-        <TabsContent value="publish" className="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 pb-4">
-          <div className="space-y-2">
-            <Label>Çıktı klasörü</Label>
-            <div className="flex gap-2">
-              <Input value={settings.outDir} onChange={(e) => setSettings({ ...settings, outDir: e.target.value })} />
-              <Button variant="secondary" size="icon-sm" aria-label="Klasörü aç" onClick={() => api.openFolder(settings.outDir).catch(() => {})}>
-                <FolderOpen className="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
-        </TabsContent>
       </Tabs>
     </aside>
   )

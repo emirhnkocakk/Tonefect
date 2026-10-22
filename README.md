@@ -11,6 +11,7 @@ A small desktop-style tool that turns your photos and short quotes into dark, ci
 - **Live preview** – what you see is exactly what gets exported.
 - **Per-word styling** – colour, weight (Light → ExtraBold), italic and size for any word, via a floating format bar.
 - **Drag to place** – move the whole text block or single words. Canva-style smart guides snap to the centre, margins and to the centres/edges of neighbouring words; arrow keys for fine tuning.
+- **Settings menu** – output folder, signature text, defaults for new photos, smart guides on/off.
 - **Photo effects** – black & white on/off, film grain and vignette sliders, apply to all photos.
 - **Two tones** – *quiet* (serif, lower third) and *hard* (bold, centred, uppercase), plus an accent word.
 - **Batch export** – numbered JPEGs plus a `manifest.json` describing each image.
@@ -52,6 +53,7 @@ Fotoğraflarını ve kısa sözlerini koyu, sinematik, Instagram'a hazır görse
 - **Canlı önizleme** – ekranda gördüğün, dışa aktarılanla birebir aynıdır.
 - **Kelime bazlı stil** – her kelimeye renk, kalınlık (İnce → Ekstra), italik ve boyut; yüzen biçim çubuğuyla.
 - **Sürükleyerek yerleştirme** – tüm metni ya da tek tek kelimeleri taşı. Canva tarzı akıllı kılavuz çizgileri ortaya, kenar boşluklarına ve yan kelimelerin merkez/kenarlarına yapışır; ok tuşlarıyla ince ayar.
+- **Ayarlar menüsü** – çıktı klasörü, imza yazısı, yeni fotoğraf varsayılanları, akıllı kılavuzları aç/kapat.
 - **Fotoğraf efektleri** – siyah-beyaz aç/kapat, grain ve vinyet kaydırıcıları, hepsine uygula.
 - **İki ton** – *sessiz* (serif, alt üçte bir) ve *sert* (kalın, ortalı, büyük harf) ve vurgu kelimesi.
 - **Toplu üretim** – numaralı JPEG'ler ve her görseli anlatan `manifest.json`.
