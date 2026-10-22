@@ -491,10 +491,10 @@ def open_window(url):
     for exe in cands:
         if exe.is_file():
             try:
-                subprocess.Popen([str(exe), f"--app={url}", "--window-size=1380,900", "--no-first-run",
-                                  "--no-default-browser-check", "--disable-session-crashed-bubble",
-                                  "--disable-features=Translate,msEdgeSidebar,msEdgeSplitWindow",
-                                  f"--user-data-dir={HERE / '.webprofile'}"])
+                # Ayrı profil (--user-data-dir) KULLANMA: yeni profil, Edge'in "Daha sonra / Özelleştir"
+                # karşılama ekranını tetikler ve Özelleştir edge ayarlarını açar.
+                subprocess.Popen([str(exe), f"--app={url}", "--window-size=1380,900",
+                                  "--no-default-browser-check", "--disable-session-crashed-bubble"])
                 return
             except OSError:
                 continue
