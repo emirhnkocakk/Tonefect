@@ -20,6 +20,7 @@ export type Config = {
   tones: string[]
   brand: { name: string; handle: string; signature_text: string }
   limits: { max_words?: number }
+  version: string
   fontWarn: string[]
   outDir: string
 }
@@ -51,3 +52,16 @@ export type Settings = {
   fx: Fx
   guides: boolean
 }
+
+export type UpdateInfo = {
+  current: string
+  latest: string
+  newer: boolean
+  notes: string
+  page: string
+  canInstall: boolean
+  size: number
+  error: string
+}
+
+export type UpdateStatus = { state: "idle" | "downloading" | "installing" | "error"; done: number; total: number; error: string }

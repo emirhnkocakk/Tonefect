@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { Loader2, Power, Settings as Cog, Sparkles } from "lucide-react"
+import { ArrowUpCircle, Loader2, Power, Settings as Cog, Sparkles } from "lucide-react"
 import { Toaster, toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { TooltipProvider } from "@/components/ui/tooltip"
@@ -7,10 +7,11 @@ import { Sidebar } from "@/components/Sidebar"
 import { Stage } from "@/components/Stage"
 import { Panel } from "@/components/Panel"
 import { GenerateDialog } from "@/components/GenerateDialog"
+import { UpdateDialog } from "@/components/UpdateDialog"
 import { SettingsDialog } from "@/components/SettingsDialog"
 import { api } from "@/lib/api"
 import { mergeStyle, naturalSort, remap, words } from "@/lib/text"
-import type { Config, Item, Job, Mode, Settings, Style } from "@/types"
+import type { Config, Item, Job, Mode, Settings, Style, UpdateInfo } from "@/types"
 
 const DEFAULTS: Settings = { outDir: "output", tone: "quiet", fx: { bw: true, grain: 1, vignette: 1 }, guides: true }
 const IMG = /\.(jpe?g|png|webp|bmp)$/i
@@ -30,6 +31,8 @@ export default function App() {
   const [bye, setBye] = useState(false)
   const [cog, setCog] = useState(false)
   const [signature, setSignature] = useState("")
+  const [upd, setUpd] = useState<UpdateInfo | null>(null)
+  const [updOpen, setUpdOpen] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -48,6 +51,10 @@ export default function App() {
         toast.error("Sunucuya bağlanılamadı: " + e.message)
       }
       setLoaded(true)
+      api.updateCheck().then((u) => {
+        setUpd(u)
+        if (u.newer) setUpdOpen(true)
+      }).catch(() => {})
     })()
   }, [])
 
@@ -189,6 +196,11 @@ export default function App() {
             <span className="text-sm font-semibold tracking-[0.22em] text-foreground">GRAINLINE</span>
           </div>
           <div className="flex items-center gap-2">
+            {upd?.newer && (
+              <Button variant="secondary" size="sm" className="h-8 gap-1.5 border border-primary/40 text-primary" onClick={() => setUpdOpen(true)}>
+                <ArrowUpCircle className="!size-4" /> Yeni sürüm v{upd.latest}
+              </Button>
+            )}
             <Button onClick={generate} disabled={!items.length} className="h-8 gap-1.5">
               <Sparkles className="!size-4" /> Görselleri üret
             </Button>
@@ -214,7 +226,8 @@ export default function App() {
         </div>
         <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => { addFiles([...(e.target.files || [])]); e.target.value = "" }} />
         <GenerateDialog open={dlg} onClose={() => setDlg(false)} job={job} jobId={jobId} />
-        <SettingsDialog open={cog} onClose={() => setCog(false)} cfg={cfg} settings={settings} setSettings={setSettings} defaults={DEFAULTS} signature={signature} onSignature={setSignature} />
+        <SettingsDialog open={cog} onClose={() => setCog(false)} cfg={cfg} settings={settings} setSettings={setSettings} defaults={DEFAULTS} signature={signature} onSignature={setSignature} version={cfg.version} update={upd} onUpdate={(u) => { setUpd(u); if (u.newer) { setCog(false); setUpdOpen(true) } }} />
+        <UpdateDialog open={updOpen} onClose={() => setUpdOpen(false)} info={upd} />
         <Toaster theme="dark" position="bottom-center" />
       </div>
     </TooltipProvider>

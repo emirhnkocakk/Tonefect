@@ -1,4 +1,4 @@
-import type { Config, Job } from "@/types"
+import type { Config, Job, UpdateInfo, UpdateStatus } from "@/types"
 
 const H = { "X-NV": "1" }
 
@@ -29,6 +29,9 @@ export const api = {
   job: (id: string) => fetch("/api/job/" + id).then((r) => j<Job>(r)),
   openFolder: (path: string) => fetch("/api/open-folder", json("POST", { path })).then((r) => j(r)),
   signature: (text: string) => fetch("/api/signature", json("PUT", { text })).then((r) => j<{ signature: string }>(r)),
+  updateCheck: (force = false) => fetch("/api/update/check" + (force ? "?force=1" : "")).then((r) => j<UpdateInfo>(r)),
+  updateInstall: () => fetch("/api/update/install", json("POST", {})).then((r) => j(r)),
+  updateStatus: () => fetch("/api/update/status").then((r) => j<UpdateStatus>(r)),
   quit: () => fetch("/api/quit", json("POST", {})).then((r) => j(r)),
 }
 

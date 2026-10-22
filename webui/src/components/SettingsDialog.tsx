@@ -11,7 +11,7 @@ import { Switch } from "@/components/ui/switch"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { api } from "@/lib/api"
 import { TONE_INFO } from "@/lib/constants"
-import type { Config, Settings } from "@/types"
+import type { Config, Settings, UpdateInfo } from "@/types"
 
 type Props = {
   open: boolean
@@ -22,6 +22,9 @@ type Props = {
   defaults: Settings
   signature: string
   onSignature: (s: string) => void
+  version: string
+  update: UpdateInfo | null
+  onUpdate: (u: UpdateInfo) => void
 }
 
 function Row({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
@@ -36,8 +39,10 @@ function Row({ title, hint, children }: { title: string; hint?: string; children
   )
 }
 
-export function SettingsDialog({ open, onClose, cfg, settings, setSettings, defaults, signature, onSignature }: Props) {
+export function SettingsDialog({ open, onClose, cfg, settings, setSettings, defaults, signature, onSignature, version, update, onUpdate }: Props) {
   const [sig, setSig] = useState(signature)
+  const [checking, setChecking] = useState(false)
+  const [msg, setMsg] = useState("")
   useEffect(() => setSig(signature), [signature, open])
 
   const saveSig = async () => {
@@ -52,6 +57,19 @@ export function SettingsDialog({ open, onClose, cfg, settings, setSettings, defa
     }
   }
   const fx = settings.fx
+  const check = async () => {
+    setChecking(true)
+    setMsg("")
+    try {
+      const u = await api.updateCheck(true)
+      onUpdate(u)
+      if (u.error) setMsg("Denetlenemedi: internet bağlantını kontrol et.")
+      else if (!u.newer) setMsg("Grainline güncel.")
+    } catch (e: any) {
+      setMsg(e.message)
+    }
+    setChecking(false)
+  }
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -120,6 +138,19 @@ export function SettingsDialog({ open, onClose, cfg, settings, setSettings, defa
           <Row title="Akıllı kılavuz çizgileri" hint="Sürüklerken merkez ve komşu kelimelere hizalar, yapıştırır">
             <Switch checked={settings.guides} onCheckedChange={(v) => setSettings({ ...settings, guides: v })} />
           </Row>
+        </section>
+
+        <Separator />
+
+        <section className="space-y-3">
+          <h3 className="text-xs font-semibold tracking-wider text-muted-foreground">HAKKINDA</h3>
+          <Row title="Grainline" hint={`Sürüm ${version === "dev" ? "geliştirme" : "v" + version}`}>
+            <Button variant="secondary" size="sm" onClick={check} disabled={checking || version === "dev"}>
+              {checking ? "Denetleniyor…" : "Güncellemeleri denetle"}
+            </Button>
+          </Row>
+          {msg && <p className="text-xs text-muted-foreground">{msg}</p>}
+          {update?.newer && <p className="text-xs text-primary">Yeni sürüm var: v{update.latest}</p>}
         </section>
 
         <div className="flex items-center justify-between pt-1">

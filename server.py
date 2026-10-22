@@ -16,6 +16,8 @@ import sys
 import threading
 import time
 import traceback
+import tempfile
+import urllib.request
 import uuid
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -190,6 +192,85 @@ def load_session():
     return data
 
 
+# ------------------------------------------------------------------ guncelleme
+REPO = "emirhnkocakk/basic-photo-editor"
+ASSET_PREFIX = f"https://github.com/{REPO}/releases/download/"
+UPDATE = {"checked": 0.0, "info": None, "state": "idle", "done": 0, "total": 0, "error": ""}
+
+
+def read_version():
+    try:
+        return (HERE / "VERSION").read_text(encoding="utf-8").strip() or "dev"
+    except Exception:
+        return "dev"
+
+
+VERSION = read_version()
+
+
+def vtuple(v):
+    nums = re.findall(r"\d+", str(v))
+    return tuple(int(n) for n in nums[:3]) if nums else (0,)
+
+
+def check_update(force=False):
+    if not force and UPDATE["info"] and time.time() - UPDATE["checked"] < 600:
+        return UPDATE["info"]
+    info = {"current": VERSION, "latest": VERSION, "newer": False, "notes": "", "page": "",
+            "canInstall": False, "size": 0, "error": ""}
+    try:
+        req = urllib.request.Request(
+            f"https://api.github.com/repos/{REPO}/releases/latest",
+            headers={"Accept": "application/vnd.github+json", "User-Agent": "Grainline"})
+        with urllib.request.urlopen(req, timeout=6) as r:
+            rel = json.loads(r.read().decode("utf-8"))
+        latest = str(rel.get("tag_name", "")).lstrip("v")
+        info.update(latest=latest, notes=rel.get("body") or "", page=rel.get("html_url") or "")
+        asset = next((a for a in rel.get("assets", []) if a.get("name", "").lower().endswith("-setup.exe")), None)
+        if asset and str(asset.get("browser_download_url", "")).startswith(ASSET_PREFIX):
+            info["_asset"] = asset["browser_download_url"]
+            info["size"] = asset.get("size", 0)
+        info["newer"] = VERSION != "dev" and vtuple(latest) > vtuple(VERSION)
+        info["canInstall"] = bool(info["newer"] and info.get("_asset") and sys.platform == "win32"
+                                  and getattr(sys, "frozen", False))
+    except Exception as e:
+        info["error"] = str(e)
+    UPDATE.update(checked=time.time(), info=info)
+    return info
+
+
+def public_info(info):
+    return {k: v for k, v in info.items() if not k.startswith("_")}
+
+
+def run_update():
+    try:
+        info = check_update(force=True)
+        url = info.get("_asset")
+        if not (info.get("canInstall") and url):
+            raise RuntimeError("Otomatik güncelleme yalnızca kurulu sürümde çalışır.")
+        dest = Path(tempfile.mkdtemp(prefix="grainline_")) / "Grainline-Setup.exe"
+        UPDATE.update(state="downloading", done=0, total=info.get("size", 0), error="")
+        req = urllib.request.Request(url, headers={"User-Agent": "Grainline"})
+        with urllib.request.urlopen(req, timeout=30) as r, open(dest, "wb") as f:
+            UPDATE["total"] = int(r.headers.get("Content-Length") or UPDATE["total"] or 0)
+            while True:
+                chunk = r.read(256 * 1024)
+                if not chunk:
+                    break
+                f.write(chunk)
+                UPDATE["done"] += len(chunk)
+        if UPDATE["total"] and dest.stat().st_size != UPDATE["total"]:
+            raise RuntimeError("İndirme eksik kaldı, tekrar dene.")
+        UPDATE["state"] = "installing"
+        subprocess.Popen([str(dest), "/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS"],
+                         creationflags=0x00000008 | 0x00000200, close_fds=True)
+        time.sleep(0.8)
+        os._exit(0)
+    except Exception as e:
+        UPDATE.update(state="error", error=str(e))
+
+
 # ------------------------------------------------------------------ uretim isi
 def run_job(jid, d):
     job = JOBS[jid]
@@ -310,7 +391,7 @@ class Handler(BaseHTTPRequestHandler):
                 missing = [r for r in ("quiet", "hard", "signature") if engine.font_was_fallback(CFG, r)]
                 return self._json({
                     "canvas": {"w": W, "h": H}, "tones": TONES, "brand": CFG["brand"],
-                    "limits": CFG.get("limits", {}),
+                    "limits": CFG.get("limits", {}), "version": VERSION,
                     "fontWarn": missing, "outDir": str(DEFAULT_OUT)})
             if c == "/api/signature" and m == "PUT":
                 return self._json({"signature": save_signature(json.loads(self._body()).get("text"))})
@@ -349,6 +430,15 @@ class Handler(BaseHTTPRequestHandler):
             if c == "/api/open-folder" and m == "POST":
                 open_folder(json.loads(self._body()).get("path") or DEFAULT_OUT)
                 return self._json({"ok": True})
+            if c == "/api/update/check" and m == "GET":
+                return self._json(public_info(check_update(force="force" in q)))
+            if c == "/api/update/install" and m == "POST":
+                if UPDATE["state"] not in ("downloading", "installing"):
+                    UPDATE.update(state="downloading", done=0, error="")
+                    threading.Thread(target=run_update, daemon=True).start()
+                return self._json({"ok": True})
+            if c == "/api/update/status" and m == "GET":
+                return self._json({k: UPDATE[k] for k in ("state", "done", "total", "error")})
             if c == "/api/quit" and m == "POST":
                 self._json({"ok": True})
                 threading.Timer(0.4, lambda: os._exit(0)).start()

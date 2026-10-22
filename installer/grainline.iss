@@ -36,7 +36,7 @@ Name: "{autoprograms}\Grainline"; Filename: "{app}\Grainline.exe"
 Name: "{autodesktop}\Grainline"; Filename: "{app}\Grainline.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\Grainline.exe"; Description: "{cm:LaunchProgram,Grainline}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\Grainline.exe"; Description: "{cm:LaunchProgram,Grainline}"; Flags: nowait postinstall
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\.webprofile"
