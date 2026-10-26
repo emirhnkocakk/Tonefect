@@ -52,6 +52,16 @@ export function UpdateDialog({ open, onClose, info }: Props) {
     }
   }
 
+  const [opened, setOpened] = useState(false)
+  const download = async () => {
+    try {
+      await api.updateOpen()
+      setOpened(true)
+    } catch (e: any) {
+      setSt({ state: "error", done: 0, total: 0, error: e.message })
+    }
+  }
+
   const pct = st && st.total ? Math.round((st.done / st.total) * 100) : 0
   const mb = (n: number) => (n / 1048576).toFixed(1)
 
@@ -99,16 +109,17 @@ export function UpdateDialog({ open, onClose, info }: Props) {
                 <Download className="!size-4" /> Şimdi güncelle
               </Button>
             ) : (
-              <Button asChild>
-                <a href={info.page} target="_blank" rel="noreferrer" onClick={(e) => { e.preventDefault(); navigator.clipboard?.writeText(info.page).catch(() => {}) }}>
-                  Bağlantıyı kopyala
-                </a>
+              <Button onClick={download} className="gap-1.5">
+                <Download className="!size-4" /> Güncellemeyi indir
               </Button>
             )}
           </div>
         )}
-        {!info.canInstall && !busy && (
-          <p className="text-[11px] text-muted-foreground">Otomatik güncelleme yalnızca kurulu sürümde çalışır. Yeni sürümü GitHub Releases sayfasından indirebilirsin.</p>
+        {opened && (
+          <p className="text-xs text-primary">İndirme tarayıcında başladı. Bittiğinde Grainline-Setup.exe dosyasını çalıştır; ayarların ve fotoğrafların korunur.</p>
+        )}
+        {!info.canInstall && !busy && !opened && (
+          <p className="text-[11px] text-muted-foreground">Bu sürüm kendini otomatik kuramıyor; kurulum dosyası tarayıcında indirilecek.</p>
         )}
       </DialogContent>
     </Dialog>

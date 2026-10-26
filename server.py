@@ -255,8 +255,10 @@ def prune_uploads():
 
 
 # ------------------------------------------------------------------ guncelleme
-REPO = "emirhnkocakk/basic-photo-editor"
-ASSET_PREFIX = f"https://github.com/{REPO}/releases/download/"
+REPO = "emirhnkocakk/grainline-photo-editor"
+# Depo eski adından taşındı; GitHub eski adla gelen istekleri yeni ada yönlendirir.
+ASSET_PREFIXES = tuple(f"https://github.com/{r}/releases/download/"
+                       for r in (REPO, "emirhnkocakk/basic-photo-editor"))
 UPDATE = {"checked": 0.0, "info": None, "state": "idle", "done": 0, "total": 0, "error": ""}
 
 
@@ -301,7 +303,7 @@ def check_update(force=False):
         latest = str(rel.get("tag_name", "")).lstrip("v")
         info.update(latest=latest, notes=rel.get("body") or "", page=rel.get("html_url") or "")
         asset = next((a for a in rel.get("assets", []) if a.get("name", "").lower().endswith("-setup.exe")), None)
-        if asset and str(asset.get("browser_download_url", "")).startswith(ASSET_PREFIX):
+        if asset and str(asset.get("browser_download_url", "")).startswith(ASSET_PREFIXES):
             info["_asset"] = asset["browser_download_url"]
             info["size"] = asset.get("size", 0)
         info["newer"] = VERSION != "dev" and vtuple(latest) > vtuple(VERSION)
@@ -315,6 +317,15 @@ def check_update(force=False):
 
 def public_info(info):
     return {k: v for k, v in info.items() if not k.startswith("_")}
+
+
+def open_download():
+    """Otomatik kurulum yapılamıyorsa kurulum dosyasını (yoksa sürüm sayfasını) tarayıcıda açar."""
+    info = check_update()
+    url = info.get("_asset") or info.get("page") or ""
+    if not url.startswith(f"https://github.com/{REPO}/"):
+        url = f"https://github.com/{REPO}/releases/latest"
+    webbrowser.open(url)
 
 
 def run_update():
@@ -539,6 +550,9 @@ class Handler(BaseHTTPRequestHandler):
                 if UPDATE["state"] not in ("downloading", "installing"):
                     UPDATE.update(state="downloading", done=0, error="")
                     threading.Thread(target=run_update, daemon=True).start()
+                return self._json({"ok": True})
+            if c == "/api/update/open" and m == "POST":
+                open_download()
                 return self._json({"ok": True})
             if c == "/api/update/status" and m == "GET":
                 return self._json({k: UPDATE[k] for k in ("state", "done", "total", "error")})
