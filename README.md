@@ -9,6 +9,7 @@ A small desktop-style tool that turns your photos and short quotes into dark, ci
 
 ## Features
 - **Live preview** – what you see is exactly what gets exported.
+- **One-click colour presets** – natural, cinematic, film and black & white looks with live thumbnails of your own photo, an intensity slider and fine-tuning (exposure, contrast, temperature, saturation). Import your own Lightroom presets (.xmp, .lrtemplate, mobile .dng) and LUTs (.cube), even as a .zip pack.
 - **Per-word styling** – colour, weight (Light → ExtraBold), italic and size for any word, via a floating format bar.
 - **Drag to place** – move the whole text block or single words. Canva-style smart guides snap to the centre, margins and to the centres/edges of neighbouring words; arrow keys for fine tuning.
 - **Auto-update** – the installed app announces new releases on start and updates itself in one click.
@@ -41,6 +42,7 @@ npm run build        # then copy webui/dist to ./web
 
 ## Architecture
 - `render.py` – Pillow + numpy rendering engine (grading, grain, layout, per-word styles).
+- `looks.py` – colour presets, Lightroom/LUT import.
 - `server.py` – standard-library HTTP server: preview/generate API, photo uploads, session autosave. Only accepts `127.0.0.1` requests.
 - `webui/` – React source; `web/` – built UI that the server serves.
 
@@ -52,6 +54,7 @@ Fotoğraflarını ve kısa sözlerini koyu, sinematik, Instagram'a hazır görse
 
 ## Özellikler
 - **Canlı önizleme** – ekranda gördüğün, dışa aktarılanla birebir aynıdır.
+- **Tek tıkla renk ayarları** – doğal, sinematik, film ve siyah-beyaz görünümler; kendi fotoğrafının üzerinde canlı küçük önizlemeler, yoğunluk kaydırıcısı ve ince ayar (pozlama, kontrast, sıcaklık, doygunluk). Kendi Lightroom ayarlarını (.xmp, .lrtemplate, mobil .dng) ve LUT'larını (.cube), .zip paketi olarak bile içe aktarabilirsin.
 - **Kelime bazlı stil** – her kelimeye renk, kalınlık (İnce → Ekstra), italik ve boyut; yüzen biçim çubuğuyla.
 - **Sürükleyerek yerleştirme** – tüm metni ya da tek tek kelimeleri taşı. Canva tarzı akıllı kılavuz çizgileri ortaya, kenar boşluklarına ve yan kelimelerin merkez/kenarlarına yapışır; ok tuşlarıyla ince ayar.
 - **Otomatik güncelleme** – kurulu uygulama açılışta yeni sürümü duyurur ve tek tıkla kendini günceller.
@@ -83,6 +86,7 @@ npm run build        # sonra webui/dist içeriğini ./web klasörüne kopyala
 
 ## Mimari
 - `render.py` – Pillow + numpy çizim motoru (renk işleme, grain, yerleşim, kelime stilleri).
+- `looks.py` – hazır renk ayarları, Lightroom/LUT içe aktarma.
 - `server.py` – standart kütüphane HTTP sunucusu: önizleme/üretim API'si, fotoğraf yükleme, oturum kaydı. Yalnızca `127.0.0.1` isteklerini kabul eder.
 - `webui/` – React kaynağı; `web/` – sunucunun servis ettiği derlenmiş arayüz.
 

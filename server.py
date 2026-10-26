@@ -33,6 +33,7 @@ if sys.stderr is None:
 
 from PIL import Image, ImageOps
 
+import looks
 import render as engine
 
 HERE = engine.HERE
@@ -52,6 +53,8 @@ WEIGHTS = set(engine.WEIGHT_ALIASES.keys())
 
 LOCK = threading.Lock()
 CROP, BASE, JOBS = {}, {}, {}
+USER_PRESETS = HERE / "presets"
+PRESETS = looks.load_all(USER_PRESETS)
 
 
 STATE = {"quit_on_close": True, "last_beat": 0.0, "closing_at": 0.0, "seen": False}
@@ -72,14 +75,13 @@ def write_prefs(**kw):
 
 def load_prefs():
     d = read_prefs()
-    sig = str(d.get("signature", "")).strip()
-    if sig:
-        CFG["brand"]["signature_text"] = sig[:40]
+    if "signature" in d:  # boş kaydedildiyse imza kapalı
+        CFG["brand"]["signature_text"] = str(d["signature"]).strip()[:40]
     STATE["quit_on_close"] = bool(d.get("quitOnClose", True))
 
 
 def save_signature(text):
-    text = (text or "").strip()[:40] or "GRAINLINE"
+    text = (text or "").strip()[:40]
     CFG["brand"]["signature_text"] = text
     write_prefs(signature=text)
     return text
@@ -131,13 +133,25 @@ def num(v, lo, hi, default=0.0):
     return max(lo, min(hi, f)) if math.isfinite(f) else default
 
 
+def clean_fx(fx_in):
+    preset = str(fx_in.get("preset") or "")
+    if preset not in PRESETS:  # silinmiş ayar -> klasik görünüm
+        preset = ""
+    adj_in = fx_in.get("adjust") if isinstance(fx_in.get("adjust"), dict) else {}
+    adjust = {k: round(num(adj_in.get(k), -1.0, 1.0), 3) for k in looks.ADJUST_KEYS}
+    return {"bw": bool(fx_in.get("bw", True)),
+            "grain": num(fx_in.get("grain", 1.0), 0.0, 2.0, 1.0),
+            "vignette": num(fx_in.get("vignette", 1.0), 0.0, 2.0, 1.0),
+            "preset": preset, "look": PRESETS[preset]["look"],
+            "amount": num(fx_in.get("amount", 1.0), 0.0, 1.0, 1.0),
+            "adjust": {k: v for k, v in adjust.items() if v}}
+
+
 def clean_item(d):
     text = " ".join(str(d.get("text", "")).split())
     tone = d.get("tone") if d.get("tone") in TONES else TONES[0]
     fx_in = d.get("fx") or {}
-    fx = {"bw": bool(fx_in.get("bw", True)),
-          "grain": num(fx_in.get("grain", 1.0), 0.0, 2.0, 1.0),
-          "vignette": num(fx_in.get("vignette", 1.0), 0.0, 2.0, 1.0)}
+    fx = clean_fx(fx_in)
     block = d.get("block") or [0, 0]
     lim = 2 * max(W, H)  # metni tuvalin çok dışına atan değerler çizimi bozmasın
     block = [num(block[0], -lim, lim), num(block[1], -lim, lim)]
@@ -150,15 +164,21 @@ def clean_item(d):
     }
 
 
-def get_base(path, fx):
-    key = (str(path), fx["bw"], round(fx["grain"], 2), round(fx["vignette"], 2))
-    if key in BASE:
-        BASE[key] = BASE.pop(key)
-        return BASE[key]
+def get_crop(path):
     crop = CROP.pop(str(path), None) or engine.load_cropped(CFG, path)
     CROP[str(path)] = crop
     while len(CROP) > 8:
         CROP.pop(next(iter(CROP)))
+    return crop
+
+
+def get_base(path, fx):
+    key = (str(path), fx["bw"], round(fx["grain"], 2), round(fx["vignette"], 2),
+           fx["preset"], round(fx["amount"], 2), tuple(sorted(fx["adjust"].items())))
+    if key in BASE:
+        BASE[key] = BASE.pop(key)
+        return BASE[key]
+    crop = get_crop(path)
     base = engine.grade_base(CFG, crop, path, fx)
     BASE[key] = base
     while len(BASE) > 6:
@@ -181,6 +201,45 @@ def render_preview(d):
              for b in (layout["boxes"] if layout else [])]
     return {"image": "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode(),
             "boxes": boxes, "size": layout["size"] if layout else 0, "w": W, "h": H}
+
+
+def preset_list():
+    return {"presets": [looks.meta(p) for p in PRESETS.values()], "groups": looks.GROUPS}
+
+
+def preset_thumbs(d):
+    """Seçili fotoğrafın her hazır ayarla küçük önizlemesi (gren yok, hızlı olsun diye)."""
+    path = photo_path(d["photo"])
+    tw = max(60, min(320, int(d.get("w", 180))))
+    with LOCK:
+        small = get_crop(path).resize((tw, round(tw * H / W)), Image.BILINEAR)
+    out = {}
+    for p in list(PRESETS.values()):
+        fx = {"bw": p["bw"], "grain": 0.0, "vignette": p["vignette"], "look": p["look"], "amount": 1.0}
+        im = engine.grade(small, CFG, 0, fx)
+        buf = io.BytesIO()
+        im.save(buf, "JPEG", quality=80)
+        out[p["id"]] = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+    return {"thumbs": out}
+
+
+def import_presets(name, data):
+    global PRESETS
+    if Path(name).suffix.lower() not in looks.IMPORT_EXT:
+        raise ValueError("Desteklenen dosyalar: .xmp, .lrtemplate, .dng (Lightroom), .cube (LUT), .zip")
+    saved, warns = looks.import_file(USER_PRESETS, name, data)
+    PRESETS = looks.load_all(USER_PRESETS)
+    return {"imported": [looks.meta(PRESETS[p["id"]]) for p in saved if p["id"] in PRESETS],
+            "warnings": warns}
+
+
+def delete_preset(pid):
+    global PRESETS
+    looks.delete_user(USER_PRESETS, pid)
+    PRESETS = looks.load_all(USER_PRESETS)
+    with LOCK:
+        for k in [k for k in BASE if k[4] == pid]:
+            BASE.pop(k, None)
 
 
 def save_photo(name, data):
@@ -384,6 +443,7 @@ def run_job(jid, d):
                 manifest.append({
                     "image": raw.get("name", path.name), "text": item["text"], "tone": item["tone"],
                     "accent_word": item["accent"],
+                    "preset": PRESETS.get(item["fx"]["preset"], looks.CLASSIC)["name"],
                     "caption": "", "output": str(out)})
                 job["files"].append({"name": out.name, "text": item["text"]})
             except Exception as e:
@@ -520,6 +580,15 @@ class Handler(BaseHTTPRequestHandler):
             if c.startswith("/api/thumb/") and m in ("GET", "HEAD"):
                 t = THUMBS / (Path(c.rsplit("/", 1)[1]).name + ".jpg")
                 return self._file(t, cache=True) if t.is_file() else self._err(404, "yok")
+            if c == "/api/presets" and m == "GET":
+                return self._json(preset_list())
+            if c == "/api/presets/thumbs" and m == "POST":
+                return self._json(preset_thumbs(json.loads(self._body())))
+            if c == "/api/presets/import" and m == "POST":
+                return self._json(import_presets(q.get("name", [""])[0], self._body()))
+            if c.startswith("/api/presets/") and m == "DELETE":
+                delete_preset(c.split("/", 3)[3])
+                return self._json(preset_list())
             if c == "/api/preview" and m == "POST":
                 return self._json(render_preview(json.loads(self._body())))
             if c == "/api/generate" and m == "POST":

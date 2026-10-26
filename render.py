@@ -18,6 +18,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
+import looks
+
 # .exe olarak paketlenirse dosyalar (brand.json, fonts) exe'nin yaninda aranir
 HERE = (Path(sys.executable).resolve().parent if getattr(sys, "frozen", False)
         else Path(__file__).resolve().parent)
@@ -66,7 +68,9 @@ def cover_crop(img, size, focus=(0.5, 0.5)):
 
 
 def grade(img, cfg, seed, fx=None):
-    """fx: {"bw": bool, "grain": 0..1+ (carpan), "vignette": 0..1+ (carpan)}"""
+    """fx: {"bw": bool, "grain": 0..1+ (carpan), "vignette": 0..1+ (carpan),
+            "look": hazir ayar (looks.apply) ya da None = klasik gorunum,
+            "amount": 0..1 hazir ayarin yogunlugu, "adjust": ince ayar kaydiricilari}"""
     s = dict(cfg["image"])
     if fx:
         if not fx.get("bw", True):
@@ -74,10 +78,21 @@ def grade(img, cfg, seed, fx=None):
         s["grain"] = s["grain"] * float(fx.get("grain", 1.0))
         s["vignette"] = s["vignette"] * float(fx.get("vignette", 1.0))
     arr = np.asarray(img, dtype=np.float32) / 255.0
-    gray = (arr @ np.array([0.299, 0.587, 0.114], dtype=np.float32))[..., None]
-    arr = gray + (arr - gray) * s["saturation"]
-    arr = (arr - 0.5) * s["contrast"] + 0.5
-    arr = arr * s["brightness"]
+    look = fx.get("look") if fx else None
+    if look is not None:
+        graded = looks.apply(arr, look)
+        amount = float(fx.get("amount", 1.0))
+        arr = graded if amount >= 1 else arr + (graded - arr) * amount
+        if fx.get("bw"):
+            arr = np.repeat((arr @ looks.LUMA)[..., None], 3, axis=-1)
+    else:
+        gray = (arr @ np.array([0.299, 0.587, 0.114], dtype=np.float32))[..., None]
+        arr = gray + (arr - gray) * s["saturation"]
+        arr = (arr - 0.5) * s["contrast"] + 0.5
+        arr = arr * s["brightness"]
+    adjust = looks.adjust_look(fx.get("adjust")) if fx else {}
+    if adjust:
+        arr = looks.apply(np.clip(arr, 0, 1), adjust)
 
     h, w = arr.shape[:2]
     if s["vignette"] > 0:
@@ -301,12 +316,14 @@ def signature_layer(cfg, W, H):
     s = cfg["signature"]
     font = load_font(cfg, "signature", s["size"])
     tracking = s["tracking_em"] * s["size"]
-    text = cfg["brand"]["signature_text"].upper()
+    text = cfg["brand"]["signature_text"].strip().upper()
+    layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    if not text:  # imza kapali
+        return layer
     w = word_width(font, text, tracking)
     margin = int(W * cfg["layout"]["margin_ratio"])
     x = W - margin - w
     y = H - int(H * s["bottom_margin_ratio"]) - s["size"]
-    layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     rgb = hex_to_rgb(cfg["colors"]["text"])
     draw_word(ImageDraw.Draw(layer), x, y, text, font, rgb + (int(255 * s["opacity"]),), tracking)
     return layer

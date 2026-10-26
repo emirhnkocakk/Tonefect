@@ -10,3 +10,5 @@ oturum*.json
 build/
 dist/
 *.spec
+presets/
+ayarlar.json

@@ -9,7 +9,8 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { TONE_INFO } from "@/lib/constants"
 import { words } from "@/lib/text"
 import { cn } from "@/lib/utils"
-import type { Config, Fx, Item } from "@/types"
+import { ColorPanel } from "@/components/ColorPanel"
+import type { Config, Fx, Item, PresetMeta } from "@/types"
 
 type Props = {
   item?: Item
@@ -19,9 +20,12 @@ type Props = {
   setSelected: (s: number[]) => void
   setText: (t: string) => void
   patch: (p: Partial<Item>, all?: boolean) => void
+  presets: PresetMeta[]
+  groups: string[]
+  onPresetsChange: () => Promise<void>
 }
 
-export function Panel({ item, items, cfg, selected, setSelected, setText, patch }: Props) {
+export function Panel({ item, items, cfg, selected, setSelected, setText, patch, presets, groups, onPresetsChange }: Props) {
   const ws = item ? words(item.text) : []
   const max = cfg.limits.max_words
   const setFx = (p: Partial<Fx>, all = false) => item && patch({ fx: { ...item.fx, ...p } }, all)
@@ -29,8 +33,9 @@ export function Panel({ item, items, cfg, selected, setSelected, setText, patch 
   return (
     <aside className="flex h-full w-[340px] shrink-0 flex-col border-l bg-card/40">
       <Tabs defaultValue="text" className="flex min-h-0 flex-1 flex-col">
-        <TabsList className="mx-4 mt-4 grid grid-cols-2">
+        <TabsList className="mx-4 mt-4 grid grid-cols-3">
           <TabsTrigger value="text">Metin</TabsTrigger>
+          <TabsTrigger value="color">Renk</TabsTrigger>
           <TabsTrigger value="fx">Efekt</TabsTrigger>
         </TabsList>
 
@@ -113,6 +118,14 @@ export function Panel({ item, items, cfg, selected, setSelected, setText, patch 
           )}
         </TabsContent>
 
+        <TabsContent value="color" className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 pt-1">
+          {!item ? (
+            <p className="pt-6 text-sm text-muted-foreground">Önce bir fotoğraf ekle.</p>
+          ) : (
+            <ColorPanel item={item} presets={presets} groups={groups} setFx={setFx} onPresetsChange={onPresetsChange} />
+          )}
+        </TabsContent>
+
         <TabsContent value="fx" className="min-h-0 flex-1 space-y-6 overflow-y-auto px-4 pb-4">
           {!item ? (
             <p className="pt-6 text-sm text-muted-foreground">Önce bir fotoğraf ekle.</p>
@@ -141,7 +154,7 @@ export function Panel({ item, items, cfg, selected, setSelected, setText, patch 
                 <Slider min={0} max={100} step={1} value={[Math.round(item.fx.vignette * 100)]} onValueChange={([v]) => setFx({ vignette: v / 100 })} />
               </div>
               <Button variant="secondary" size="sm" className="w-full" onClick={() => setFx({}, true)}>
-                Bu efektleri tüm fotoğraflara uygula
+                Renk ve efektleri tüm fotoğraflara uygula
               </Button>
             </>
           )}

@@ -1,4 +1,6 @@
-import type { Config, Job, UpdateInfo, UpdateStatus } from "@/types"
+import type { Config, Job, PresetMeta, UpdateInfo, UpdateStatus } from "@/types"
+
+type PresetList = { presets: PresetMeta[]; groups: string[] }
 
 const H = { "X-NV": "1" }
 
@@ -24,6 +26,14 @@ export const api = {
       j<{ id: string; name: string; width: number; height: number }>(r)
     ),
   remove: (id: string) => fetch("/api/photos/" + encodeURIComponent(id), { method: "DELETE", headers: H }).then((r) => j(r)),
+  presets: () => fetch("/api/presets").then((r) => j<PresetList>(r)),
+  presetThumbs: (photo: string, w: number) =>
+    fetch("/api/presets/thumbs", json("POST", { photo, w })).then((r) => j<{ thumbs: Record<string, string> }>(r)),
+  importPreset: (file: File) =>
+    fetch("/api/presets/import?name=" + encodeURIComponent(file.name), { method: "POST", headers: H, body: file }).then((r) =>
+      j<{ imported: PresetMeta[]; warnings: string[] }>(r)
+    ),
+  deletePreset: (id: string) => fetch("/api/presets/" + encodeURIComponent(id), { method: "DELETE", headers: H }).then((r) => j<PresetList>(r)),
   preview: (p: unknown) => fetch("/api/preview", json("POST", p)).then((r) => j<any>(r)),
   generate: (body: unknown) => fetch("/api/generate", json("POST", body)).then((r) => j<{ job: string }>(r)),
   job: (id: string) => fetch("/api/job/" + id).then((r) => j<Job>(r)),

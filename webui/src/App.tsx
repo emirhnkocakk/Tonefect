@@ -11,9 +11,10 @@ import { UpdateDialog } from "@/components/UpdateDialog"
 import { SettingsDialog } from "@/components/SettingsDialog"
 import { api } from "@/lib/api"
 import { mergeStyle, naturalSort, remap, words } from "@/lib/text"
-import type { Config, Item, Job, Mode, Settings, Style, UpdateInfo } from "@/types"
+import type { Config, Item, Job, Mode, PresetMeta, Settings, Style, UpdateInfo } from "@/types"
 
-const DEFAULTS: Settings = { outDir: "output", tone: "quiet", fx: { bw: true, grain: 1, vignette: 1 }, guides: true }
+const DEFAULT_FX: Item["fx"] = { bw: true, grain: 1, vignette: 1, preset: "", amount: 1, adjust: {} }
+const DEFAULTS: Settings = { outDir: "output", tone: "quiet", fx: DEFAULT_FX, guides: true }
 const IMG = /\.(jpe?g|png|webp)$/i
 const HISTORY_MAX = 100
 const HISTORY_GROUP_MS = 600 // art arda gelen değişiklikler (sürükleme, yazma) tek adım sayılır
@@ -37,6 +38,21 @@ export default function App() {
   const [upd, setUpd] = useState<UpdateInfo | null>(null)
   const [updOpen, setUpdOpen] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
+  const [presets, setPresets] = useState<PresetMeta[]>([])
+  const [groups, setGroups] = useState<string[]>([])
+
+  const loadPresets = useCallback(async () => {
+    try {
+      const r = await api.presets()
+      setPresets(r.presets)
+      setGroups(r.groups)
+    } catch (e: any) {
+      toast.error("Hazır ayarlar yüklenemedi: " + e.message)
+    }
+  }, [])
+  useEffect(() => {
+    loadPresets()
+  }, [loadPresets])
 
   useEffect(() => {
     ;(async () => {
@@ -167,7 +183,11 @@ export default function App() {
     } else update((it) => ({ ...it, ...p }))
   }
   // "hepsine uygula" efekt için: mevcut fx'i kopyala
-  const patchAllFx = () => item && setItems((a) => a.map((i) => ({ ...i, fx: { ...item.fx } })))
+  const patchAllFx = () => {
+    if (!item) return
+    setItems((a) => a.map((i) => ({ ...i, fx: { ...item.fx } })))
+    toast.success("Tüm fotoğraflara uygulandı")
+  }
 
   const applyStyle = (p: Partial<Style>) =>
     update((it) => {
@@ -224,12 +244,8 @@ export default function App() {
     })
 
   const generate = async () => {
-    const empty = items.findIndex((i) => !words(i.text).length)
+    // metin isteğe bağlı: metinsiz fotoğraflar yalnızca renk/efektle üretilir
     if (!items.length) return toast.error("Önce fotoğraf ekle")
-    if (empty >= 0) {
-      setCurrentId(items[empty].id)
-      return toast.error(`${empty + 1}. fotoğrafın metni boş`)
-    }
     setJob(null)
     setDlg(true)
     try {
@@ -313,7 +329,8 @@ export default function App() {
           />
           <Panel
             item={item} items={items} cfg={cfg} selected={selected} setSelected={setSelected} setText={setText}
-            patch={(p, all) => (all && p.fx ? patchAllFx() : patch(p, all))} 
+            patch={(p, all) => (all && p.fx ? patchAllFx() : patch(p, all))}
+            presets={presets} groups={groups} onPresetsChange={loadPresets}
           />
         </div>
         <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => { addFiles([...(e.target.files || [])]); e.target.value = "" }} />
@@ -332,9 +349,9 @@ function newItem(id: string, name: string, fx: Item["fx"], tone = "quiet"): Item
 
 function normItem(r: any): Item {
   return {
-    ...newItem(r.id, r.name || r.id, { bw: true, grain: 1, vignette: 1 }),
+    ...newItem(r.id, r.name || r.id, DEFAULT_FX),
     ...r,
-    fx: { bw: true, grain: 1, vignette: 1, ...(r.fx || {}) },
+    fx: { ...DEFAULT_FX, ...(r.fx || {}) },
     styles: r.styles || [],
     offsets: r.offsets || {},
     block: r.block || [0, 0],

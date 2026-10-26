@@ -100,8 +100,9 @@ export function SettingsDialog({ open, onClose, cfg, settings, setSettings, defa
               onChange={(e) => setSig(e.target.value)}
               onBlur={saveSig}
               onKeyDown={(e) => e.key === "Enter" && (e.currentTarget as HTMLInputElement).blur()}
-              placeholder="NEGANS VISION"
+              placeholder="İmza yok"
             />
+            <p className="text-[11px] text-muted-foreground">Boş bırakırsan görsellere imza eklenmez.</p>
           </div>
         </section>
 

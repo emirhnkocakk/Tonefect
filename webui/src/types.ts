@@ -1,5 +1,8 @@
 export type Style = { color?: string; weight?: string; italic?: boolean; size?: number }
-export type Fx = { bw: boolean; grain: number; vignette: number }
+export type Adjust = { exposure?: number; contrast?: number; temperature?: number; saturation?: number }
+// preset: hazır renk ayarı ("" = Grainline klasik), amount: yoğunluk 0..1, adjust: ince ayar -1..1
+export type Fx = { bw: boolean; grain: number; vignette: number; preset?: string; amount?: number; adjust?: Adjust }
+export type PresetMeta = { id: string; name: string; group: string; bw: boolean; grain: number; vignette: number; user: boolean }
 export type Offsets = Record<string, [number, number]>
 export type Mode = "block" | "word"
 
