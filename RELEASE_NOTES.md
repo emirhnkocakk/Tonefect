@@ -1,7 +1,13 @@
 ## What's new / Yenilikler
 
-- ⬇️ **One-click updates work again.** After the repository was renamed, the app no longer trusted the download link and only offered to copy it. From this version on, "Update now" downloads and installs the new version for you; if automatic install isn't possible, "Download update" starts the download in your browser.
-  / **Tek tıkla güncelleme yeniden çalışıyor.** Depo adı değiştikten sonra uygulama indirme bağlantısına güvenmiyor ve sadece kopyalamayı öneriyordu. Bu sürümden itibaren "Şimdi güncelle" yeni sürümü indirip kendisi kurar; otomatik kurulum mümkün değilse "Güncellemeyi indir" indirmeyi tarayıcında başlatır.
+- 🎨 **One-click colour presets.** A new **Renk** tab with 18 ready-made looks in four groups – natural, cinematic, film and black & white – shown as live thumbnails of your own photo. Click one and you're done.
+  / **Tek tıkla renk ayarları.** Yeni **Renk** sekmesinde dört grupta (doğal, sinematik, film, siyah-beyaz) 18 hazır görünüm, kendi fotoğrafının üzerinde canlı küçük önizlemelerle. Birine tıkla, bitti.
+- 🎚️ **Intensity and fine-tuning:** make any look softer or stronger, then adjust exposure, contrast, temperature and saturation on top.
+  / **Yoğunluk ve ince ayar:** Her görünümü yumuşat ya da güçlendir; üstüne pozlama, kontrast, sıcaklık ve doygunluk ayarla.
+- 📥 **Bring your own Lightroom presets and LUTs:** import .xmp, .lrtemplate, mobile .dng and .cube files – or a whole .zip pack – from the **İçe aktar** button. Lightroom settings Grainline doesn't support yet (clarity, dehaze, texture, hue shifts) are skipped and listed, so results are close but not always identical.
+  / **Kendi Lightroom ayarların ve LUT'ların:** **İçe aktar** düğmesiyle .xmp, .lrtemplate, mobil .dng ve .cube dosyalarını – ya da bir .zip paketinin tamamını – ekle. Grainline'ın henüz desteklemediği Lightroom ayarları (netlik, pus giderme, doku, renk tonu kaydırma) atlanır ve listelenir; sonuç yakın olur ama her zaman birebir aynı olmayabilir.
+- 🖼️ **Text and signature are now optional:** export photos with just colour and effects, and leave the signature empty in Settings to turn it off.
+  / **Metin ve imza artık isteğe bağlı:** Fotoğrafları yalnızca renk ve efektle üret; imzayı kapatmak için Ayarlar'da imza alanını boş bırak.
 
-⚠️ If you are on v1.0.10 or older, install this version once manually with `Grainline-Setup.exe`; later updates will be one click.
-/ v1.0.10 veya daha eski bir sürümdeysen bu sürümü bir kez `Grainline-Setup.exe` ile elle kur; sonraki güncellemeler tek tıkla olur.
+Your existing photos keep the classic Grainline look until you pick another one.
+/ Mevcut fotoğrafların, başka bir görünüm seçene kadar klasik Grainline görünümünde kalır.
