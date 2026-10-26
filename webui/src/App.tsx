@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { ArrowUpCircle, Loader2, Power, Settings as Cog, Sparkles } from "lucide-react"
+import { ArrowUpCircle, Loader2, Power, Redo2, Settings as Cog, Sparkles, Undo2 } from "lucide-react"
 import { Toaster, toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { TooltipProvider } from "@/components/ui/tooltip"
@@ -14,7 +14,9 @@ import { mergeStyle, naturalSort, remap, words } from "@/lib/text"
 import type { Config, Item, Job, Mode, Settings, Style, UpdateInfo } from "@/types"
 
 const DEFAULTS: Settings = { outDir: "output", tone: "quiet", fx: { bw: true, grain: 1, vignette: 1 }, guides: true }
-const IMG = /\.(jpe?g|png|webp|bmp)$/i
+const IMG = /\.(jpe?g|png|webp)$/i
+const HISTORY_MAX = 100
+const HISTORY_GROUP_MS = 600 // art arda gelen değişiklikler (sürükleme, yazma) tek adım sayılır
 
 export default function App() {
   const [cfg, setCfg] = useState<Config | null>(null)
@@ -82,8 +84,68 @@ export default function App() {
     return () => clearTimeout(t)
   }, [items, currentId, settings, loaded])
 
+  // geri al / yinele geçmişi
+  const hist = useRef({ past: [] as Item[][], future: [] as Item[][], prev: null as Item[] | null, at: 0, skip: false })
+  const [histLen, setHistLen] = useState({ past: 0, future: 0 })
+  useEffect(() => {
+    const h = hist.current
+    if (loaded && !h.skip && h.prev && h.prev !== items) {
+      const now = Date.now()
+      if (now - h.at > HISTORY_GROUP_MS) {
+        h.past.push(h.prev)
+        if (h.past.length > HISTORY_MAX) h.past.shift()
+      }
+      h.at = now
+      h.future = []
+    }
+    h.skip = false
+    h.prev = items
+    setHistLen({ past: h.past.length, future: h.future.length })
+  }, [items, loaded])
+
+  const itemsRef = useRef(items)
+  itemsRef.current = items
+  const currentRef = useRef(currentId)
+  currentRef.current = currentId
+
+  const travel = useCallback((dir: "undo" | "redo") => {
+    const h = hist.current
+    const target = (dir === "undo" ? h.past : h.future).pop()
+    if (!target) return
+    const now = itemsRef.current
+    ;(dir === "undo" ? h.future : h.past).push(now)
+    h.skip = true
+    h.at = 0
+    setItems(target)
+    // geri gelen fotoğrafı seç; seçili olan kaybolduysa ilkine geç
+    const back = target.find((t) => !now.some((n) => n.id === t.id))
+    const cur = currentRef.current
+    if (back) setCurrentId(back.id)
+    else if (!target.some((t) => t.id === cur)) setCurrentId(target[0]?.id ?? null)
+  }, [])
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return
+      const el = e.target as HTMLElement | null
+      // metin alanlarında tarayıcının kendi geri alması çalışsın
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return
+      const z = e.code === "KeyZ" || e.key.toLowerCase() === "z"
+      const y = e.code === "KeyY" || e.key.toLowerCase() === "y"
+      if (z && !e.shiftKey) travel("undo")
+      else if ((z && e.shiftKey) || y) travel("redo")
+      else return
+      e.preventDefault()
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [travel])
+
   const item = items.find((i) => i.id === currentId)
   useEffect(() => setSelected([]), [currentId])
+  // metin kısalınca artık olmayan kelimeler seçili kalmasın
+  const wordCount = item ? words(item.text).length : 0
+  useEffect(() => setSelected((s) => (s.some((i) => i >= wordCount) ? s.filter((i) => i < wordCount) : s)), [wordCount])
 
   const update = useCallback(
     (fn: (it: Item) => Item) => setItems((a) => a.map((i) => (i.id === currentId ? fn(i) : i))),
@@ -136,12 +198,19 @@ export default function App() {
     if (last) setCurrentId(last)
   }
 
-  const removeItem = async (id: string) => {
+  // Dosya hemen silinmez (geri alınabilsin diye); kullanılmayan yüklemeleri sunucu açılışta temizler.
+  const removeItem = (id: string) => {
     const idx = items.findIndex((i) => i.id === id)
+    const removed = items[idx]
+    if (!removed) return
     const rest = items.filter((i) => i.id !== id)
     setItems(rest)
     if (currentId === id) setCurrentId(rest[Math.min(idx, rest.length - 1)]?.id ?? null)
-    api.remove(id).catch(() => {})
+    const restore = () => {
+      setItems((a) => (a.some((i) => i.id === id) ? a : [...a.slice(0, idx), removed, ...a.slice(idx)]))
+      setCurrentId(id)
+    }
+    toast("Fotoğraf kaldırıldı", { action: { label: "Geri al", onClick: restore } })
   }
 
   const move = (id: string, dir: -1 | 1) =>
@@ -204,7 +273,7 @@ export default function App() {
         onDragOver={(e) => e.preventDefault()}
         onDrop={(e) => {
           e.preventDefault()
-          addFiles([...e.dataTransfer.files])
+          if (e.dataTransfer.files.length) addFiles([...e.dataTransfer.files])
         }}
       >
         <header className="flex h-12 shrink-0 items-center justify-between border-b px-4">
@@ -218,6 +287,12 @@ export default function App() {
                 <ArrowUpCircle className="!size-4" /> Yeni sürüm v{upd.latest}
               </Button>
             )}
+            <Button variant="ghost" size="icon-sm" aria-label="Geri al" title="Geri al (Ctrl+Z)" disabled={!histLen.past} onClick={() => travel("undo")}>
+              <Undo2 className="h-4 w-4" />
+            </Button>
+            <Button variant="ghost" size="icon-sm" aria-label="Yinele" title="Yinele (Ctrl+Y)" disabled={!histLen.future} onClick={() => travel("redo")}>
+              <Redo2 className="h-4 w-4" />
+            </Button>
             <Button onClick={generate} disabled={!items.length} className="h-8 gap-1.5">
               <Sparkles className="!size-4" /> Görselleri üret
             </Button>

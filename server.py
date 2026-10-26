@@ -7,6 +7,7 @@ Calistir:  python server.py        (NegansVision.bat bunu yapar)
 import base64
 import io
 import json
+import math
 import mimetypes
 import os
 import re
@@ -121,15 +122,27 @@ def clean_styles(styles, n_words):
     return out
 
 
+def num(v, lo, hi, default=0.0):
+    """Sayıya çevirir, NaN/sonsuz değerleri ve aralık dışını engeller."""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return default
+    return max(lo, min(hi, f)) if math.isfinite(f) else default
+
+
 def clean_item(d):
     text = " ".join(str(d.get("text", "")).split())
     tone = d.get("tone") if d.get("tone") in TONES else TONES[0]
     fx_in = d.get("fx") or {}
     fx = {"bw": bool(fx_in.get("bw", True)),
-          "grain": max(0.0, min(2.0, float(fx_in.get("grain", 1.0)))),
-          "vignette": max(0.0, min(2.0, float(fx_in.get("vignette", 1.0))))}
+          "grain": num(fx_in.get("grain", 1.0), 0.0, 2.0, 1.0),
+          "vignette": num(fx_in.get("vignette", 1.0), 0.0, 2.0, 1.0)}
     block = d.get("block") or [0, 0]
-    offsets = {str(k): (float(v[0]), float(v[1])) for k, v in (d.get("offsets") or {}).items()}
+    lim = 2 * max(W, H)  # metni tuvalin çok dışına atan değerler çizimi bozmasın
+    block = [num(block[0], -lim, lim), num(block[1], -lim, lim)]
+    offsets = {str(k): (num(v[0], -lim, lim), num(v[1], -lim, lim))
+               for k, v in (d.get("offsets") or {}).items()}
     return {
         "text": text, "tone": tone, "accent": str(d.get("accent", "")).strip(),
         "styles": clean_styles(d.get("styles"), len(text.split())),
@@ -195,9 +208,10 @@ def delete_photo(pid):
     p = UPLOADS / Path(pid).name
     (THUMBS / (p.name + ".jpg")).unlink(missing_ok=True)
     p.unlink(missing_ok=True)
-    for k in [k for k in BASE if k[0] == str(p)]:
-        BASE.pop(k, None)
-    CROP.pop(str(p), None)
+    with LOCK:  # önizleme iş parçacığı aynı anda önbelleği değiştirebilir
+        for k in [k for k in BASE if k[0] == str(p)]:
+            BASE.pop(k, None)
+        CROP.pop(str(p), None)
 
 
 def load_session():
@@ -205,8 +219,39 @@ def load_session():
         data = json.loads(SESSION.read_text(encoding="utf-8"))
     except Exception:
         return {}
-    data["items"] = [it for it in data.get("items", []) if (UPLOADS / Path(it.get("id", "")).name).is_file()]
+    if not isinstance(data, dict):
+        return {}
+    items = data.get("items") if isinstance(data.get("items"), list) else []
+    data["items"] = [it for it in items
+                     if isinstance(it, dict) and (UPLOADS / Path(str(it.get("id", ""))).name).is_file()]
     return data
+
+
+def save_session(body):
+    data = json.loads(body)  # bozuk veri kaydedilip oturum kaybolmasın
+    if not isinstance(data, dict) or not isinstance(data.get("items", []), list):
+        raise ValueError("Geçersiz oturum verisi")
+    tmp = SESSION.with_suffix(".tmp")
+    tmp.write_bytes(body)
+    tmp.replace(SESSION)
+
+
+def prune_uploads():
+    """Oturumda artık kullanılmayan yüklemeleri siler.
+    Arayüz silinen fotoğrafı geri alınabilsin diye hemen silmez; temizlik açılışta yapılır."""
+    try:
+        data = json.loads(SESSION.read_text(encoding="utf-8"))
+        keep = {Path(str(it.get("id", ""))).name for it in data["items"]}
+    except Exception:
+        return  # oturum okunamıyorsa hiçbir şeye dokunma
+    if not UPLOADS.is_dir():
+        return
+    for p in UPLOADS.iterdir():
+        if p.is_file() and p.name not in keep:
+            try:
+                delete_photo(p.name)
+            except OSError:
+                pass
 
 
 # ------------------------------------------------------------------ guncelleme
@@ -303,12 +348,16 @@ def run_update():
 
 
 # ------------------------------------------------------------------ uretim isi
+def resolve_out(path):
+    """Göreli çıktı klasörünü uygulama klasörüne göre çözer (çalışma dizinine göre değil)."""
+    p = Path(str(path or "").strip() or DEFAULT_OUT).expanduser()
+    return p if p.is_absolute() else HERE / p
+
+
 def run_job(jid, d):
     job = JOBS[jid]
     try:
-        out_dir = Path(d.get("outDir") or DEFAULT_OUT)
-        if not out_dir.is_absolute():
-            out_dir = HERE / out_dir
+        out_dir = resolve_out(d.get("outDir"))
         out_dir.mkdir(parents=True, exist_ok=True)
         job["outDir"] = str(out_dir)
         manifest = []
@@ -316,7 +365,8 @@ def run_job(jid, d):
             try:
                 item = clean_item(raw)
                 path = photo_path(raw["id"])
-                out = out_dir / f"{i:03d}_{Path(raw.get('name', path.name)).stem[:40] or 'foto'}.jpg"
+                stem = Path(safe_name(str(raw.get("name") or path.name))).stem[:40]
+                out = out_dir / f"{i:03d}_{stem}.jpg"
                 engine.render_one(CFG, path, item["text"], item["tone"], item["accent"], out,
                                   styles=item["styles"], fx=item["fx"], block=item["block"],
                                   offsets=item["offsets"])
@@ -337,7 +387,9 @@ def run_job(jid, d):
 
 
 def open_folder(path):
-    p = Path(path)
+    p = resolve_out(path)
+    if not p.exists():
+        p.mkdir(parents=True, exist_ok=True)  # henüz üretim yapılmadıysa klasör boş olarak açılsın
     if not p.is_dir():
         raise FileNotFoundError(str(p))
     if hasattr(os, "startfile"):
@@ -447,9 +499,7 @@ class Handler(BaseHTTPRequestHandler):
             if c == "/api/session" and m == "GET":
                 return self._json(load_session())
             if c == "/api/session" and m == "PUT":
-                tmp = SESSION.with_suffix(".tmp")
-                tmp.write_bytes(self._body())
-                tmp.replace(SESSION)
+                save_session(self._body())
                 return self._json({"ok": True})
             if c == "/api/photos" and m == "POST":
                 return self._json(save_photo(q.get("name", ["foto.jpg"])[0], self._body()))
@@ -463,6 +513,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(render_preview(json.loads(self._body())))
             if c == "/api/generate" and m == "POST":
                 d = json.loads(self._body())
+                if not isinstance(d.get("items"), list) or not d["items"]:
+                    raise ValueError("Üretilecek fotoğraf yok")
+                for old in [k for k, j in JOBS.items() if j["finished"]][:-10]:
+                    JOBS.pop(old, None)  # bitmiş işleri sınırsız biriktirme
                 jid = uuid.uuid4().hex[:8]
                 JOBS[jid] = {"total": len(d["items"]), "done": 0, "files": [], "errors": [],
                              "finished": False, "outDir": ""}
@@ -588,6 +642,7 @@ def main():
             return
     # eski sürümlerden kalan ayrı tarayıcı profili artık kullanılmıyor
     shutil.rmtree(HERE / ".webprofile", ignore_errors=True)
+    prune_uploads()
     PORT = free_port(int(os.environ.get("NV_PORT", 8765)))
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     srv.daemon_threads = True

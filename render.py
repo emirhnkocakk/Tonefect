@@ -180,14 +180,25 @@ def font_for(cfg, role, size, weight=None, italic=False):
     return font
 
 
+TR_CHARS = set("çğıöşüÇĞİÖŞÜ")
+
+
+def to_upper(text, turkish):
+    """Turkce metinde i -> İ ve ı -> I olmali (str.upper 'bir' kelimesini 'BIR' yapar)."""
+    if turkish:
+        text = text.replace("i", "İ").replace("ı", "I")
+    return text.upper()
+
+
 def build_specs(text, accent_word, styles, uppercase):
     """Her kelime icin stil: color, weight, italic, size(carpan). styles kelime sirasina gore liste."""
     accent_norm = norm(accent_word) if accent_word else None
+    turkish = bool(TR_CHARS & set(text))
     specs = []
     for i, w in enumerate(text.split()):
         st = (styles[i] if styles and i < len(styles) and styles[i] else {})
         specs.append({
-            "text": w.upper() if uppercase else w,
+            "text": to_upper(w, turkish) if uppercase else w,
             "color": st.get("color"),
             "weight": st.get("weight"),
             "italic": bool(st.get("italic")),
