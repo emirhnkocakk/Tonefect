@@ -27,8 +27,7 @@ export const api = {
     ),
   remove: (id: string) => fetch("/api/photos/" + encodeURIComponent(id), { method: "DELETE", headers: H }).then((r) => j(r)),
   presets: () => fetch("/api/presets").then((r) => j<PresetList>(r)),
-  presetThumbs: (photo: string, w: number) =>
-    fetch("/api/presets/thumbs", json("POST", { photo, w })).then((r) => j<{ thumbs: Record<string, string> }>(r)),
+  presetThumbs: () => fetch("/api/presets/thumbs").then((r) => j<{ thumbs: Record<string, string> }>(r)),
   importPreset: (file: File) =>
     fetch("/api/presets/import?name=" + encodeURIComponent(file.name), { method: "POST", headers: H, body: file }).then((r) =>
       j<{ imported: PresetMeta[]; warnings: string[] }>(r)

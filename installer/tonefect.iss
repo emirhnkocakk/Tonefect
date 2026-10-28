@@ -3,17 +3,18 @@
 #endif
 
 [Setup]
+; AppId must stay the Grainline one: old installs upgrade in place to Tonefect instead of side by side.
 AppId={{6B1F6D52-3C1E-4E56-9A0B-1A7E5C2D9F41}
-AppName=Grainline
+AppName=Tonefect
 AppVersion={#AppVersion}
 AppPublisher=emirhnkocakk
-DefaultDirName={autopf}\Grainline
-DefaultGroupName=Grainline
+DefaultDirName={autopf}\Tonefect
+DefaultGroupName=Tonefect
 PrivilegesRequired=lowest
 OutputDir=..\installer_out
-OutputBaseFilename=Grainline-Setup
+OutputBaseFilename=Tonefect-Setup
 SetupIconFile=..\assets\logo.ico
-UninstallDisplayIcon={app}\Grainline.exe
+UninstallDisplayIcon={app}\Tonefect.exe
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -28,17 +29,21 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
 [Files]
-Source: "..\dist\Grainline\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\dist\Tonefect\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{autoprograms}\Grainline"; Filename: "{app}\Grainline.exe"
-Name: "{autodesktop}\Grainline"; Filename: "{app}\Grainline.exe"; Tasks: desktopicon
+Name: "{autoprograms}\Tonefect"; Filename: "{app}\Tonefect.exe"
+Name: "{autodesktop}\Tonefect"; Filename: "{app}\Tonefect.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\Grainline.exe"; Description: "{cm:LaunchProgram,Grainline}"; Flags: nowait postinstall
+Filename: "{app}\Tonefect.exe"; Description: "{cm:LaunchProgram,Tonefect}"; Flags: nowait postinstall
 
 [InstallDelete]
 Type: filesandordirs; Name: "{app}\.webprofile"
+; leftovers from versions installed under the Grainline name
+Type: files; Name: "{app}\Grainline.exe"
+Type: files; Name: "{autoprograms}\Grainline.lnk"
+Type: files; Name: "{autodesktop}\Grainline.lnk"
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\.webprofile"

@@ -119,11 +119,7 @@ export function Panel({ item, items, cfg, selected, setSelected, setText, patch,
         </TabsContent>
 
         <TabsContent value="color" className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 pt-1">
-          {!item ? (
-            <p className="pt-6 text-sm text-muted-foreground">Önce bir fotoğraf ekle.</p>
-          ) : (
-            <ColorPanel item={item} presets={presets} groups={groups} setFx={setFx} onPresetsChange={onPresetsChange} />
-          )}
+          <ColorPanel item={item} presets={presets} groups={groups} setFx={setFx} onPresetsChange={onPresetsChange} />
         </TabsContent>
 
         <TabsContent value="fx" className="min-h-0 flex-1 space-y-6 overflow-y-auto px-4 pb-4">

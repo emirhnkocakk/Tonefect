@@ -66,7 +66,7 @@ export function SettingsDialog({ open, onClose, cfg, settings, setSettings, defa
       const u = await api.updateCheck(true)
       onUpdate(u)
       if (u.error) setMsg("Denetlenemedi: internet bağlantını kontrol et.")
-      else if (!u.newer) setMsg("Grainline güncel.")
+      else if (!u.newer) setMsg("Tonefect güncel.")
     } catch (e: any) {
       setMsg(e.message)
     }
@@ -140,7 +140,7 @@ export function SettingsDialog({ open, onClose, cfg, settings, setSettings, defa
           <h3 className="text-xs font-semibold tracking-wider text-muted-foreground">UYGULAMA</h3>
           <Row
             title="Pencereyi kapatınca tamamen kapat"
-            hint={quitOnClose ? "Pencere kapanınca Grainline arka planda da çalışmaz" : "Arka planda çalışmaya devam eder; yeniden açınca anında açılır"}
+            hint={quitOnClose ? "Pencere kapanınca Tonefect arka planda da çalışmaz" : "Arka planda çalışmaya devam eder; yeniden açınca anında açılır"}
           >
             <Switch checked={quitOnClose} onCheckedChange={onQuitOnClose} />
           </Row>
@@ -153,7 +153,7 @@ export function SettingsDialog({ open, onClose, cfg, settings, setSettings, defa
 
         <section className="space-y-3">
           <h3 className="text-xs font-semibold tracking-wider text-muted-foreground">HAKKINDA</h3>
-          <Row title="Grainline" hint={`Sürüm ${version === "dev" ? "geliştirme" : "v" + version}`}>
+          <Row title="Tonefect" hint={`Sürüm ${version === "dev" ? "geliştirme" : "v" + version}`}>
             <Button variant="secondary" size="sm" onClick={check} disabled={checking || version === "dev"}>
               {checking ? "Denetleniyor…" : "Güncellemeleri denetle"}
             </Button>

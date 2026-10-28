@@ -13,8 +13,10 @@ import { api } from "@/lib/api"
 import { mergeStyle, naturalSort, remap, words } from "@/lib/text"
 import type { Config, Item, Job, Mode, PresetMeta, Settings, Style, UpdateInfo } from "@/types"
 
-const DEFAULT_FX: Item["fx"] = { bw: true, grain: 1, vignette: 1, preset: "", amount: 1, adjust: {} }
-const DEFAULTS: Settings = { outDir: "output", tone: "quiet", fx: DEFAULT_FX, guides: true }
+// Vinyet ve parazit yeni fotoğraflarda kapalı başlar; kullanıcı isterse açar.
+const DEFAULT_FX: Item["fx"] = { bw: true, grain: 0, vignette: 0, preset: "", amount: 1, adjust: {} }
+const SETTINGS_VERSION = 2
+const DEFAULTS: Settings = { outDir: "output", tone: "quiet", fx: DEFAULT_FX, guides: true, v: SETTINGS_VERSION }
 const IMG = /\.(jpe?g|png|webp)$/i
 const HISTORY_MAX = 100
 const HISTORY_GROUP_MS = 600 // art arda gelen değişiklikler (sürükleme, yazma) tek adım sayılır
@@ -60,7 +62,9 @@ export default function App() {
         const [c, s] = await Promise.all([api.config(), api.session()])
         setCfg(c)
         const st = s.settings || {}
-        setSettings({ ...DEFAULTS, ...st, fx: { ...DEFAULTS.fx, ...(st.fx || {}) }, outDir: st.outDir || c.outDir || "output" })
+        // eski kayıtlarda varsayılan vinyet/parazit açıktı; bir kez kapalıya çek
+        const fx = { ...DEFAULTS.fx, ...(st.fx || {}), ...((st.v ?? 1) < SETTINGS_VERSION ? { grain: 0, vignette: 0 } : {}) }
+        setSettings({ ...DEFAULTS, ...st, fx, v: SETTINGS_VERSION, outDir: st.outDir || c.outDir || "output" })
         setSignature(c.brand.signature_text)
         setQuitOnClose(c.quitOnClose !== false)
         const its: Item[] = (s.items || []).map(normItem)
@@ -272,7 +276,7 @@ export default function App() {
   if (bye)
     return (
       <div className="grid h-full place-items-center text-muted-foreground">
-        <p className="text-sm">Grainline kapatıldı. Bu pencereyi kapatabilirsin.</p>
+        <p className="text-sm">Tonefect kapatıldı. Bu pencereyi kapatabilirsin.</p>
       </div>
     )
   if (!cfg)
@@ -294,8 +298,8 @@ export default function App() {
       >
         <header className="flex h-12 shrink-0 items-center justify-between border-b px-4">
           <div className="flex items-center gap-2.5">
-            <img src="/logo.svg" alt="" className="h-7 w-7" />
-            <span className="text-sm font-semibold tracking-[0.22em] text-foreground">GRAINLINE</span>
+            <img src="/logo.png" alt="" className="h-7 w-7" />
+            <span className="text-sm font-semibold tracking-[0.22em] text-foreground">TONEFECT</span>
           </div>
           <div className="flex items-center gap-2">
             {upd?.newer && (

@@ -1,4 +1,4 @@
-"""Grainline - hazir renk ayarlari (preset) motoru.
+"""Tonefect - hazir renk ayarlari (preset) motoru.
 
 Bir "look" sozlugu fotografa uygulanacak renk islemlerini tarif eder (hepsi istege bagli,
 varsayilan etkisiz). Degerler -1..1 araligindadir (pozlama stop cinsindendir):
@@ -238,7 +238,7 @@ BUILTIN = [
 ]
 GROUPS = ["Doğal", "Sinematik", "Film", "Siyah-beyaz", USER_GROUP]
 # Uygulamanin ilk (eski) gorunumu: render.grade'in klasik yolu, look yok.
-CLASSIC = {"id": "", "name": "Grainline klasik", "group": "Sinematik", "look": None,
+CLASSIC = {"id": "", "name": "Tonefect klasik", "group": "Sinematik", "look": None,
            "bw": True, "grain": 1.0, "vignette": 1.0}
 
 

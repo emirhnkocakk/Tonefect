@@ -26,23 +26,23 @@ jobs:
           Set-Content -Path VERSION -Value $ver -NoNewline
           "version=$ver" >> $env:GITHUB_OUTPUT
       - name: Build exe
-        run: python -m PyInstaller --noconfirm --clean --onedir --noconsole --name Grainline --icon assets/logo.ico server.py
+        run: python -m PyInstaller --noconfirm --clean --onedir --noconsole --name Tonefect --icon assets/logo.ico server.py
       - name: Add web, fonts, version and config next to the exe
         shell: pwsh
         run: |
-          Copy-Item web dist/Grainline/web -Recurse
-          Copy-Item fonts dist/Grainline/fonts -Recurse
-          Copy-Item brand.json dist/Grainline/brand.json
-          Copy-Item VERSION dist/Grainline/VERSION
+          Copy-Item web dist/Tonefect/web -Recurse
+          Copy-Item fonts dist/Tonefect/fonts -Recurse
+          Copy-Item brand.json dist/Tonefect/brand.json
+          Copy-Item VERSION dist/Tonefect/VERSION
       - name: Build installer
         shell: pwsh
         run: |
           choco install innosetup -y --no-progress
-          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=${{ steps.ver.outputs.version }}" installer/grainline.iss
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=${{ steps.ver.outputs.version }}" installer/tonefect.iss
       - name: Publish release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = "v${{ steps.ver.outputs.version }}"
-          gh release create $tag installer_out/Grainline-Setup.exe --target "${{ github.sha }}" --title "Grainline $tag" --notes-file RELEASE_NOTES.md
+          gh release create $tag installer_out/Tonefect-Setup.exe --target "${{ github.sha }}" --title "Tonefect $tag" --notes-file RELEASE_NOTES.md

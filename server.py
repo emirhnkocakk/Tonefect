@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Grainline - yerel sunucu ve uygulama penceresi.
+"""Tonefect - yerel sunucu ve uygulama penceresi.
 
 Arayuz (web/ klasoru, React + shadcn/ui) bu sunucuyla konusur; gorsel uretim render.py motorunu kullanir.
-Calistir:  python server.py        (NegansVision.bat bunu yapar)
+Calistir:  python server.py
 """
 import base64
 import io
@@ -31,6 +31,7 @@ if sys.stdout is None:  # exe (konsolsuz) modunda
 if sys.stderr is None:
     sys.stderr = open(os.devnull, "w")
 
+import numpy as np
 from PIL import Image, ImageOps
 
 import looks
@@ -207,20 +208,34 @@ def preset_list():
     return {"presets": [looks.meta(p) for p in PRESETS.values()], "groups": looks.GROUPS}
 
 
-def preset_thumbs(d):
-    """Seçili fotoğrafın her hazır ayarla küçük önizlemesi (gren yok, hızlı olsun diye)."""
-    path = photo_path(d["photo"])
-    tw = max(60, min(320, int(d.get("w", 180))))
-    with LOCK:
-        small = get_crop(path).resize((tw, round(tw * H / W)), Image.BILINEAR)
-    out = {}
-    for p in list(PRESETS.values()):
-        fx = {"bw": p["bw"], "grain": 0.0, "vignette": p["vignette"], "look": p["look"], "amount": 1.0}
-        im = engine.grade(small, CFG, 0, fx)
-        buf = io.BytesIO()
-        im.save(buf, "JPEG", quality=80)
-        out[p["id"]] = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
-    return {"thumbs": out}
+SAMPLE = WEB / "sample.jpg"  # kütüphanedeki önizlemelerin stok görseli
+SAMPLE_THUMBS = {}
+THUMB_W = 216
+
+
+def sample_image():
+    tw, th = THUMB_W, round(THUMB_W * H / W)
+    try:
+        return engine.cover_crop(Image.open(SAMPLE), (tw, th))
+    except Exception:  # görsel yoksa yumuşak bir gökyüzü/zemin geçişi
+        y = np.linspace(0, 1, th, dtype=np.float32)[:, None, None]
+        sky = np.array([0.45, 0.62, 0.85], np.float32) * (1 - y) + np.array([0.9, 0.7, 0.5], np.float32) * y
+        a = np.where(y > 0.62, np.array([0.3, 0.42, 0.22], np.float32), sky) * np.ones((1, tw, 1), np.float32)
+        return Image.fromarray((a * 255).astype(np.uint8), "RGB")
+
+
+def preset_thumbs():
+    """Her hazır ayarın aynı stok görsel üzerindeki önizlemesi; bir kez hesaplanıp saklanır.
+    Vinyet ve parazit kullanıcıya ait olduğundan önizlemelerde yok."""
+    todo = [p for p in list(PRESETS.values()) if p["id"] not in SAMPLE_THUMBS]
+    if todo:
+        img = sample_image()
+        for p in todo:
+            fx = {"bw": p["bw"], "grain": 0.0, "vignette": 0.0, "look": p["look"], "amount": 1.0}
+            buf = io.BytesIO()
+            engine.grade(img, CFG, 0, fx).save(buf, "JPEG", quality=82)
+            SAMPLE_THUMBS[p["id"]] = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+    return {"thumbs": {k: SAMPLE_THUMBS[k] for k in PRESETS if k in SAMPLE_THUMBS}}
 
 
 def import_presets(name, data):
@@ -356,7 +371,7 @@ def check_update(force=False):
     try:
         req = urllib.request.Request(
             f"https://api.github.com/repos/{REPO}/releases/latest",
-            headers={"Accept": "application/vnd.github+json", "User-Agent": "Grainline"})
+            headers={"Accept": "application/vnd.github+json", "User-Agent": "Tonefect"})
         with urllib.request.urlopen(req, timeout=6) as r:
             rel = json.loads(r.read().decode("utf-8"))
         latest = str(rel.get("tag_name", "")).lstrip("v")
@@ -393,9 +408,9 @@ def run_update():
         url = info.get("_asset")
         if not (info.get("canInstall") and url):
             raise RuntimeError("Otomatik güncelleme yalnızca kurulu sürümde çalışır.")
-        dest = Path(tempfile.mkdtemp(prefix="grainline_")) / "Grainline-Setup.exe"
+        dest = Path(tempfile.mkdtemp(prefix="grainline_")) / "Tonefect-Setup.exe"
         UPDATE.update(state="downloading", done=0, total=info.get("size", 0), error="")
-        req = urllib.request.Request(url, headers={"User-Agent": "Grainline"})
+        req = urllib.request.Request(url, headers={"User-Agent": "Tonefect"})
         with urllib.request.urlopen(req, timeout=30) as r, open(dest, "wb") as f:
             UPDATE["total"] = int(r.headers.get("Content-Length") or UPDATE["total"] or 0)
             while True:
@@ -474,7 +489,7 @@ def open_folder(path):
 # ----------------------------------------------------------------------- HTTP
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
-    server_version = "NegansVision"
+    server_version = "Tonefect"
 
     def log_message(self, *a):
         pass
@@ -582,8 +597,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._file(t, cache=True) if t.is_file() else self._err(404, "yok")
             if c == "/api/presets" and m == "GET":
                 return self._json(preset_list())
-            if c == "/api/presets/thumbs" and m == "POST":
-                return self._json(preset_thumbs(json.loads(self._body())))
+            if c == "/api/presets/thumbs" and m == "GET":
+                return self._json(preset_thumbs())
             if c == "/api/presets/import" and m == "POST":
                 return self._json(import_presets(q.get("name", [""])[0], self._body()))
             if c.startswith("/api/presets/") and m == "DELETE":
@@ -705,7 +720,7 @@ def watchdog():
 
 
 def running_instance():
-    """Zaten çalışan bir Grainline varsa adresini döndürür."""
+    """Zaten çalışan bir Tonefect varsa adresini döndürür."""
     for p in range(8765, 8795):
         try:
             with urllib.request.urlopen(f"http://127.0.0.1:{p}/api/ping", timeout=0.4) as r:
@@ -730,7 +745,7 @@ def main():
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     srv.daemon_threads = True
     url = f"http://127.0.0.1:{PORT}/"
-    print(f"Grainline çalışıyor: {url}")
+    print(f"Tonefect çalışıyor: {url}")
     print("Kapatmak için uygulamadaki güç düğmesine bas ya da bu pencereyi kapat.")
     if "--no-window" not in sys.argv:
         threading.Timer(0.6, open_window, args=(url,)).start()

@@ -1,11 +1,11 @@
-<p align="center"><img src="assets/logo.svg" width="112" alt="Grainline logo"></p>
+<p align="center"><img src="assets/logo.png" width="112" alt="Tonefect logo"></p>
 
-<h1 align="center">Grainline</h1>
-<p align="center"><i>basic-photo-editor</i></p>
+<h1 align="center">Tonefect</h1>
+<p align="center"><i>one-click colour & effects for your photos</i></p>
 
 **English** · [Türkçe](#türkçe)
 
-A small desktop-style tool that turns your photos and short quotes into dark, cinematic, Instagram-ready images (4:5, 1080×1350). Built for quote / motivation pages: it renders the text, film grain, vignette and a brand signature, and exports numbered JPEGs.
+Tonefect (formerly Grainline) is a small desktop-style tool that turns your photos and short quotes into dark, cinematic, Instagram-ready images (4:5, 1080×1350). Built for quote / motivation pages: it renders the text, film grain, vignette and a brand signature, and exports numbered JPEGs.
 
 ## Features
 - **Live preview** – what you see is exactly what gets exported.
@@ -20,7 +20,7 @@ A small desktop-style tool that turns your photos and short quotes into dark, ci
 - **Modern UI** – React + Tailwind + shadcn/ui, served by a tiny local Python server (nothing leaves your computer).
 
 ## Download (Windows)
-Get `Grainline-Setup.exe` from the [Releases](../../releases) page and run it (no admin rights needed). Then open **Grainline** from the Start menu or desktop. No Python needed.
+Get `Tonefect-Setup.exe` from the [Releases](../../releases) page and run it (no admin rights needed). Then open **Tonefect** from the Start menu or desktop. No Python needed.
 
 ## Run from source
 ```bash
@@ -50,7 +50,7 @@ npm run build        # then copy webui/dist to ./web
 
 # Türkçe
 
-Fotoğraflarını ve kısa sözlerini koyu, sinematik, Instagram'a hazır görsellere (4:5, 1080×1350) dönüştüren küçük bir masaüstü aracı. Söz/motivasyon sayfaları için yapıldı: yazıyı, film greni, vinyet ve marka imzasını ekler ve numaralı JPEG'ler olarak dışa aktarır.
+Tonefect (eski adıyla Grainline), fotoğraflarını ve kısa sözlerini koyu, sinematik, Instagram'a hazır görsellere (4:5, 1080×1350) dönüştüren küçük bir masaüstü aracı. Söz/motivasyon sayfaları için yapıldı: yazıyı, film greni, vinyet ve marka imzasını ekler ve numaralı JPEG'ler olarak dışa aktarır.
 
 ## Özellikler
 - **Canlı önizleme** – ekranda gördüğün, dışa aktarılanla birebir aynıdır.
@@ -65,7 +65,7 @@ Fotoğraflarını ve kısa sözlerini koyu, sinematik, Instagram'a hazır görse
 - **Modern arayüz** – React + Tailwind + shadcn/ui; küçük bir yerel Python sunucusuyla çalışır (hiçbir şey bilgisayarından çıkmaz).
 
 ## İndir (Windows)
-[Releases](../../releases) sayfasından `Grainline-Setup.exe` dosyasını indirip çalıştır (yönetici izni gerekmez). Kurulumdan sonra Başlat menüsü ya da masaüstünden **Grainline**'ı aç. Python gerekmez.
+[Releases](../../releases) sayfasından `Tonefect-Setup.exe` dosyasını indirip çalıştır (yönetici izni gerekmez). Kurulumdan sonra Başlat menüsü ya da masaüstünden **Tonefect**'i aç. Python gerekmez.
 
 ## Kaynaktan çalıştırma
 ```bash
@@ -92,3 +92,5 @@ npm run build        # sonra webui/dist içeriğini ./web klasörüne kopyala
 
 ## License / Lisans
 MIT (code). Bundled fonts (Cormorant Garamond, Montserrat) are under SIL OFL; licences are in `fonts/`. / Kod MIT, dahil edilen fontlar (Cormorant Garamond, Montserrat) SIL OFL lisanslıdır, lisanslar `fonts/` içindedir.
+
+The sample photo used for preset previews (`webui/public/sample.jpg`) is [Narrow Streets of Genoa](https://commons.wikimedia.org/wiki/File:Narrow_Streets_of_Genoa_(Unsplash).jpg) from Unsplash, CC0. / Hazır ayar önizlemelerindeki örnek fotoğraf (`webui/public/sample.jpg`) Unsplash kaynaklı [Narrow Streets of Genoa](https://commons.wikimedia.org/wiki/File:Narrow_Streets_of_Genoa_(Unsplash).jpg), CC0 lisanslıdır.

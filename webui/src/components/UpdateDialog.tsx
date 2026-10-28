@@ -94,7 +94,7 @@ export function UpdateDialog({ open, onClose, info }: Props) {
         )}
         {gone && (
           <p className="flex items-center gap-2 text-sm text-primary">
-            <Loader2 className="h-4 w-4 animate-spin" /> Güncelleme kuruluyor, Grainline birazdan yeniden açılacak.
+            <Loader2 className="h-4 w-4 animate-spin" /> Güncelleme kuruluyor, Tonefect birazdan yeniden açılacak.
           </p>
         )}
         {st?.state === "error" && <p className="rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-xs text-destructive">{st.error}</p>}
@@ -116,7 +116,7 @@ export function UpdateDialog({ open, onClose, info }: Props) {
           </div>
         )}
         {opened && (
-          <p className="text-xs text-primary">İndirme tarayıcında başladı. Bittiğinde Grainline-Setup.exe dosyasını çalıştır; ayarların ve fotoğrafların korunur.</p>
+          <p className="text-xs text-primary">İndirme tarayıcında başladı. Bittiğinde Tonefect-Setup.exe dosyasını çalıştır; ayarların ve fotoğrafların korunur.</p>
         )}
         {!info.canInstall && !busy && !opened && (
           <p className="text-[11px] text-muted-foreground">Bu sürüm kendini otomatik kuramıyor; kurulum dosyası tarayıcında indirilecek.</p>

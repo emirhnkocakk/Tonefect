@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils"
 import type { Adjust, Fx, Item, PresetMeta } from "@/types"
 
 type Props = {
-  item: Item
+  item?: Item
   presets: PresetMeta[]
   groups: string[]
   setFx: (p: Partial<Fx>, all?: boolean) => void
@@ -26,35 +26,31 @@ const IMPORT_ACCEPT = ".xmp,.lrtemplate,.dng,.cube,.zip"
 
 export function ColorPanel({ item, presets, groups, setFx, onPresetsChange }: Props) {
   const fileRef = useRef<HTMLInputElement>(null)
-  const cache = useRef(new Map<string, Record<string, string>>())
   const [thumbs, setThumbs] = useState<Record<string, string>>({})
   const [importing, setImporting] = useState(false)
-  const current = item.fx.preset ?? ""
-  const adjust = item.fx.adjust ?? {}
-  const amount = item.fx.amount ?? 1
+  const current = item?.fx.preset ?? ""
+  const adjust = item?.fx.adjust ?? {}
+  const amount = item?.fx.amount ?? 1
   const ver = presets.map((p) => p.id).join(",")
 
-  // Hazır ayarların bu fotoğraftaki küçük önizlemeleri (fotoğraf/ayar listesi değişince yenilenir)
+  // Kütüphane her zaman aynı stok görsel üzerinde gösterilir (fotoğraf eklemeden de görünür).
   useEffect(() => {
-    const key = item.id + "|" + ver
-    const hit = cache.current.get(key)
-    if (hit) return setThumbs(hit)
-    setThumbs({})
+    if (!presets.length) return
     let alive = true
     api
-      .presetThumbs(item.id, 180)
-      .then((r) => {
-        cache.current.set(key, r.thumbs)
-        if (alive) setThumbs(r.thumbs)
-      })
+      .presetThumbs()
+      .then((r) => alive && setThumbs(r.thumbs))
       .catch(() => {})
     return () => {
       alive = false
     }
-  }, [item.id, ver])
+  }, [ver])
 
-  const choose = (p: PresetMeta) =>
-    setFx({ preset: p.id, amount: 1, bw: p.bw, grain: p.grain, vignette: p.vignette })
+  // Vinyet ve parazit kullanıcıya ait: hazır ayar seçmek onları değiştirmez.
+  const choose = (p: PresetMeta) => {
+    if (!item) return toast.info("Bu görünümü uygulamak için önce bir fotoğraf ekle")
+    setFx({ preset: p.id, amount: 1, bw: p.bw })
+  }
 
   const setAdjust = (k: keyof Adjust, v: number) => setFx({ adjust: { ...adjust, [k]: v } })
 
@@ -76,7 +72,7 @@ export function ColorPanel({ item, presets, groups, setFx, onPresetsChange }: Pr
     setImporting(false)
     if (!count) return
     await onPresetsChange()
-    if (first) choose(first)
+    if (first && item) choose(first)
     toast.success(`${count} hazır ayar eklendi`)
   }
 
@@ -85,7 +81,7 @@ export function ColorPanel({ item, presets, groups, setFx, onPresetsChange }: Pr
     try {
       await api.deletePreset(p.id)
       await onPresetsChange()
-      if (current === p.id) setFx({ preset: "", amount: 1, bw: true, grain: 1, vignette: 1 })
+      if (current === p.id) setFx({ preset: "", amount: 1, bw: true })
     } catch (e: any) {
       toast.error(e.message)
     }
@@ -96,7 +92,7 @@ export function ColorPanel({ item, presets, groups, setFx, onPresetsChange }: Pr
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
-        <Label>Hazır ayarlar</Label>
+        <Label>Renk kütüphanesi</Label>
         <Button variant="ghost" size="sm" className="h-7 gap-1.5 text-xs" disabled={importing} onClick={() => fileRef.current?.click()}>
           {importing ? <Loader2 className="!size-3.5 animate-spin" /> : <Upload className="!size-3.5" />} İçe aktar
         </Button>
@@ -147,7 +143,7 @@ export function ColorPanel({ item, presets, groups, setFx, onPresetsChange }: Pr
         Lightroom (.xmp, .lrtemplate, mobil .dng) ve LUT (.cube) dosyalarını ya da bunları içeren bir .zip'i içe aktarabilirsin.
       </p>
 
-      {current !== "" && (
+      {item && current !== "" && (
         <div className="space-y-3">
           <div className="flex justify-between">
             <Label>Yoğunluk</Label>
@@ -157,6 +153,7 @@ export function ColorPanel({ item, presets, groups, setFx, onPresetsChange }: Pr
         </div>
       )}
 
+      {item && (<>
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <Label>İnce ayar</Label>
@@ -183,6 +180,7 @@ export function ColorPanel({ item, presets, groups, setFx, onPresetsChange }: Pr
       <Button variant="secondary" size="sm" className="w-full" onClick={() => setFx({}, true)}>
         Bu rengi tüm fotoğraflara uygula
       </Button>
+      </>)}
 
       <input
         ref={fileRef}
