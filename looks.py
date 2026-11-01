@@ -6,7 +6,7 @@ varsayilan etkisiz). Degerler -1..1 araligindadir (pozlama stop cinsindendir):
   exposure, temperature, tint, highlights, shadows, whites, blacks, contrast,
   saturation, vibrance, fade (0..1), bw (bool),
   shadow_tint / mid_tint / highlight_tint: [renk tonu (derece), doygunluk 0..1],
-  hsl: {"Orange": [doygunluk, parlaklik], ...},
+  hsl: {"Orange": [doygunluk, parlaklik, renk tonu kaydirma], ...} (ucuncusu istege bagli),
   curves: {"rgb" | "prm" | "r" | "g" | "b": [[x, y], ...] (0..1)},
   lut_data: 3B LUT dizisi (N, N, N, 3), .cube iceri aktarimindan
 
@@ -25,7 +25,12 @@ import numpy as np
 LUMA = np.array([0.299, 0.587, 0.114], dtype=np.float32)
 HUE_BANDS = {"Red": 0, "Orange": 30, "Yellow": 60, "Green": 120,
              "Aqua": 180, "Blue": 240, "Purple": 270, "Magenta": 300}
-ADJUST_KEYS = ("exposure", "contrast", "temperature", "saturation")
+# kullanicinin ince ayar kaydiricilari (fade 0..1, digerleri -1..1) + "hsl" karistirici
+ADJUST_KEYS = ("exposure", "contrast", "highlights", "shadows", "whites", "blacks", "fade",
+               "temperature", "tint", "vibrance", "saturation",
+               "sharpen", "clarity", "denoise")  # detay: render.detail uygular (apply yok sayar)
+POSITIVE_KEYS = ("fade", "sharpen", "denoise")  # 0..1; digerleri -1..1
+HUE_SHIFT_DEG = 30  # karistiricidaki renk tonu kaydirmasinin en fazla acisi
 USER_GROUP = "Kendi ayarların"
 
 
@@ -51,6 +56,16 @@ def _hue(a):
     r, g, b = a[..., 0], a[..., 1], a[..., 2]
     h = np.where(mx == r, ((g - b) / cc) % 6, np.where(mx == g, (b - r) / cc + 2, (r - g) / cc + 4))
     return h * 60.0, c
+
+
+def _rotate_hue(a, theta):
+    """Rengi gri eksen (1,1,1) etrafinda piksel basina theta radyan dondurur (renk tonu kaydirma)."""
+    k = np.float32(1 / np.sqrt(3))
+    c, s = np.cos(theta)[..., None], np.sin(theta)[..., None]
+    r, g, b = a[..., 0:1], a[..., 1:2], a[..., 2:3]
+    cross = np.concatenate([g - b, b - r, r - g], axis=-1) * k
+    dot = (r + g + b) * k
+    return (a * c + cross * s + k * dot * (1 - c)).astype(np.float32)
 
 
 def apply_lut(a, lut):
@@ -85,6 +100,9 @@ def apply(arr, look):
     a = arr
     if look.get("lut_data") is not None:
         a = apply_lut(a, look["lut_data"])
+    lv = look.get("levels")  # [siyah nokta, beyaz nokta]: sikismis ton araligini ger (otomatik iyilestirme)
+    if lv and lv[1] - lv[0] > 0.05:
+        a = (a - np.float32(lv[0])) / np.float32(lv[1] - lv[0])
 
     if v("exposure"):
         a = a * np.float32(2.0 ** v("exposure"))
@@ -121,21 +139,28 @@ def apply(arr, look):
             a[..., i] = _curve(np.clip(a[..., i], 0, 1), curves[key])
 
     hsl = look.get("hsl") or {}
-    if any(s or l for s, l in hsl.values()):
+    if any(any(v) for v in hsl.values()):
         a = np.clip(a, 0, 1)
         h, ch = _hue(a)
         S = np.zeros(h.shape, np.float32)
         Lm = np.zeros(h.shape, np.float32)
-        for band, (s, l) in hsl.items():
-            if band not in HUE_BANDS or not (s or l):
+        Hs = np.zeros(h.shape, np.float32)
+        for band, vals in hsl.items():
+            s, l, hs = (list(vals) + [0.0])[:3]
+            if band not in HUE_BANDS or not (s or l or hs):
                 continue
             d = np.abs(((h - HUE_BANDS[band] + 180) % 360) - 180)
             w = np.clip(1 - d / 40.0, 0, 1)
             S += w * s
             Lm += w * l
+            Hs += w * hs
+        cw = np.clip(ch * 3, 0, 1)  # gri tonlara dokunma
+        if Hs.any():
+            # eksi aci = renk tonu dairesinde ileri (Lightroom gibi: + mavi -> mor, + turuncu -> sari)
+            a = _rotate_hue(a, -np.radians(Hs * HUE_SHIFT_DEG * cw))
         L = _lum(a)[..., None]
         a = L + (a - L) * (1 + S)[..., None]
-        a = a + (Lm * 0.25 * np.clip(ch * 3, 0, 1))[..., None]
+        a = a + (Lm * 0.25 * cw)[..., None]
 
     sat, vib = v("saturation"), v("vibrance")
     if sat or vib:
@@ -166,9 +191,63 @@ def apply(arr, look):
     return np.clip(a, 0, 1).astype(np.float32)
 
 
+
+
+def auto_adjust(a, bw=False):
+    """Tek tikla iyilestirme: islenmis gorselin (0..1, kucuk) histogramindan ince ayar degerleri.
+    Yalnizca isik/ton ve canlilik; iyi pozlanmis fotografa dokunmaz. Beyaz dengesine dokunmaz
+    (tek fotograftan guvenilir tahmin edilemiyor, Lightroom'un Otomatik'i de dokunmaz)."""
+    def lum(x):
+        return _lum(np.clip(x, 0, 1))
+
+    out = {}
+    L = lum(a)
+    lo, hi = (float(v) for v in np.percentile(L, (0.5, 99.5)))
+    if hi - lo < 0.7:  # soluk/sisli: ton araligini ger
+        out["levels"] = [round(lo * 0.9, 3), round(min(1.0, hi + (1 - hi) * 0.1), 3)]
+    cur = apply(a, out) if out else a
+
+    p50 = float(np.median(lum(cur)))
+    if not 0.38 <= p50 <= 0.52:  # dokunmama araligi
+        ev = 0.0
+        for _ in range(2):
+            m = float(np.median(lum(apply(cur, {"exposure": ev}) if ev else cur)))
+            ev = max(-2.0, min(2.0, ev + np.log2(0.45 / max(m, 0.01)) * 0.85))
+        out["exposure"] = ev
+        cur = apply(cur, {"exposure": ev})
+
+    L = lum(cur)
+    bright, dark = float((L > 0.96).mean()), float((L < 0.06).mean())
+    if bright > 0.05:
+        out["highlights"] = -min(0.4, (bright - 0.03) * 5)
+    if dark > 0.2:
+        out["shadows"] = min(0.4, (dark - 0.15) * 2)
+    std = float(L.std())
+    if std < 0.17:
+        out["contrast"] = min(0.3, (0.2 - std) * 3)
+    elif std > 0.3:
+        out["contrast"] = -min(0.2, (std - 0.3) * 2)
+
+    if not bw:
+        c = np.clip(cur, 0, 1)
+        sat = c.max(-1) - c.min(-1)
+        if float(sat.mean()) < 0.15:
+            out["vibrance"] = 0.2
+    return {k: (v if k == "levels" else round(float(v), 2)) for k, v in out.items()
+            if k == "levels" or abs(v) >= 0.01}
+
+
 def adjust_look(adj):
     """Kullanicinin ince ayar kaydiricilari -> look (hazir ayarin ustune uygulanir)."""
-    return {k: adj[k] for k in ADJUST_KEYS if adj.get(k)} if adj else {}
+    if not adj:
+        return {}
+    out = {k: adj[k] for k in ADJUST_KEYS if adj.get(k)}
+    if adj.get("levels"):
+        out["levels"] = adj["levels"]
+    hsl = {b: v for b, v in (adj.get("hsl") or {}).items() if b in HUE_BANDS and any(v)}
+    if hsl:
+        out["hsl"] = hsl
+    return out
 
 
 # ------------------------------------------------------------ hazir ayarlar
@@ -243,7 +322,17 @@ CLASSIC = {"id": "", "name": "Tonefect klasik", "group": "Sinematik", "look": No
 
 
 def meta(p):
-    return {k: p[k] for k in ("id", "name", "group", "bw", "grain", "vignette")} | {"user": p["id"].startswith("u:")}
+    m = {k: p[k] for k in ("id", "name", "group", "bw", "grain", "vignette")} | {"user": p["id"].startswith("u:")}
+    if p.get("recipe"):
+        m["recipe"] = p["recipe"]
+    return m
+
+
+def save_recipe(user_dir, name, recipe):
+    """Kullanicinin kendi ayari: temel gorunum + yogunluk + ince ayarlar (Lightroom hazir ayari gibi;
+    secilince bu degerler fotografa kopyalanir). look bos: dogrudan uygulanirsa etkisizdir."""
+    return _save(user_dir, {"name": name, "look": {}, "bw": bool(recipe.get("bw")),
+                            "grain": 0.0, "vignette": 0.0, "recipe": recipe})
 
 
 def load_all(user_dir):
@@ -275,7 +364,7 @@ def delete_user(user_dir, pid):
 
 # ------------------------------------------------------------ iceri aktarma
 LR_UNSUPPORTED = {
-    "Clarity2012": "Netlik (Clarity)", "Clarity": "Netlik (Clarity)", "Dehaze": "Pus giderme (Dehaze)",
+    "Dehaze": "Pus giderme (Dehaze)",
     "Texture": "Doku (Texture)", "Sharpness": "Keskinlik", "LuminanceSmoothing": "Gürültü azaltma",
 }
 
@@ -310,6 +399,7 @@ def lr_to_preset(vals, curves, name):
     look["blacks"] = one("Blacks2012")
     look["saturation"] = one("Saturation")
     look["vibrance"] = one("Vibrance")
+    look["clarity"] = one("Clarity2012", "Clarity")  # render.detail uygular
     if "IncrementalTemperature" in vals:
         look["temperature"] = one("IncrementalTemperature")
     elif "Temperature" in vals:
@@ -327,10 +417,9 @@ def lr_to_preset(vals, curves, name):
     hsl = {}
     for band in HUE_BANDS:
         s, l = one(f"SaturationAdjustment{band}"), one(f"LuminanceAdjustment{band}")
-        if s or l:
-            hsl[band] = [s, l]
-        if _num(vals, f"HueAdjustment{band}", default=0.0):
-            ignored.add("HSL renk tonu kaydırma")
+        hs = one(f"HueAdjustment{band}")
+        if s or l or hs:
+            hsl[band] = [s, l, hs]
     if hsl:
         look["hsl"] = hsl
 

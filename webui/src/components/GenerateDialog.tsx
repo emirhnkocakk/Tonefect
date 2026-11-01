@@ -13,7 +13,7 @@ export function GenerateDialog({ open, onClose, job, jobId }: Props) {
     <Dialog open={open} onOpenChange={(o) => !o && job?.finished && onClose()}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{job?.finished ? "Görseller hazır" : "Görseller üretiliyor…"}</DialogTitle>
+          <DialogTitle>{job?.total === 1 ? (job.finished ? "Görsel hazır" : "Görsel hazırlanıyor…") : job?.finished ? "Görseller hazır" : "Görseller üretiliyor…"}</DialogTitle>
           <DialogDescription>
             {job ? `${job.done} / ${job.total}` : "Başlatılıyor"}
             {job?.finished && job.outDir ? ` · ${job.outDir}` : ""}
@@ -23,7 +23,7 @@ export function GenerateDialog({ open, onClose, job, jobId }: Props) {
         {job && job.files.length > 0 && jobId && (
           <div className="grid max-h-[46vh] grid-cols-4 gap-2 overflow-y-auto pr-1">
             {job.files.map((f) => (
-              <img key={f.name} src={outputUrl(jobId, f.name)} alt="" className="aspect-[4/5] w-full rounded-md object-cover" loading="lazy" />
+              <img key={f.name} src={outputUrl(jobId, f.name)} alt="" className="aspect-[4/5] w-full rounded-md bg-muted object-contain" loading="lazy" />
             ))}
           </div>
         )}

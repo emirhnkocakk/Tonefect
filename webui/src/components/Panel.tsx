@@ -10,7 +10,12 @@ import { TONE_INFO } from "@/lib/constants"
 import { words } from "@/lib/text"
 import { cn } from "@/lib/utils"
 import { ColorPanel } from "@/components/ColorPanel"
-import type { Config, Fx, Item, PresetMeta } from "@/types"
+import { FramePanel } from "@/components/FramePanel"
+import { MaskPanel } from "@/components/MaskPanel"
+import { TextStylePanel } from "@/components/TextStylePanel"
+import { GeoPanel } from "@/components/GeoPanel"
+import { legacyGeo } from "@/lib/geo"
+import type { Config, Fx, Geo, Item, Mask, PresetMeta } from "@/types"
 
 type Props = {
   item?: Item
@@ -23,21 +28,43 @@ type Props = {
   presets: PresetMeta[]
   groups: string[]
   onPresetsChange: () => Promise<void>
+  tab: string
+  setTab: (t: string) => void
+  setGeo: (p: Partial<Geo>) => void
+  applyAllGeo: () => void
+  onCopy: () => void
+  onPaste: () => void
+  canPaste: boolean
+  maskSel: string | null
+  setMaskSel: (id: string | null) => void
+  setMasks: (m: Mask[]) => void
+  maskShow: boolean
+  setMaskShow: (v: boolean) => void
 }
 
-export function Panel({ item, items, cfg, selected, setSelected, setText, patch, presets, groups, onPresetsChange }: Props) {
+export function Panel({ item, items, cfg, selected, setSelected, setText, patch, presets, groups, onPresetsChange, tab, setTab, setGeo, applyAllGeo, onCopy, onPaste, canPaste, maskSel, setMaskSel, setMasks, maskShow, setMaskShow }: Props) {
   const ws = item ? words(item.text) : []
   const max = cfg.limits.max_words
   const setFx = (p: Partial<Fx>, all = false) => item && patch({ fx: { ...item.fx, ...p } }, all)
 
   return (
     <aside className="flex h-full w-[340px] shrink-0 flex-col border-l bg-card/40">
-      <Tabs defaultValue="text" className="flex min-h-0 flex-1 flex-col">
-        <TabsList className="mx-4 mt-4 grid grid-cols-3">
-          <TabsTrigger value="text">Metin</TabsTrigger>
-          <TabsTrigger value="color">Renk</TabsTrigger>
-          <TabsTrigger value="fx">Efekt</TabsTrigger>
+      <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
+        <TabsList className="mx-4 mt-4 grid grid-cols-5">
+          <TabsTrigger value="crop" className="px-1">Kırp</TabsTrigger>
+          <TabsTrigger value="color" className="px-1">Renk</TabsTrigger>
+          <TabsTrigger value="fx" className="px-1">Efekt</TabsTrigger>
+          <TabsTrigger value="local" className="px-1">Yerel</TabsTrigger>
+          <TabsTrigger value="text" className="px-1">Metin</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="crop" className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 pt-1">
+          {!item ? (
+            <p className="pt-6 text-sm text-muted-foreground">Önce bir fotoğraf ekle.</p>
+          ) : (
+            <GeoPanel item={item} geo={item.geo ?? legacyGeo()} setGeo={setGeo} applyAll={applyAllGeo} />
+          )}
+        </TabsContent>
 
         <TabsContent value="text" className="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 pb-4">
           {!item ? (
@@ -75,6 +102,8 @@ export function Panel({ item, items, cfg, selected, setSelected, setText, patch,
                   ))}
                 </ToggleGroup>
               </div>
+
+              <TextStylePanel item={item} patch={(p) => patch(p)} />
 
               <div className="space-y-2">
                 <Label>Vurgu kelimesi (altın)</Label>
@@ -119,7 +148,15 @@ export function Panel({ item, items, cfg, selected, setSelected, setText, patch,
         </TabsContent>
 
         <TabsContent value="color" className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 pt-1">
-          <ColorPanel item={item} presets={presets} groups={groups} setFx={setFx} onPresetsChange={onPresetsChange} />
+          <ColorPanel item={item} presets={presets} groups={groups} setFx={setFx} onPresetsChange={onPresetsChange} onCopy={onCopy} onPaste={onPaste} canPaste={canPaste} />
+        </TabsContent>
+
+        <TabsContent value="local" className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 pt-1">
+          {!item ? (
+            <p className="pt-6 text-sm text-muted-foreground">Önce bir fotoğraf ekle.</p>
+          ) : (
+            <MaskPanel item={item} selected={maskSel} select={setMaskSel} setMasks={setMasks} show={maskShow} setShow={setMaskShow} />
+          )}
         </TabsContent>
 
         <TabsContent value="fx" className="min-h-0 flex-1 space-y-6 overflow-y-auto px-4 pb-4">
@@ -149,6 +186,7 @@ export function Panel({ item, items, cfg, selected, setSelected, setText, patch,
                 </div>
                 <Slider min={0} max={100} step={1} value={[Math.round(item.fx.vignette * 100)]} onValueChange={([v]) => setFx({ vignette: v / 100 })} />
               </div>
+              <FramePanel fx={item.fx} setFx={(p) => setFx(p)} />
               <Button variant="secondary" size="sm" className="w-full" onClick={() => setFx({}, true)}>
                 Renk ve efektleri tüm fotoğraflara uygula
               </Button>

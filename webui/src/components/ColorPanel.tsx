@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from "react"
-import { Loader2, RotateCcw, Upload, X } from "lucide-react"
+import { BookmarkPlus, ClipboardCopy, ClipboardPaste, Loader2, Upload, Wand2, X } from "lucide-react"
 import { toast } from "sonner"
+import { AdjustPanel } from "@/components/AdjustPanel"
 import { Button } from "@/components/ui/button"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Slider } from "@/components/ui/slider"
 import { api } from "@/lib/api"
@@ -14,17 +17,23 @@ type Props = {
   groups: string[]
   setFx: (p: Partial<Fx>, all?: boolean) => void
   onPresetsChange: () => Promise<void>
+  onCopy: () => void
+  onPaste: () => void
+  canPaste: boolean
 }
 
-const ADJUST: [keyof Adjust, string][] = [
-  ["exposure", "Pozlama"],
-  ["contrast", "Kontrast"],
-  ["temperature", "Sıcaklık"],
-  ["saturation", "Doygunluk"],
-]
+// anahtar sırasından ve sıfır değerlerden bağımsız karşılaştırma (sunucu sırayı değiştirebilir)
+function sameAdjust(a: Adjust, b: Adjust) {
+  const norm = (x: any): any =>
+    x && typeof x === "object" && !Array.isArray(x)
+      ? Object.keys(x).sort().filter((k) => (Array.isArray(x[k]) ? x[k].some(Boolean) : typeof x[k] === "object" ? Object.keys(x[k]).length : x[k])).map((k) => [k, norm(x[k])])
+      : x
+  return JSON.stringify(norm(a)) === JSON.stringify(norm(b))
+}
+
 const IMPORT_ACCEPT = ".xmp,.lrtemplate,.dng,.cube,.zip"
 
-export function ColorPanel({ item, presets, groups, setFx, onPresetsChange }: Props) {
+export function ColorPanel({ item, presets, groups, setFx, onPresetsChange, onCopy, onPaste, canPaste }: Props) {
   const fileRef = useRef<HTMLInputElement>(null)
   const [thumbs, setThumbs] = useState<Record<string, string>>({})
   const [importing, setImporting] = useState(false)
@@ -47,12 +56,54 @@ export function ColorPanel({ item, presets, groups, setFx, onPresetsChange }: Pr
   }, [ver])
 
   // Vinyet ve parazit kullanıcıya ait: hazır ayar seçmek onları değiştirmez.
+  // Kendi kaydedilen ayarlar (tarif) değerlerini fotoğrafa kopyalar.
   const choose = (p: PresetMeta) => {
     if (!item) return toast.info("Bu görünümü uygulamak için önce bir fotoğraf ekle")
-    setFx({ preset: p.id, amount: 1, bw: p.bw })
+    if (p.recipe) setFx({ preset: p.recipe.base, amount: p.recipe.amount, adjust: p.recipe.adjust, bw: p.recipe.bw })
+    else setFx({ preset: p.id, amount: 1, bw: p.bw })
+  }
+  const isOn = (p: PresetMeta) =>
+    p.recipe
+      ? !!item && current === p.recipe.base && Math.abs(amount - p.recipe.amount) < 1e-3 &&
+        sameAdjust(adjust, p.recipe.adjust) && item.fx.bw === p.recipe.bw
+      : current === p.id
+
+  // tek tıkla iyileştirme: ışık/ton ve canlılık değerlerini ince ayara yazar (sonra elle değiştirilebilir)
+  const [autoBusy, setAutoBusy] = useState(false)
+  const autoEnhance = async () => {
+    if (!item) return
+    setAutoBusy(true)
+    try {
+      const r = await api.auto({ photo: item.id, geo: item.geo ?? null, fx: item.fx })
+      const tone = ["exposure", "contrast", "highlights", "shadows", "whites", "blacks", "vibrance", "levels"] as const
+      const next: Adjust = { ...adjust }
+      for (const k of tone) delete (next as any)[k]
+      setFx({ adjust: { ...next, ...r.adjust } })
+      toast.success(Object.keys(r.adjust).length ? "Otomatik iyileştirildi; ince ayardan değiştirebilirsin" : "Fotoğraf zaten dengeli görünüyor")
+    } catch (e: any) {
+      toast.error(e.message)
+    }
+    setAutoBusy(false)
   }
 
-  const setAdjust = (k: keyof Adjust, v: number) => setFx({ adjust: { ...adjust, [k]: v } })
+  const [saveOpen, setSaveOpen] = useState(false)
+  const [saveName, setSaveName] = useState("")
+  const [saving, setSaving] = useState(false)
+  const save = async () => {
+    if (!item || !saveName.trim()) return
+    setSaving(true)
+    try {
+      await api.savePreset(saveName.trim(), item.fx)
+      await onPresetsChange()
+      toast.success(`"${saveName.trim()}" kaydedildi`)
+      setSaveOpen(false)
+      setSaveName("")
+    } catch (e: any) {
+      toast.error(e.message)
+    }
+    setSaving(false)
+  }
+
 
   const importFiles = async (files: File[]) => {
     if (!files.length) return
@@ -87,15 +138,19 @@ export function ColorPanel({ item, presets, groups, setFx, onPresetsChange }: Pr
     }
   }
 
-  const hasAdjust = ADJUST.some(([k]) => adjust[k])
 
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <Label>Renk kütüphanesi</Label>
-        <Button variant="ghost" size="sm" className="h-7 gap-1.5 text-xs" disabled={importing} onClick={() => fileRef.current?.click()}>
-          {importing ? <Loader2 className="!size-3.5 animate-spin" /> : <Upload className="!size-3.5" />} İçe aktar
-        </Button>
+        <div className="flex items-center">
+          <Button variant="ghost" size="sm" className="h-7 gap-1.5 px-2 text-xs" disabled={!item} onClick={() => setSaveOpen(true)} title="Bu fotoğrafın renk ayarlarını hazır ayar olarak kaydet">
+            <BookmarkPlus className="!size-3.5" /> Kaydet
+          </Button>
+          <Button variant="ghost" size="sm" className="h-7 gap-1.5 px-2 text-xs" disabled={importing} onClick={() => fileRef.current?.click()}>
+            {importing ? <Loader2 className="!size-3.5 animate-spin" /> : <Upload className="!size-3.5" />} İçe aktar
+          </Button>
+        </div>
       </div>
 
       {groups.map((g) => {
@@ -111,7 +166,7 @@ export function ColorPanel({ item, presets, groups, setFx, onPresetsChange }: Pr
                     <div
                       className={cn(
                         "aspect-[4/5] w-full overflow-hidden rounded-md bg-muted ring-offset-2 ring-offset-background transition",
-                        current === p.id ? "ring-2 ring-primary" : "hover:ring-1 hover:ring-primary/50"
+                        isOn(p) ? "ring-2 ring-primary" : "hover:ring-1 hover:ring-primary/50"
                       )}
                     >
                       {thumbs[p.id] ? (
@@ -120,7 +175,7 @@ export function ColorPanel({ item, presets, groups, setFx, onPresetsChange }: Pr
                         <div className="h-full w-full animate-pulse bg-muted" />
                       )}
                     </div>
-                    <span className={cn("mt-1 block truncate text-[11px]", current === p.id ? "text-foreground" : "text-muted-foreground")}>
+                    <span className={cn("mt-1 block truncate text-[11px]", isOn(p) ? "text-foreground" : "text-muted-foreground")}>
                       {p.name}
                     </span>
                   </button>
@@ -154,33 +209,48 @@ export function ColorPanel({ item, presets, groups, setFx, onPresetsChange }: Pr
       )}
 
       {item && (<>
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <Label>İnce ayar</Label>
-          {hasAdjust && (
-            <button className="flex items-center gap-1 text-xs text-muted-foreground hover:text-primary" onClick={() => setFx({ adjust: {} })}>
-              <RotateCcw className="h-3 w-3" /> sıfırla
-            </button>
-          )}
-        </div>
-        {ADJUST.map(([k, label]) => {
-          const v = Math.round((adjust[k] ?? 0) * 100)
-          return (
-            <div key={k} className="space-y-2">
-              <div className="flex justify-between text-xs">
-                <span className="text-muted-foreground">{label}</span>
-                <span className="text-muted-foreground">{v > 0 ? `+${v}` : v}</span>
-              </div>
-              <Slider min={-100} max={100} step={1} value={[v]} onValueChange={([x]) => setAdjust(k, x / 100)} />
-            </div>
-          )
-        })}
-      </div>
-
-      <Button variant="secondary" size="sm" className="w-full" onClick={() => setFx({}, true)}>
-        Bu rengi tüm fotoğraflara uygula
+      <Button variant="secondary" className="w-full gap-2" onClick={autoEnhance} disabled={autoBusy} title="Işık, ton ve canlılığı fotoğrafa göre otomatik ayarlar">
+        {autoBusy ? <Loader2 className="!size-4 animate-spin" /> : <Wand2 className="!size-4" />} Otomatik iyileştir
       </Button>
+      <AdjustPanel adjust={adjust} setAdjust={(a) => setFx({ adjust: a })} />
+
+      <div className="space-y-2">
+        <div className="grid grid-cols-2 gap-2">
+          <Button variant="ghost" size="sm" className="text-xs" onClick={onCopy} title="Renk ve efekt ayarlarını kopyala (Ctrl+C)">
+            <ClipboardCopy className="!size-3.5" /> Ayarları kopyala
+          </Button>
+          <Button variant="ghost" size="sm" className="text-xs" disabled={!canPaste} onClick={onPaste} title="Kopyalanan ayarları bu fotoğrafa yapıştır (Ctrl+V)">
+            <ClipboardPaste className="!size-3.5" /> Yapıştır
+          </Button>
+        </div>
+        <Button variant="secondary" size="sm" className="w-full" onClick={() => setFx({}, true)}>
+          Bu rengi tüm fotoğraflara uygula
+        </Button>
+      </div>
       </>)}
+
+      <Dialog open={saveOpen} onOpenChange={(o) => !saving && setSaveOpen(o)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Hazır ayar olarak kaydet</DialogTitle>
+            <DialogDescription>Görünüm, yoğunluk, ışık, renk, renk karıştırıcı ve detay ayarları kaydedilir. Vinyet ve parazit dahil değildir.</DialogDescription>
+          </DialogHeader>
+          <Input
+            autoFocus
+            value={saveName}
+            maxLength={60}
+            placeholder="örn. Yaz akşamı"
+            onChange={(e) => setSaveName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && save()}
+          />
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setSaveOpen(false)} disabled={saving}>Vazgeç</Button>
+            <Button onClick={save} disabled={saving || !saveName.trim()}>
+              {saving && <Loader2 className="!size-4 animate-spin" />} Kaydet
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <input
         ref={fileRef}

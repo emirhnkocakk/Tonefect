@@ -1,4 +1,4 @@
-import type { Config, Job, PresetMeta, UpdateInfo, UpdateStatus } from "@/types"
+import type { Adjust, Config, Fx, Job, PresetMeta, UpdateInfo, UpdateStatus, Watermark } from "@/types"
 
 type PresetList = { presets: PresetMeta[]; groups: string[] }
 
@@ -32,11 +32,17 @@ export const api = {
     fetch("/api/presets/import?name=" + encodeURIComponent(file.name), { method: "POST", headers: H, body: file }).then((r) =>
       j<{ imported: PresetMeta[]; warnings: string[] }>(r)
     ),
+  savePreset: (name: string, fx: Fx) => fetch("/api/presets/save", json("POST", { name, fx })).then((r) => j<PresetMeta>(r)),
   deletePreset: (id: string) => fetch("/api/presets/" + encodeURIComponent(id), { method: "DELETE", headers: H }).then((r) => j<PresetList>(r)),
   preview: (p: unknown) => fetch("/api/preview", json("POST", p)).then((r) => j<any>(r)),
   generate: (body: unknown) => fetch("/api/generate", json("POST", body)).then((r) => j<{ job: string }>(r)),
   job: (id: string) => fetch("/api/job/" + id).then((r) => j<Job>(r)),
   openFolder: (path: string) => fetch("/api/open-folder", json("POST", { path })).then((r) => j(r)),
+  watermark: (w: Watermark) => fetch("/api/watermark", json("PUT", w)).then((r) => j<Watermark>(r)),
+  fonts: () => fetch("/api/fonts").then((r) => j<{ bundled: string[]; system: string[] }>(r)),
+  auto: (body: unknown) => fetch("/api/auto", json("POST", body)).then((r) => j<{ adjust: Adjust }>(r)),
+  geoSource: (body: unknown) =>
+    fetch("/api/geo/source", json("POST", body)).then((r) => j<{ image: string; inner: [number, number]; source: [number, number] }>(r)),
   signature: (text: string) => fetch("/api/signature", json("PUT", { text })).then((r) => j<{ signature: string }>(r)),
   updateCheck: (force = false) => fetch("/api/update/check" + (force ? "?force=1" : "")).then((r) => j<UpdateInfo>(r)),
   updateInstall: () => fetch("/api/update/install", json("POST", {})).then((r) => j(r)),

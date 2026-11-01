@@ -5,8 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Tonefect</title>
     <link rel="icon" type="image/png" href="/logo.png" />
-    <script type="module" crossorigin src="/assets/index-URzoLafr.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-CFcnA3Fb.css">
+    <script>
+      // son seçilen tema, arayüz yüklenmeden uygulanır (renk zıplamasın)
+      try { document.documentElement.dataset.theme = localStorage.getItem("tf-theme") || "tonefect" } catch (e) {}
+    </script>
+    <script type="module" crossorigin src="/assets/index-CRvn-8nG.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-ChNXITVZ.css">
   </head>
   <body>
     <div id="root"></div>

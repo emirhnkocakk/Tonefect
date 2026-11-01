@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { ArrowDown, ArrowUp, ImagePlus, Trash2 } from "lucide-react"
+import { ArrowDown, ArrowUp, ClipboardPaste, Download, ImagePlus, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { thumbUrl } from "@/lib/api"
 import { cn } from "@/lib/utils"
@@ -13,9 +13,11 @@ type Props = {
   remove: (id: string) => void
   pickFiles: () => void
   uploading: boolean
+  pasteTo?: (id: string) => void // kopyalanan ayar varsa
+  exportOne: (id: string) => void
 }
 
-export function Sidebar({ items, currentId, select, move, remove, pickFiles, uploading }: Props) {
+export function Sidebar({ items, currentId, select, move, remove, pickFiles, uploading, pasteTo, exportOne }: Props) {
   const [over, setOver] = useState(false)
   return (
     <aside className="flex h-full w-[264px] shrink-0 flex-col border-r bg-card/40">
@@ -56,6 +58,14 @@ export function Sidebar({ items, currentId, select, move, remove, pickFiles, upl
               </p>
             </div>
             <div className="absolute right-1 top-1 hidden items-center gap-0.5 rounded-md bg-background/90 p-0.5 group-hover:flex">
+              <button aria-label="Dışa aktar" title="Yalnızca bu fotoğrafı dışa aktar" onClick={(e) => { e.stopPropagation(); exportOne(it.id) }} className="rounded p-1 text-muted-foreground hover:text-primary">
+                <Download className="h-3.5 w-3.5" />
+              </button>
+              {pasteTo && (
+                <button aria-label="Ayarları yapıştır" title="Kopyalanan renk/efekt ayarlarını yapıştır" onClick={(e) => { e.stopPropagation(); pasteTo(it.id) }} className="rounded p-1 text-muted-foreground hover:text-primary">
+                  <ClipboardPaste className="h-3.5 w-3.5" />
+                </button>
+              )}
               <button aria-label="Yukarı" disabled={i === 0} onClick={(e) => { e.stopPropagation(); move(it.id, -1) }} className="rounded p-1 text-muted-foreground hover:text-foreground disabled:opacity-30">
                 <ArrowUp className="h-3.5 w-3.5" />
               </button>

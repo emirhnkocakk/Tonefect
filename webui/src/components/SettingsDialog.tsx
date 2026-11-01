@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { FolderOpen, RotateCcw } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -11,7 +11,9 @@ import { Switch } from "@/components/ui/switch"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { api } from "@/lib/api"
 import { TONE_INFO } from "@/lib/constants"
-import type { Config, Settings, UpdateInfo } from "@/types"
+import { THEMES } from "@/lib/themes"
+import { cn } from "@/lib/utils"
+import type { Config, ExportOpts, Settings, UpdateInfo, Watermark } from "@/types"
 
 type Props = {
   open: boolean
@@ -20,14 +22,25 @@ type Props = {
   settings: Settings
   setSettings: (s: Settings) => void
   defaults: Settings
-  signature: string
-  onSignature: (s: string) => void
+  watermark: Watermark | null
+  onWatermark: (w: Watermark) => void
   quitOnClose: boolean
   onQuitOnClose: (v: boolean) => void
   version: string
   update: UpdateInfo | null
   onUpdate: (u: UpdateInfo) => void
 }
+
+const FORMATS: [ExportOpts["format"], string, string][] = [
+  ["jpg", "JPEG", "en yaygın"],
+  ["png", "PNG", "kayıpsız, büyük"],
+  ["webp", "WebP", "küçük, web için"],
+]
+
+const WM_POSITIONS: [string, string][] = [
+  ["tl", "Sol üst"], ["tr", "Sağ üst"], ["center", "Orta"],
+  ["bl", "Sol alt"], ["br", "Sağ alt"], ["tile", "Döşe (tüm görsel)"],
+]
 
 function Row({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
   return (
@@ -41,23 +54,24 @@ function Row({ title, hint, children }: { title: string; hint?: string; children
   )
 }
 
-export function SettingsDialog({ open, onClose, cfg, settings, setSettings, defaults, signature, onSignature, quitOnClose, onQuitOnClose, version, update, onUpdate }: Props) {
-  const [sig, setSig] = useState(signature)
+export function SettingsDialog({ open, onClose, cfg, settings, setSettings, defaults, watermark, onWatermark, quitOnClose, onQuitOnClose, version, update, onUpdate }: Props) {
   const [checking, setChecking] = useState(false)
   const [msg, setMsg] = useState("")
-  useEffect(() => setSig(signature), [signature, open])
+  const [text, setText] = useState(watermark?.text ?? "")
+  useEffect(() => setText(watermark?.text ?? ""), [watermark?.text, open])
+  const saveTimer = useRef<ReturnType<typeof setTimeout>>()
 
-  const saveSig = async () => {
-    if (sig.trim() === signature) return
-    try {
-      const r = await api.signature(sig)
-      onSignature(r.signature)
-      setSig(r.signature)
-      toast.success("İmza güncellendi")
-    } catch (e: any) {
-      toast.error(e.message)
-    }
+  // önizleme anında güncellenir, sunucuya kısa bir beklemeyle kaydedilir
+  const setWm = (p: Partial<Watermark>) => {
+    if (!watermark) return
+    const next = { ...watermark, ...p }
+    onWatermark(next)
+    clearTimeout(saveTimer.current)
+    saveTimer.current = setTimeout(() => api.watermark(next).catch((e) => toast.error(e.message)), 300)
   }
+  const wm = watermark
+  const ex = settings.export ?? { format: "jpg", quality: 95, naming: "number", exif: false }
+  const setEx = (p: Partial<ExportOpts>) => setSettings({ ...settings, export: { ...ex, ...p } })
   const fx = settings.fx
   const check = async () => {
     setChecking(true)
@@ -75,11 +89,37 @@ export function SettingsDialog({ open, onClose, cfg, settings, setSettings, defa
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-h-[88vh] max-w-lg overflow-y-auto">
+      <DialogContent className="max-h-[88vh] max-w-lg overflow-y-auto" onOpenAutoFocus={(e) => e.preventDefault()}>
         <DialogHeader>
           <DialogTitle>Ayarlar</DialogTitle>
           <DialogDescription>Değişiklikler otomatik kaydedilir.</DialogDescription>
         </DialogHeader>
+
+        <section className="space-y-3">
+          <h3 className="text-xs font-semibold tracking-wider text-muted-foreground">GÖRÜNÜM</h3>
+          <div className="grid grid-cols-3 gap-2">
+            {THEMES.map((t) => (
+              <button
+                key={t.id}
+                onClick={() => setSettings({ ...settings, theme: t.id })}
+                className={cn(
+                  "rounded-lg border p-2 text-left transition-colors hover:border-primary/60",
+                  (settings.theme ?? "tonefect") === t.id && "border-primary ring-1 ring-primary"
+                )}
+              >
+                <div className="flex h-6 overflow-hidden rounded-md">
+                  {t.swatch.map((c) => (
+                    <span key={c} className="flex-1" style={{ background: c }} />
+                  ))}
+                </div>
+                <p className="mt-1.5 text-xs font-medium">{t.name}</p>
+                <p className="text-[10px] leading-tight text-muted-foreground">{t.desc}</p>
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <Separator />
 
         <section className="space-y-3">
           <h3 className="text-xs font-semibold tracking-wider text-muted-foreground">ÇIKTI</h3>
@@ -93,23 +133,112 @@ export function SettingsDialog({ open, onClose, cfg, settings, setSettings, defa
             </div>
           </div>
           <div className="space-y-2">
-            <Label>Görsel imzası (sağ alt köşe)</Label>
-            <Input
-              value={sig}
-              maxLength={40}
-              onChange={(e) => setSig(e.target.value)}
-              onBlur={saveSig}
-              onKeyDown={(e) => e.key === "Enter" && (e.currentTarget as HTMLInputElement).blur()}
-              placeholder="İmza yok"
-            />
-            <p className="text-[11px] text-muted-foreground">Boş bırakırsan görsellere imza eklenmez.</p>
+            <Label>Dosya biçimi</Label>
+            <div className="grid grid-cols-3 gap-1.5">
+              {FORMATS.map(([v, l, hint]) => (
+                <button
+                  key={v}
+                  onClick={() => setEx({ format: v })}
+                  className={cn(
+                    "rounded-lg border px-2 py-1.5 text-left transition-colors hover:border-primary/60",
+                    ex.format === v ? "border-primary/70 bg-primary/15 text-foreground" : "text-muted-foreground"
+                  )}
+                >
+                  <span className="block text-xs font-medium">{l}</span>
+                  <span className="block text-[10px] opacity-70">{hint}</span>
+                </button>
+              ))}
+            </div>
           </div>
+          {ex.format !== "png" && (
+            <div className="space-y-2">
+              <div className="flex justify-between"><Label>Kalite</Label><span className="text-xs text-muted-foreground">{ex.quality}</span></div>
+              <Slider min={50} max={100} step={1} value={[ex.quality]} onValueChange={([v]) => setEx({ quality: v })} />
+              <p className="text-[11px] text-muted-foreground">Yüksek kalite = daha büyük dosya. Instagram için 85–95 yeterli.</p>
+            </div>
+          )}
+          <div className="space-y-2">
+            <Label>Dosya adı</Label>
+            <ToggleGroup type="single" value={ex.naming} onValueChange={(v) => v && setEx({ naming: v as "number" | "original" })} className="grid grid-cols-2 gap-2">
+              <ToggleGroupItem value="number" className="h-auto flex-col items-start gap-0.5 rounded-lg border px-3 py-2 data-[state=on]:border-primary/60 data-[state=on]:bg-primary/15 data-[state=on]:text-foreground">
+                <span className="text-sm">Numaralı</span>
+                <span className="text-[11px] font-normal text-muted-foreground">001_foto.jpg (sıralı)</span>
+              </ToggleGroupItem>
+              <ToggleGroupItem value="original" className="h-auto flex-col items-start gap-0.5 rounded-lg border px-3 py-2 data-[state=on]:border-primary/60 data-[state=on]:bg-primary/15 data-[state=on]:text-foreground">
+                <span className="text-sm">Orijinal ad</span>
+                <span className="text-[11px] font-normal text-muted-foreground">foto.jpg</span>
+              </ToggleGroupItem>
+            </ToggleGroup>
+          </div>
+          <Row title="Fotoğraf bilgilerini koru (EXIF)" hint="Kamera, lens ve çekim tarihi korunur; konum bilgisi her zaman silinir">
+            <Switch checked={ex.exif} onCheckedChange={(v) => setEx({ exif: v })} />
+          </Row>
+        </section>
+
+        <Separator />
+
+        <section className="space-y-4">
+          <h3 className="text-xs font-semibold tracking-wider text-muted-foreground">FİLİGRAN</h3>
+          <Row title="Filigran ekle" hint="Tüm görsellere yazı filigranı; istemezsen kapat">
+            <Switch checked={!!wm?.enabled} onCheckedChange={(v) => setWm({ enabled: v })} />
+          </Row>
+          {wm?.enabled && (
+            <>
+              <Input
+                value={text}
+                maxLength={40}
+                onChange={(e) => setText(e.target.value)}
+                onBlur={() => text.trim() !== wm.text && setWm({ text: text.trim() })}
+                onKeyDown={(e) => e.key === "Enter" && (e.currentTarget as HTMLInputElement).blur()}
+                placeholder="Filigran yazısı, örn. @kullaniciadi"
+              />
+              <div className="space-y-2">
+                <Label>Konum</Label>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {WM_POSITIONS.map(([v, l]) => (
+                    <button
+                      key={v}
+                      onClick={() => setWm({ position: v })}
+                      className={cn(
+                        "rounded-lg border py-1.5 text-xs transition-colors hover:border-primary/60",
+                        wm.position === v ? "border-primary/70 bg-primary/15 text-foreground" : "text-muted-foreground"
+                      )}
+                    >
+                      {l}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="space-y-2">
+                <div className="flex justify-between"><Label>Opaklık</Label><span className="text-xs text-muted-foreground">{Math.round(wm.opacity * 100)}%</span></div>
+                <Slider min={5} max={100} step={1} value={[Math.round(wm.opacity * 100)]} onValueChange={([v]) => setWm({ opacity: v / 100 })} />
+              </div>
+              <div className="space-y-2">
+                <div className="flex justify-between"><Label>Boyut</Label><span className="text-xs text-muted-foreground">{wm.size.toFixed(1)}×</span></div>
+                <Slider min={5} max={60} step={1} value={[Math.round(wm.size * 10)]} onValueChange={([v]) => setWm({ size: v / 10 })} />
+              </div>
+              {!wm.text && <p className="text-[11px] text-destructive">Filigran yazısı boş; görsellere bir şey eklenmez.</p>}
+            </>
+          )}
         </section>
 
         <Separator />
 
         <section className="space-y-4">
           <h3 className="text-xs font-semibold tracking-wider text-muted-foreground">YENİ FOTOĞRAF VARSAYILANLARI</h3>
+          <div className="space-y-2">
+            <Label>Oran ve boyut</Label>
+            <ToggleGroup type="single" value={settings.aspect ?? "original"} onValueChange={(v) => v && setSettings({ ...settings, aspect: v })} className="grid grid-cols-2 gap-2">
+              <ToggleGroupItem value="original" className="h-auto flex-col items-start gap-0.5 rounded-lg border px-3 py-2 data-[state=on]:border-primary/60 data-[state=on]:bg-primary/15 data-[state=on]:text-foreground">
+                <span className="text-sm">Orijinal</span>
+                <span className="text-[11px] font-normal text-muted-foreground">fotoğrafın kendi boyutu</span>
+              </ToggleGroupItem>
+              <ToggleGroupItem value="insta" className="h-auto flex-col items-start gap-0.5 rounded-lg border px-3 py-2 data-[state=on]:border-primary/60 data-[state=on]:bg-primary/15 data-[state=on]:text-foreground">
+                <span className="text-sm">Instagram</span>
+                <span className="text-[11px] font-normal text-muted-foreground">4:5 · 1080×1350</span>
+              </ToggleGroupItem>
+            </ToggleGroup>
+          </div>
           <div className="space-y-2">
             <Label>Ton</Label>
             <ToggleGroup type="single" value={settings.tone} onValueChange={(v) => v && setSettings({ ...settings, tone: v })} className="grid grid-cols-2 gap-2">
@@ -163,7 +292,7 @@ export function SettingsDialog({ open, onClose, cfg, settings, setSettings, defa
         </section>
 
         <div className="flex items-center justify-between pt-1">
-          <Button variant="ghost" size="sm" className="gap-1.5 text-xs text-muted-foreground" onClick={() => setSettings({ ...defaults, outDir: settings.outDir })}>
+          <Button variant="ghost" size="sm" className="gap-1.5 text-xs text-muted-foreground" onClick={() => setSettings({ ...defaults, outDir: settings.outDir, theme: settings.theme })}>
             <RotateCcw className="!size-3.5" /> Varsayılanlara dön
           </Button>
           <Button onClick={onClose}>Tamam</Button>

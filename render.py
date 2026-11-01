@@ -9,7 +9,10 @@ Kullanim:
 import argparse
 import csv
 import json
+import math
+import os
 import re
+import threading
 import sys
 import zlib
 from datetime import datetime, timedelta
@@ -67,10 +70,11 @@ def cover_crop(img, size, focus=(0.5, 0.5)):
     return ImageOps.fit(img, size, method=Image.LANCZOS, centering=focus)
 
 
-def grade(img, cfg, seed, fx=None):
+def grade(img, cfg, seed, fx=None, grain_scale=1.0):
     """fx: {"bw": bool, "grain": 0..1+ (carpan), "vignette": 0..1+ (carpan),
             "look": hazir ayar (looks.apply) ya da None = klasik gorunum,
-            "amount": 0..1 hazir ayarin yogunlugu, "adjust": ince ayar kaydiricilari}"""
+            "amount": 0..1 hazir ayarin yogunlugu, "adjust": ince ayar kaydiricilari}
+    grain_scale: tuval 1080x1350'den buyukse gren tanesi de o oranda buyur (k, bkz. canvas_scale)."""
     s = dict(cfg["image"])
     if fx:
         if not fx.get("bw", True):
@@ -93,6 +97,21 @@ def grade(img, cfg, seed, fx=None):
     adjust = looks.adjust_look(fx.get("adjust")) if fx else {}
     if adjust:
         arr = looks.apply(np.clip(arr, 0, 1), adjust)
+    # detay: kullanicinin ayari + hazir ayarin netligi (yogunlukla)
+    adj = (fx.get("adjust") or {}) if fx else {}
+    clarity = float(adj.get("clarity") or 0) + float((look or {}).get("clarity") or 0) * float(fx.get("amount", 1.0) if fx else 1)
+    sharpen, denoise = float(adj.get("sharpen") or 0), float(adj.get("denoise") or 0)
+    if sharpen or clarity or denoise:
+        arr = detail(arr, sharpen, max(-1.0, min(1.0, clarity)), denoise, grain_scale)
+
+    for m in ((fx or {}).get("masks") or []) if fx else []:
+        arr = apply_mask(arr, m, grain_scale)
+
+    tex = ((fx or {}).get("texture") or {}) if fx else {}
+    if tex.get("bloom"):
+        arr = bloom(arr, float(tex["bloom"]), grain_scale)
+    if tex.get("leak"):
+        arr = light_leak(arr, float(tex["leak"]), int(tex.get("variant") or 0), seed)
 
     h, w = arr.shape[:2]
     if s["vignette"] > 0:
@@ -102,13 +121,206 @@ def grade(img, cfg, seed, fx=None):
 
     if s["grain"] > 0:
         rng = np.random.default_rng(seed)
-        noise = rng.normal(0.0, s["grain"], (h, w)).astype(np.float32)
+        nh, nw = (h, w) if abs(grain_scale - 1) < 1e-3 else (max(1, round(h / grain_scale)), max(1, round(w / grain_scale)))
+        noise = rng.normal(0.0, s["grain"], (nh, nw)).astype(np.float32)
         noise_img = Image.fromarray(np.clip(noise * 2 * 127.5 + 127.5, 0, 255).astype(np.uint8), "L")
         noise_img = noise_img.filter(ImageFilter.GaussianBlur(0.6))
+        if (nh, nw) != (h, w):
+            noise_img = noise_img.resize((w, h), Image.BILINEAR)
         noise = (np.asarray(noise_img, dtype=np.float32) - 127.5) / 127.5 * 1.6
         arr = arr + noise[..., None]
 
-    return Image.fromarray((np.clip(arr, 0, 1) * 255).astype(np.uint8), "RGB")
+    img = Image.fromarray((np.clip(arr, 0, 1) * 255).astype(np.uint8), "RGB")
+    if tex.get("dust"):
+        img = dust(img, float(tex["dust"]), seed, grain_scale)
+    frame = ((fx or {}).get("frame") or {}) if fx else {}
+    if frame.get("style") in FRAME_STYLES:
+        img = apply_frame(img, frame)
+    return img
+
+
+# ------------------------------------------------------------ yerel duzenlemeler
+# mask: {"type": "linear", "a": [x, y], "b": [x, y]}  a'da tam etki, b'de sifir
+#       {"type": "radial", "c": [x, y], "r": [rx, ry], "feather": 0..1}  icte tam etki
+#       ortak: "invert", "adjust": {exposure, contrast, highlights, shadows, temperature, tint, saturation, clarity}
+# Koordinatlar tuvale gore 0..1 (rx genislige, ry yukseklige oranli): her cozunurlukte ayni yer.
+MASK_KEYS = ("exposure", "contrast", "highlights", "shadows", "temperature", "tint", "saturation", "clarity")
+
+
+def mask_weight(m, h, w):
+    X = ((np.arange(w, dtype=np.float32) + 0.5))[None, :]
+    Y = ((np.arange(h, dtype=np.float32) + 0.5))[:, None]
+    if m.get("type") == "linear":
+        ax, ay = m["a"][0] * w, m["a"][1] * h
+        bx, by = m["b"][0] * w, m["b"][1] * h
+        dx, dy = bx - ax, by - ay
+        t = ((X - ax) * dx + (Y - ay) * dy) / max(dx * dx + dy * dy, 1e-6)
+        wgt = 1 - looks._smooth(0.0, 1.0, t)
+    else:
+        cx, cy = m["c"][0] * w, m["c"][1] * h
+        rx, ry = max(m["r"][0] * w, 1.0), max(m["r"][1] * h, 1.0)
+        d = np.sqrt(((X - cx) / rx) ** 2 + ((Y - cy) / ry) ** 2)
+        f = max(0.02, float(m.get("feather", 0.5)))
+        wgt = 1 - looks._smooth(1 - f, 1.0, d)
+    if m.get("invert"):
+        wgt = 1 - wgt
+    return wgt.astype(np.float32)
+
+
+def apply_mask(arr, m, k=1.0):
+    adj = m.get("adjust") or {}
+    look = {key: adj[key] for key in MASK_KEYS if key != "clarity" and adj.get(key)}
+    clarity = float(adj.get("clarity") or 0)
+    if not look and not clarity:
+        return arr
+    arr = np.clip(arr, 0, 1)
+    out = looks.apply(arr, look) if look else arr
+    if clarity:
+        out = detail(out, 0.0, clarity, 0.0, k)
+    wgt = mask_weight(m, *arr.shape[:2])[..., None]
+    return arr + (out - arr) * wgt
+
+
+# ------------------------------------------------------------ doku ve cerceve
+# Tum konumlar tuvale gore oransal ve fotograf adina gore sabit: onizleme ve cikti ayni gorunur.
+def bloom(arr, amount, k=1.0):
+    """Isima: parlak alanlar etrafa yumusakca tasar (ruya gibi)."""
+    arr = np.clip(arr, 0, 1)
+    L = arr @ LUMA_V
+    bright = arr * np.clip((L - 0.55) / 0.45, 0, 1)[..., None]
+    glow = gauss(bright, 14 * k) * min(1.5, amount * 1.4)
+    return 1 - (1 - arr) * (1 - np.clip(glow, 0, 1))
+
+
+LEAK_COLORS = np.array([[1.0, 0.42, 0.12], [1.0, 0.72, 0.28], [0.95, 0.22, 0.32], [1.0, 0.55, 0.2]], np.float32)
+
+
+def light_leak(arr, amount, variant, seed):
+    """Isik sizintisi: kenarlardan giren sicak, bulanik renk lekeleri (ekran karisimi)."""
+    h, w = arr.shape[:2]
+    rng = np.random.default_rng((seed + 7919 * (variant + 1)) % (2 ** 32))
+    yy = (np.arange(h, dtype=np.float32) / h)[:, None]
+    xx = (np.arange(w, dtype=np.float32) / w)[None, :]
+    leak = np.zeros((h, w, 3), np.float32)
+    side = variant % 4  # 0 sol, 1 sag, 2 ust, 3 alt kenar
+    for _ in range(3):
+        t = rng.uniform(0.0, 1.0)
+        cx, cy = {0: (-0.08, t), 1: (1.08, t), 2: (t, -0.08), 3: (t, 1.08)}[side]
+        cx, cy = cx + rng.uniform(-0.05, 0.05), cy + rng.uniform(-0.05, 0.05)
+        rx, ry = rng.uniform(0.25, 0.55), rng.uniform(0.25, 0.55)
+        g = np.exp(-(((xx - cx) / rx) ** 2 + ((yy - cy) / ry) ** 2))
+        leak += g[..., None] * LEAK_COLORS[rng.integers(len(LEAK_COLORS))] * rng.uniform(0.6, 1.0)
+    leak = np.clip(leak * min(1.2, amount * 1.1), 0, 1)
+    return 1 - (1 - np.clip(arr, 0, 1)) * (1 - leak)
+
+
+def dust(img, amount, seed, k=1.0):
+    """Toz ve cizik: seyrek acik/koyu noktalar ve ince dikey cizgiler."""
+    w, h = img.size
+    rng = np.random.default_rng((seed + 104729) % (2 ** 32))
+    layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    d = ImageDraw.Draw(layer)
+    for _ in range(int(40 + 360 * amount)):
+        x, y = rng.uniform(0, w), rng.uniform(0, h)
+        r = rng.uniform(0.4, 1.8) * k * (1.6 if rng.random() < 0.08 else 1.0)
+        c = 240 if rng.random() < 0.7 else 20
+        d.ellipse([x - r, y - r, x + r, y + r], fill=(c, c, c, int(rng.uniform(70, 200) * min(1.0, amount + 0.2))))
+    for _ in range(int(amount * 7)):
+        x = rng.uniform(0, w)
+        y0 = rng.uniform(0, h * 0.7)
+        y1 = y0 + rng.uniform(0.1, 0.5) * h
+        d.line([x, y0, x + rng.uniform(-0.01, 0.01) * w, y1], fill=(235, 235, 235, int(70 * amount + 20)), width=max(1, round(0.7 * k)))
+    return Image.alpha_composite(img.convert("RGBA"), layer).convert("RGB")
+
+
+FRAME_STYLES = ("solid", "polaroid", "film", "line")
+FRAME_DEFAULT_COLOR = {"solid": "#FFFFFF", "polaroid": "#F4F1EA", "film": "#0E0E0E", "line": "#FFFFFF"}
+
+
+def apply_frame(img, frame):
+    """Cerceve tuval boyutunu degistirmez: fotograf cercevenin icine yerlesir."""
+    W, H = img.size
+    style = frame.get("style")
+    t = max(1, round(min(W, H) * (0.015 + 0.1 * max(0.0, min(1.0, float(frame.get("size", 0.4)))))))
+    try:
+        color = hex_to_rgb(frame.get("color") or FRAME_DEFAULT_COLOR[style])
+    except (ValueError, TypeError):
+        color = hex_to_rgb(FRAME_DEFAULT_COLOR[style])
+    if style == "line":  # galeri tarzi: fotograf tam, icte ince cizgi
+        out = img.copy()
+        lw = max(1, round(t * 0.12))
+        ImageDraw.Draw(out).rectangle([t, t, W - 1 - t, H - 1 - t], outline=color, width=lw)
+        return out
+    left = right = top = t
+    bottom = t
+    if style == "polaroid":
+        bottom = round(t * 3.6)
+    elif style == "film":
+        left = right = max(1, round(t * 0.45))
+        top = bottom = round(t * 1.7)
+    inner = (max(1, W - left - right), max(1, H - top - bottom))
+    out = Image.new("RGB", (W, H), color)
+    out.paste(ImageOps.fit(img, inner, method=Image.LANCZOS), (left, top))
+    if style == "film":  # film delikleri
+        d = ImageDraw.Draw(out)
+        hw, hh = max(2, round(top * 0.34)), max(2, round(top * 0.42))
+        gap = hw * 2.2
+        for y in (round((top - hh) / 2), H - bottom + round((bottom - hh) / 2)):
+            x = gap / 2
+            while x + hw < W:
+                d.rounded_rectangle([x, y, x + hw, y + hh], radius=max(1, hw // 4), fill=(225, 222, 214))
+                x += gap
+    return out
+
+
+def _box(a, r, axis):
+    """Kenarlari uzatilmis kutu bulaniklastirma (kumulatif toplamla, yaricaptan bagimsiz hiz)."""
+    if r < 1:
+        return a
+    pad = [(0, 0)] * a.ndim
+    pad[axis] = (r + 1, r)
+    c = np.cumsum(np.pad(a, pad, mode="edge"), axis=axis, dtype=np.float32)
+    n = a.shape[axis]
+    hi = [slice(None)] * a.ndim
+    lo = [slice(None)] * a.ndim
+    hi[axis] = slice(2 * r + 1, 2 * r + 1 + n)
+    lo[axis] = slice(0, n)
+    out = c[tuple(hi)] - c[tuple(lo)]
+    out *= np.float32(1 / (2 * r + 1))
+    return out
+
+
+def gauss(a, sigma):
+    """Uc gecisli kutu bulaniklastirmayla Gauss yaklasimi (ilk iki eksen)."""
+    r = max(0, int(round((np.sqrt(4 * sigma * sigma + 1) - 1) / 2)))
+    if r < 1:
+        return a
+    for _ in range(3):
+        a = _box(_box(a, r, 0), r, 1)
+    return a
+
+
+def detail(arr, sharpen=0.0, clarity=0.0, denoise=0.0, k=1.0):
+    """Gurultu azaltma (0..1), netlik/yerel kontrast (-1..1), keskinlik (0..1).
+    Yaricaplar tuval olcegi k ile buyur: onizleme ve tam boyut ayni gorunur."""
+    arr = np.clip(arr, 0, 1)
+    L = arr @ LUMA_V
+    if denoise > 0:
+        C = arr - L[..., None]
+        C = C + (gauss(C, 2.5 * k) - C) * denoise              # renk parazitini guclu yumusat
+        L = L + (gauss(L, 1.2 * k) - L) * denoise * 0.6        # parlaklikta daha olculu
+        arr = L[..., None] + C
+    if clarity:
+        d = L - gauss(L, 18 * k)
+        mid = np.clip(1 - np.abs(L - 0.5) * 2, 0, 1)            # en cok orta tonlarda
+        arr = arr + (d * clarity * 0.9 * (0.35 + 0.65 * mid))[..., None]
+        L = arr @ LUMA_V
+    if sharpen > 0:
+        arr = arr + ((L - gauss(L, 0.9 * k)) * sharpen * 2.2)[..., None]
+    return arr
+
+
+LUMA_V = np.array([0.299, 0.587, 0.114], dtype=np.float32)
 
 
 # --------------------------------------------------------------------- yazi
@@ -135,12 +347,13 @@ def wrap(words, font, tracking, max_w):
     return lines
 
 
-def draw_word(draw, x, y, word, font, fill, tracking, anchor="la"):
+def draw_word(draw, x, y, word, font, fill, tracking, anchor="la", stroke_width=0, stroke_fill=None):
+    kw = {"stroke_width": stroke_width, "stroke_fill": stroke_fill} if stroke_width else {}
     if tracking == 0:
-        draw.text((x, y), word, font=font, fill=fill, anchor=anchor)
+        draw.text((x, y), word, font=font, fill=fill, anchor=anchor, **kw)
         return
     for c in word:
-        draw.text((x, y), c, font=font, fill=fill, anchor=anchor)
+        draw.text((x, y), c, font=font, fill=fill, anchor=anchor, **kw)
         x += font.getlength(c) + tracking
 
 
@@ -156,10 +369,14 @@ WEIGHT_ALIASES = {"thin": "Thin", "extralight": "ExtraLight", "light": "Light",
 _font_cache = {}
 
 
-def font_for(cfg, role, size, weight=None, italic=False):
+def font_for(cfg, role, size, weight=None, italic=False, family=None):
     """Aile (Montserrat/Cormorant) icinde istenen kalinlik ve italik fontu bul.
-    Istenen kalinlik dosyasi yoksa en yakin olani kullanir."""
+    Istenen kalinlik dosyasi yoksa en yakin olani kullanir. family: kullanicinin sectigi yazi tipi."""
     size = max(6, int(round(size)))
+    if family:
+        f = family_font(family, size, weight, italic, default_weight(cfg, role))
+        if f is not None:
+            return f
     if not weight and not italic:
         return load_font(cfg, role, size)
     base = Path(cfg["fonts"].get(role, ""))
@@ -193,6 +410,81 @@ def font_for(cfg, role, size, weight=None, italic=False):
         font = load_font(cfg, role, size)
     _font_cache[key] = font
     return font
+
+
+# ------------------------------------------------------------ yazi tipi kayit defteri
+# Uygulamanin fonts/ klasoru ve bilgisayarda kurulu yazi tipleri: aile -> {(kalinlik, italik): dosya}
+_FONT_DIRS_SYSTEM = [
+    Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts",
+    Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft/Windows/Fonts" if os.environ.get("LOCALAPPDATA") else None,
+    Path("/Library/Fonts"), Path.home() / "Library/Fonts", Path("/System/Library/Fonts"),
+    Path("/usr/share/fonts"), Path.home() / ".fonts", Path.home() / ".local/share/fonts",
+]
+_STYLE_WEIGHTS = [("extralight", "ExtraLight"), ("ultralight", "ExtraLight"), ("semilight", "Light"),
+                  ("light", "Light"), ("thin", "Thin"), ("medium", "Medium"), ("semibold", "SemiBold"),
+                  ("demibold", "SemiBold"), ("demi", "SemiBold"), ("extrabold", "ExtraBold"),
+                  ("ultrabold", "ExtraBold"), ("heavy", "ExtraBold"), ("black", "Black"), ("bold", "Bold")]
+_registry = None
+_registry_lock = threading.Lock()
+
+
+def _style_of(style):
+    st = style.lower().replace(" ", "").replace("-", "")
+    weight = next((w for token, w in _STYLE_WEIGHTS if token in st), "Regular")
+    return weight, ("italic" in st or "oblique" in st)
+
+
+def font_registry():
+    """{"families": {aile: {(kalinlik, italik): yol}}, "bundled": set(aile)} (bir kez taranir)."""
+    global _registry
+    with _registry_lock:
+        if _registry is not None:
+            return _registry
+        families, bundled = {}, set()
+        dirs = [(HERE / "fonts", True)] + [(d, False) for d in _FONT_DIRS_SYSTEM if d]
+        for root, is_bundled in dirs:
+            if not root.is_dir():
+                continue
+            for f in root.rglob("*"):
+                if f.suffix.lower() not in (".ttf", ".otf", ".ttc"):
+                    continue
+                try:
+                    fam, style = ImageFont.truetype(str(f), 12).getname()
+                except Exception:
+                    continue
+                if not fam or fam.startswith("."):
+                    continue
+                families.setdefault(fam, {}).setdefault(_style_of(style or "Regular"), str(f))
+                if is_bundled:
+                    bundled.add(fam)
+        _registry = {"families": families, "bundled": bundled}
+        return _registry
+
+
+def default_weight(cfg, role):
+    stem = Path(cfg["fonts"].get(role, "")).stem
+    w = stem.rpartition("-")[2]
+    return w if w in WEIGHT_CHAIN else "Regular"
+
+
+def family_font(family, size, weight, italic, fallback_weight="Regular"):
+    styles = font_registry()["families"].get(family)
+    if not styles:
+        return None
+    want = WEIGHT_ALIASES.get((weight or "").lower()) or fallback_weight
+    key = ("family", family, want, bool(italic), size)
+    if key in _font_cache:
+        return _font_cache[key]
+    idx = WEIGHT_CHAIN.index(want) if want in WEIGHT_CHAIN else 3
+    order = sorted(styles, key=lambda wi: (wi[1] != bool(italic), abs(WEIGHT_CHAIN.index(wi[0]) - idx)))
+    for wi in order:
+        try:
+            font = ImageFont.truetype(styles[wi], size)
+            _font_cache[key] = font
+            return font
+        except OSError:
+            continue
+    return None
 
 
 TR_CHARS = set("çğıöşüÇĞİÖŞÜ")
@@ -238,29 +530,29 @@ def wrap_idx(widths, space, max_w):
     return lines
 
 
-def layout_text(cfg, tone_name, specs, W, H):
-    """Kelimelerin (kaydirma oncesi) konumlarini hesapla."""
+def layout_text(cfg, tone_name, specs, W, H, k=1.0, family=None, tracking_add=0.0, leading=1.0):
+    """Kelimelerin (kaydirma oncesi) konumlarini hesapla. k: yazi olcegi (1 = 1080x1350 tuval)."""
     t = cfg["tones"][tone_name]
     margin = int(W * cfg["layout"]["margin_ratio"])
     max_w = W - 2 * margin
     max_h = int(H * t["max_height_ratio"])
 
-    size = t["font_size_start"]
+    size = t["font_size_start"] * k
     while True:
         fonts, widths = [], []
         for sp in specs:
             sz = size * sp["scale"]
-            f = font_for(cfg, tone_name, sz, sp["weight"], sp["italic"])
-            tr = t["tracking_em"] * sz
+            f = font_for(cfg, tone_name, sz, sp["weight"], sp["italic"], family)
+            tr = (t["tracking_em"] + tracking_add) * sz
             fonts.append((f, tr))
             widths.append(word_width(f, sp["text"], tr))
-        space = font_for(cfg, tone_name, size).getlength(" ") + t["tracking_em"] * size
+        space = font_for(cfg, tone_name, size, family=family).getlength(" ") + (t["tracking_em"] + tracking_add) * size
         lines = wrap_idx(widths, space, max_w)
-        line_hs = [max(size * specs[i]["scale"] for i in ln) * t["line_spacing"] for ln in lines]
+        line_hs = [max(size * specs[i]["scale"] for i in ln) * t["line_spacing"] * leading for ln in lines]
         block_h = sum(line_hs)
-        if (len(lines) <= t["max_lines"] and block_h <= max_h) or size <= t["font_size_min"]:
+        if (len(lines) <= t["max_lines"] and block_h <= max_h) or size <= t["font_size_min"] * k:
             break
-        size -= 2
+        size -= 2 * k
 
     top = (H - block_h) / 2 if t["position"] == "center" else H * 0.86 - block_h
     words, y = [], top
@@ -275,14 +567,16 @@ def layout_text(cfg, tone_name, specs, W, H):
                           "color": specs[i]["color"], "accent": specs[i]["accent"]})
             x += widths[i] + space
         y += lh
-    return {"size": size, "top": top, "margin": margin, "words": words,
-            "accent_line": t["accent_line"], "boxes": []}
+    return {"size": int(round(size / k)), "top": top, "margin": margin, "words": words,
+            "accent_line": t["accent_line"], "boxes": [], "k": k}
 
 
-def draw_layout(cfg, layout, W, H, block=(0, 0), offsets=None):
-    """Yerlesimi cizer. block: tum metnin kaymasi, offsets: kelime bazli kayma (px)."""
-    offsets = offsets or {}
-    block = block or (0, 0)
+def draw_layout(cfg, layout, W, H, block=(0, 0), offsets=None, outline=0.0, outline_color=None):
+    """Yerlesimi cizer. block: tum metnin kaymasi, offsets: kelime bazli kayma
+    (1080x1350 tuval pikseli cinsinden; buyuk tuvalde k ile olceklenir)."""
+    k = layout.get("k", 1.0)
+    offsets = {i: (v[0] * k, v[1] * k) for i, v in (offsets or {}).items()}
+    block = (block[0] * k, block[1] * k) if block else (0, 0)
     text_rgb = hex_to_rgb(cfg["colors"]["text"])
     accent_rgb = hex_to_rgb(cfg["colors"]["accent"])
     layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
@@ -293,13 +587,15 @@ def draw_layout(cfg, layout, W, H, block=(0, 0), offsets=None):
         x = w["x"] + block[0] + ox
         yb = w["base"] + block[1] + oy
         rgb = hex_to_rgb(w["color"]) if w["color"] else (accent_rgb if w["accent"] else text_rgb)
-        draw_word(d, x, yb, w["text"], w["font"], rgb + (255,), w["tracking"], anchor="ls")
+        sw = max(1, round(outline * 0.09 * w["font"].size)) if outline > 0 else 0
+        draw_word(d, x, yb, w["text"], w["font"], rgb + (255,), w["tracking"], anchor="ls",
+                  stroke_width=sw, stroke_fill=hex_to_rgb(outline_color or "#000000") + (255,) if sw else None)
         asc, desc = w["font"].getmetrics()
         boxes.append({"idx": w["idx"], "box": (x, yb - asc, x + w["w"], yb + desc)})
     if layout["accent_line"]:
-        ly = int(layout["top"] - 34 + block[1])
+        ly = int(layout["top"] - 34 * k + block[1])
         lx = layout["margin"] + block[0]
-        d.rectangle([lx, ly, lx + 84, ly + 2], fill=accent_rgb + (255,))
+        d.rectangle([lx, ly, lx + 84 * k, ly + max(1, round(2 * k))], fill=accent_rgb + (255,))
     layout["boxes"] = boxes
     return layer
 
@@ -312,21 +608,164 @@ def add_shadow(layer, radius=14, strength=0.65):
     return Image.alpha_composite(shadow, layer)
 
 
-def signature_layer(cfg, W, H):
-    s = cfg["signature"]
-    font = load_font(cfg, "signature", s["size"])
-    tracking = s["tracking_em"] * s["size"]
-    text = cfg["brand"]["signature_text"].strip().upper()
+WM_POSITIONS = ("br", "bl", "tr", "tl", "center", "tile")
+
+
+def default_watermark(cfg):
+    """Eski "imza" davranisi: sag altta, marka yazisi."""
+    text = cfg["brand"]["signature_text"].strip()
+    return {"enabled": bool(text), "text": text, "position": "br",
+            "opacity": cfg["signature"]["opacity"], "size": 1.0}
+
+
+def watermark_layer(cfg, W, H, k=1.0, wm=None):
+    """Filigran katmani. wm: {enabled, text, position, opacity 0..1, size (carpan)}."""
+    wm = wm or default_watermark(cfg)
     layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    if not text:  # imza kapali
+    text = str(wm.get("text") or "").strip().upper()
+    if not wm.get("enabled") or not text:
         return layer
+    s = cfg["signature"]
+    fs = s["size"] * k * float(wm.get("size") or 1.0)
+    font = load_font(cfg, "signature", max(6, round(fs)))
+    tracking = s["tracking_em"] * fs
     w = word_width(font, text, tracking)
+    alpha = int(255 * max(0.0, min(1.0, float(wm.get("opacity", 0.7)))))
+    fill = hex_to_rgb(cfg["colors"]["text"]) + (alpha,)
+    pos = wm.get("position") if wm.get("position") in WM_POSITIONS else "br"
+
+    if pos == "tile":  # tum gorsele capraz dosenmis filigran
+        side = int(math.hypot(W, H)) + 2
+        tile = Image.new("RGBA", (side, side), (0, 0, 0, 0))
+        d = ImageDraw.Draw(tile)
+        step_x, step_y = w + fs * 4, fs * 7
+        for row, y in enumerate(np.arange(0, side, step_y)):
+            for x in np.arange(-(row % 2) * step_x / 2, side, step_x):
+                draw_word(d, x, y, text, font, fill, tracking)
+        tile = tile.rotate(30, resample=Image.BICUBIC)
+        x0, y0 = (side - W) // 2, (side - H) // 2
+        return tile.crop((x0, y0, x0 + W, y0 + H))
+
     margin = int(W * cfg["layout"]["margin_ratio"])
-    x = W - margin - w
-    y = H - int(H * s["bottom_margin_ratio"]) - s["size"]
-    rgb = hex_to_rgb(cfg["colors"]["text"])
-    draw_word(ImageDraw.Draw(layer), x, y, text, font, rgb + (int(255 * s["opacity"]),), tracking)
+    edge = int(H * s["bottom_margin_ratio"])
+    x = {"br": W - margin - w, "tr": W - margin - w, "bl": margin, "tl": margin, "center": (W - w) / 2}[pos]
+    y = {"br": H - edge - fs, "bl": H - edge - fs, "tr": edge, "tl": edge, "center": (H - fs) / 2}[pos]
+    draw_word(ImageDraw.Draw(layer), x, y, text, font, fill, tracking)
     return layer
+
+
+def signature_layer(cfg, W, H):
+    """Geriye donuk uyumluluk: varsayilan filigran."""
+    return watermark_layer(cfg, W, H)
+
+
+# ------------------------------------------------------------------ geometri
+# geo: {"aspect": "original" | "free" | "a:b", "crop": [x, y, w, h] (0..1) ya da None,
+#       "rotate": 0/90/180/270 (saat yonu), "flipH", "flipV", "straighten": -45..45 derece,
+#       "outW", "outH": cikti boyutu (None = kirpilan alanin dogal boyutu)}
+# geo None: eski davranis, 1080x1350'ye ortadan doldurarak kirp.
+MAX_SIDE = 12000
+
+
+def canvas_scale(W, H):
+    """Yazi/filigran/gren olcegi: 1080x1350 tuvalde 1."""
+    return math.sqrt(W * H / (1080 * 1350))
+
+
+def aspect_ratio(aspect):
+    m = re.fullmatch(r"(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)", str(aspect or ""))
+    return float(m.group(1)) / float(m.group(2)) if m and float(m.group(2)) else None
+
+
+def _inner(w, h, deg):
+    """w x h dikdortgen deg derece donunce icine sigan en buyuk eksene paralel dikdortgen."""
+    if not deg:
+        return float(w), float(h)
+    a = math.radians(abs(deg))
+    sa, ca = math.sin(a), math.cos(a)
+    long_side, short_side = (w, h) if w >= h else (h, w)
+    if short_side <= 2.0 * sa * ca * long_side or abs(sa - ca) < 1e-10:
+        x = 0.5 * short_side
+        wr, hr = (x / sa, x / ca) if w >= h else (x / ca, x / sa)
+    else:
+        cos2a = ca * ca - sa * sa
+        wr, hr = (w * ca - h * sa) / cos2a, (h * ca - w * sa) / cos2a
+    return wr, hr
+
+
+def geo_plan(geo, w, h):
+    """Kaynak boyutundan (EXIF duzeltilmis) kirpma plani ve cikti boyutu."""
+    rot = int(geo.get("rotate") or 0) % 360 // 90 * 90
+    ow, oh = (h, w) if rot in (90, 270) else (w, h)
+    ang = max(-45.0, min(45.0, float(geo.get("straighten") or 0)))
+    iw, ih = _inner(ow, oh, ang)
+    crop = geo.get("crop")
+    if isinstance(crop, (list, tuple)) and len(crop) == 4:
+        cx, cy, cw, ch = (float(v) for v in crop)
+        cw, ch = max(0.01, min(1.0, cw)), max(0.01, min(1.0, ch))
+        cx, cy = max(0.0, min(1 - cw, cx)), max(0.0, min(1 - ch, cy))
+    else:
+        r = aspect_ratio(geo.get("aspect"))
+        cx, cy, cw, ch = 0.0, 0.0, 1.0, 1.0
+        if r:
+            if iw / ih > r:
+                cw = r * ih / iw
+            else:
+                ch = iw / r / ih
+            cx, cy = (1 - cw) / 2, (1 - ch) / 2
+    nat = (max(1, round(cw * iw)), max(1, round(ch * ih)))
+    try:
+        size = (int(geo["outW"]), int(geo["outH"]))
+    except (KeyError, TypeError, ValueError):
+        size = nat
+    size = tuple(max(16, min(MAX_SIDE, v)) for v in size)
+    return {"rot": rot, "flipH": bool(geo.get("flipH")), "flipV": bool(geo.get("flipV")), "angle": ang,
+            "oriented": (ow, oh), "inner": (iw, ih), "crop": (cx, cy, cw, ch), "natural": nat, "size": size}
+
+
+def open_photo(path, max_pixels=None):
+    """EXIF yonu duzeltilmis RGB; max_pixels verilirse JPEG hizlica kucultulerek acilir."""
+    im = Image.open(path)
+    if max_pixels and im.width * im.height > max_pixels:
+        f = math.sqrt(max_pixels / (im.width * im.height))
+        im.draft("RGB", (int(im.width * f), int(im.height * f)))
+    return ImageOps.exif_transpose(im).convert("RGB")
+
+
+def photo_size(path):
+    """EXIF yonu uygulanmis tam boyut (gorseli cozmeden)."""
+    with Image.open(path) as im:
+        w, h = im.size
+        if im.getexif().get(0x0112) in (5, 6, 7, 8):
+            w, h = h, w
+    return w, h
+
+
+def orient(img, plan):
+    """Dondur, cevir, egimi duzelt. (gorsel, ic kutu) dondurur; ic kutu egim sonrasi bos koseleri dislar."""
+    if plan["rot"]:
+        img = img.transpose({90: Image.ROTATE_270, 180: Image.ROTATE_180, 270: Image.ROTATE_90}[plan["rot"]])
+    if plan["flipH"]:
+        img = ImageOps.mirror(img)
+    if plan["flipV"]:
+        img = ImageOps.flip(img)
+    if not plan["angle"]:
+        return img, (0.0, 0.0, float(img.width), float(img.height))
+    s = img.width / plan["oriented"][0]  # kucultulmus kaynakta olcek
+    img = img.rotate(-plan["angle"], resample=Image.BICUBIC, expand=True)
+    iw, ih = plan["inner"][0] * s, plan["inner"][1] * s
+    return img, ((img.width - iw) / 2, (img.height - ih) / 2, (img.width + iw) / 2, (img.height + ih) / 2)
+
+
+def apply_geo(img, geo, full_size, target=None):
+    """img: tam ya da kucultulmus kaynak (EXIF duzeltilmis); full_size: tam kaynak boyutu.
+    target: cikti boyutu (varsayilan plandaki boyut). Kirpilmis ve olceklenmis RGB dondurur."""
+    plan = geo_plan(geo, *full_size)
+    img, box = orient(img, plan)
+    cx, cy, cw, ch = plan["crop"]
+    bw, bh = box[2] - box[0], box[3] - box[1]
+    crop = (box[0] + cx * bw, box[1] + cy * bh, box[0] + (cx + cw) * bw, box[1] + (cy + ch) * bh)
+    return img.resize(target or plan["size"], Image.LANCZOS, box=crop, reducing_gap=3.0)
 
 
 # ------------------------------------------------------------------ ana akis
@@ -335,37 +774,73 @@ def load_cropped(cfg, image_path):
     return cover_crop(Image.open(image_path), (W, H))
 
 
-def grade_base(cfg, cropped, image_path, fx=None):
+def grade_base(cfg, cropped, image_path, fx=None, grain_scale=1.0):
     seed = zlib.crc32(str(Path(image_path).name).encode())
-    return grade(cropped, cfg, seed, fx).convert("RGBA")
+    return grade(cropped, cfg, seed, fx, grain_scale).convert("RGBA")
 
 
-def make_base(cfg, image_path, fx=None):
+def make_base(cfg, image_path, fx=None, geo=None):
     """Fotografi kirp + siyah-beyaz/vinyet/gren uygula (yazi yok)."""
-    return grade_base(cfg, load_cropped(cfg, image_path), image_path, fx)
+    if not geo:
+        return grade_base(cfg, load_cropped(cfg, image_path), image_path, fx)
+    img = open_photo(image_path)
+    cropped = apply_geo(img, geo, img.size)
+    return grade_base(cfg, cropped, image_path, fx, canvas_scale(*cropped.size))
 
 
-def compose(cfg, base, text, tone, accent_word="", styles=None, block=(0, 0), offsets=None):
-    """Hazir zemine yazi ve imzayi ekle. (gorsel, yerlesim) dondurur; yazi yoksa yerlesim None."""
+def compose(cfg, base, text, tone, accent_word="", styles=None, block=(0, 0), offsets=None,
+            k=None, wm=None, font=None, textfx=None):
+    """Hazir zemine yazi ve filigrani ekle. (gorsel, yerlesim) dondurur; yazi yoksa yerlesim None.
+    k: yazi olcegi (varsayilan tuval boyutundan), wm: filigran (varsayilan marka imzasi)."""
     W, H = base.size
+    k = canvas_scale(W, H) if k is None else k
     layout, img = None, base
     if text.strip():
         specs = build_specs(text, accent_word, styles, cfg["tones"][tone]["uppercase"])
-        layout = layout_text(cfg, tone, specs, W, H)
-        layer = draw_layout(cfg, layout, W, H, block, offsets)
-        img = Image.alpha_composite(img, add_shadow(layer))
-    img = Image.alpha_composite(img, signature_layer(cfg, W, H))
+        tfx = textfx or {}
+        layout = layout_text(cfg, tone, specs, W, H, k, font, float(tfx.get("tracking") or 0), float(tfx.get("leading") or 1.0))
+        layer = draw_layout(cfg, layout, W, H, block, offsets, float(tfx.get("outline") or 0), tfx.get("outlineColor"))
+        shadow = float(tfx["shadow"]) if "shadow" in tfx else 0.65
+        img = Image.alpha_composite(img, add_shadow(layer, radius=14 * k, strength=shadow) if shadow > 0 else layer)
+    img = Image.alpha_composite(img, watermark_layer(cfg, W, H, k, wm))
     return img, layout
 
 
+EXPORT_FORMATS = {"jpg": "JPEG", "png": "PNG", "webp": "WEBP"}
+
+
+def source_exif(image_path):
+    """Kaynak fotografin EXIF'i (kamera, tarih); yon sifirlanir, konum (GPS) her zaman silinir."""
+    try:
+        with Image.open(image_path) as im:
+            exif = im.getexif()
+        exif[0x0112] = 1          # yon zaten uygulandi
+        exif.pop(0x8825, None)    # GPS
+        return exif.tobytes()
+    except Exception:
+        return None
+
+
+def save_image(img, out_path, fmt="jpg", quality=95, exif=None):
+    img = img.convert("RGB")
+    kw = {"exif": exif} if exif else {}
+    if fmt == "png":
+        img.save(out_path, "PNG", compress_level=6, **kw)
+    elif fmt == "webp":
+        img.save(out_path, "WEBP", quality=int(quality), method=4, **kw)
+    else:
+        img.save(out_path, "JPEG", quality=int(quality), subsampling=0 if quality >= 90 else 2, **kw)
+
+
 def render_one(cfg, image_path, text, tone, accent_word, out_path,
-               styles=None, fx=None, block=(0, 0), offsets=None):
+               styles=None, fx=None, block=(0, 0), offsets=None, geo=None, wm=None,
+               fmt="jpg", quality=95, keep_exif=False, font=None, textfx=None):
     out_path = Path(out_path)
-    base = make_base(cfg, image_path, fx)
-    img, layout = compose(cfg, base, text, tone, accent_word, styles, block, offsets)
+    base = make_base(cfg, image_path, fx, geo)
+    img, layout = compose(cfg, base, text, tone, accent_word, styles, block, offsets, wm=wm, font=font, textfx=textfx)
     size = layout["size"] if layout else 0
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    img.convert("RGB").save(out_path, "JPEG", quality=95, subsampling=0)
+    save_image(img, out_path, fmt, quality, source_exif(image_path) if keep_exif else None)
     return size
 
 

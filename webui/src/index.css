@@ -3,7 +3,53 @@
 @tailwind utilities;
 
 @layer base {
+  /* Tonefect (varsayılan): logonun camgöbeği → mor → pembe → turuncu geçişi */
   :root {
+    --background: 240 20% 4.5%;
+    --foreground: 230 30% 94%;
+    --card: 240 18% 7%;
+    --card-foreground: 230 30% 94%;
+    --popover: 240 18% 8.5%;
+    --popover-foreground: 230 30% 94%;
+    --primary: 268 100% 64%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 14% 12%;
+    --secondary-foreground: 230 30% 94%;
+    --muted: 240 14% 11%;
+    --muted-foreground: 235 12% 62%;
+    --accent: 240 14% 15%;
+    --accent-foreground: 230 30% 96%;
+    --destructive: 352 85% 58%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 12% 16%;
+    --input: 240 12% 18%;
+    --ring: 268 100% 64%;
+    --radius: 0.75rem;
+    --font-ui: Inter, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    --brand-gradient: linear-gradient(100deg, #00d4ff 0%, #5b5bff 30%, #b026ff 55%, #ff2e8a 78%, #ff9a1f 100%);
+  }
+
+  [data-theme="light"] {
+    --background: 240 20% 98%;
+    --foreground: 240 15% 10%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 15% 10%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 15% 10%;
+    --primary: 268 80% 56%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 12% 93%;
+    --secondary-foreground: 240 15% 12%;
+    --muted: 240 12% 94%;
+    --muted-foreground: 240 6% 40%;
+    --accent: 240 12% 90%;
+    --accent-foreground: 240 15% 10%;
+    --border: 240 10% 86%;
+    --input: 240 10% 82%;
+    --ring: 268 80% 56%;
+  }
+
+  [data-theme="classic"] {
     --background: 0 0% 4.3%;
     --foreground: 41 18% 90%;
     --card: 0 0% 7%;
@@ -19,22 +65,117 @@
     --accent: 0 0% 15%;
     --accent-foreground: 41 18% 94%;
     --destructive: 4 63% 52%;
-    --destructive-foreground: 0 0% 98%;
     --border: 0 0% 15%;
     --input: 0 0% 17%;
     --ring: 40 33% 54%;
-    --radius: 0.75rem;
   }
+
+  [data-theme="cyberpunk"] {
+    --background: 258 60% 6%;
+    --foreground: 182 100% 92%;
+    --card: 258 52% 9%;
+    --card-foreground: 182 100% 92%;
+    --popover: 258 52% 10%;
+    --popover-foreground: 182 100% 92%;
+    --primary: 330 100% 58%;
+    --primary-foreground: 258 60% 6%;
+    --secondary: 258 42% 15%;
+    --secondary-foreground: 182 100% 90%;
+    --muted: 258 42% 12%;
+    --muted-foreground: 186 45% 66%;
+    --accent: 258 42% 18%;
+    --accent-foreground: 54 88% 70%;
+    --destructive: 0 100% 62%;
+    --border: 186 70% 26%;
+    --input: 186 70% 30%;
+    --ring: 186 100% 50%;
+    --radius: 0.25rem;
+    --font-ui: "Bahnschrift", "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  }
+
+  [data-theme="retro"] {
+    --background: 40 55% 87%;
+    --foreground: 22 50% 17%;
+    --card: 40 62% 92%;
+    --card-foreground: 22 50% 17%;
+    --popover: 40 62% 93%;
+    --popover-foreground: 22 50% 17%;
+    --primary: 22 77% 50%;
+    --primary-foreground: 40 70% 96%;
+    --secondary: 42 75% 64%;
+    --secondary-foreground: 22 50% 17%;
+    --muted: 38 42% 81%;
+    --muted-foreground: 24 28% 36%;
+    --accent: 172 38% 72%;
+    --accent-foreground: 22 50% 17%;
+    --destructive: 4 70% 46%;
+    --border: 30 32% 68%;
+    --input: 30 32% 64%;
+    --ring: 22 77% 50%;
+    --radius: 1rem;
+    --font-ui: Georgia, "Palatino Linotype", "Book Antiqua", serif;
+  }
+
+  [data-theme="pixel"] {
+    --background: 232 26% 14%;
+    --foreground: 45 40% 92%;
+    --card: 228 26% 19%;
+    --card-foreground: 45 40% 92%;
+    --popover: 228 26% 21%;
+    --popover-foreground: 45 40% 92%;
+    --primary: 140 52% 47%;
+    --primary-foreground: 232 26% 10%;
+    --secondary: 224 26% 27%;
+    --secondary-foreground: 45 40% 92%;
+    --muted: 226 26% 22%;
+    --muted-foreground: 210 18% 68%;
+    --accent: 224 26% 30%;
+    --accent-foreground: 40 100% 73%;
+    --destructive: 352 75% 55%;
+    --border: 232 32% 7%;
+    --input: 224 26% 32%;
+    --ring: 40 100% 73%;
+    --radius: 0rem;
+    --font-ui: "Cascadia Mono", Consolas, "Lucida Console", "Courier New", monospace;
+  }
+
   * { @apply border-border; }
   html, body, #root { height: 100%; }
   body {
     @apply bg-background text-foreground antialiased;
-    font-family: Inter, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    font-family: var(--font-ui);
     overflow: hidden;
   }
   ::selection { background: hsl(var(--primary) / 0.3); }
   *::-webkit-scrollbar { width: 10px; height: 10px; }
-  *::-webkit-scrollbar-thumb { background: hsl(0 0% 20%); border-radius: 999px; border: 3px solid transparent; background-clip: content-box; }
-  *::-webkit-scrollbar-thumb:hover { background: hsl(0 0% 28%); background-clip: content-box; border: 3px solid transparent; }
+  *::-webkit-scrollbar-thumb { background: hsl(var(--muted-foreground) / 0.3); border-radius: 999px; border: 3px solid transparent; background-clip: content-box; }
+  *::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground) / 0.5); background-clip: content-box; border: 3px solid transparent; }
   *::-webkit-scrollbar-track { background: transparent; }
 }
+
+/* ---- temaya özel dokunuşlar ---- */
+
+/* Tonefect: ana düğmeler, kaydırıcılar ve ilerleme çubuğu logonun geçişiyle */
+:root:not([data-theme]) .bg-primary,
+[data-theme="tonefect"] .bg-primary,
+[data-theme="light"] .bg-primary { background-image: var(--brand-gradient); }
+
+/* Cyberpunk: neon parıltı */
+[data-theme="cyberpunk"] .bg-primary { box-shadow: 0 0 14px hsl(330 100% 58% / 0.55), 0 0 2px hsl(330 100% 70%); }
+[data-theme="cyberpunk"] header { box-shadow: 0 1px 0 hsl(186 100% 50% / 0.6), 0 6px 24px -12px hsl(186 100% 50% / 0.7); }
+[data-theme="cyberpunk"] header span { text-shadow: 0 0 8px hsl(330 100% 60% / 0.8); }
+[data-theme="cyberpunk"] [role="tab"][data-state="active"] { box-shadow: 0 0 10px hsl(186 100% 50% / 0.45); }
+
+/* Retro: başlığın altında 70'ler şeridi */
+[data-theme="retro"] header {
+  border-bottom: 0;
+  box-shadow: 0 3px 0 #e2671f, 0 6px 0 #e9b44c, 0 9px 0 #2a9d8f;
+  margin-bottom: 9px;
+}
+
+/* Pixel: köşesiz, kalın çerçeve, sert gölge */
+[data-theme="pixel"] *, [data-theme="pixel"] *::before, [data-theme="pixel"] *::after { border-radius: 0 !important; }
+[data-theme="pixel"] .border { border-width: 2px; }
+[data-theme="pixel"] .bg-primary, [data-theme="pixel"] .bg-secondary { box-shadow: 3px 3px 0 0 #000; }
+[data-theme="pixel"] .shadow-2xl { box-shadow: 6px 6px 0 0 #000 !important; }
+[data-theme="pixel"] header span { letter-spacing: 0.3em; }

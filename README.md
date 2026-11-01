@@ -5,19 +5,21 @@
 
 **English** · [Türkçe](#türkçe)
 
-Tonefect (formerly Grainline) is a small desktop-style tool that turns your photos and short quotes into dark, cinematic, Instagram-ready images (4:5, 1080×1350). Built for quote / motivation pages: it renders the text, film grain, vignette and a brand signature, and exports numbered JPEGs.
+Tonefect (formerly Grainline) is a small desktop photo editor: one-click colour looks and effects, crop and resize at the original size, local adjustments, and optional text and watermark for quote / social posts. Everything runs on your computer.
 
 ## Features
-- **Live preview** – what you see is exactly what gets exported.
-- **One-click colour presets** – natural, cinematic, film and black & white looks with live thumbnails of your own photo, an intensity slider and fine-tuning (exposure, contrast, temperature, saturation). Import your own Lightroom presets (.xmp, .lrtemplate, mobile .dng) and LUTs (.cube), even as a .zip pack.
-- **Per-word styling** – colour, weight (Light → ExtraBold), italic and size for any word, via a floating format bar.
-- **Drag to place** – move the whole text block or single words. Canva-style smart guides snap to the centre, margins and to the centres/edges of neighbouring words; arrow keys for fine tuning.
-- **Auto-update** – the installed app announces new releases on start and updates itself in one click.
-- **Settings menu** – output folder, signature text, defaults for new photos, smart guides on/off.
-- **Photo effects** – black & white on/off, film grain and vignette sliders, apply to all photos.
-- **Two tones** – *quiet* (serif, lower third) and *hard* (bold, centred, uppercase), plus an accent word.
-- **Batch export** – numbered JPEGs plus a `manifest.json` describing each image.
-- **Modern UI** – React + Tailwind + shadcn/ui, served by a tiny local Python server (nothing leaves your computer).
+- **One-click colour library** – natural, cinematic, film and black & white looks shown on a sample photo, with intensity. Save your own looks, and import Lightroom presets (.xmp, .lrtemplate, mobile .dng) and LUTs (.cube), even as a .zip pack.
+- **Auto enhance** – fixes exposure, tone range, highlights/shadows and contrast in one click; the values stay editable.
+- **Light & colour** – exposure, contrast, highlights, shadows, whites, blacks, fade, temperature, tint, vibrance, saturation and an 8-colour HSL mixer (hue, saturation, luminance).
+- **Detail** – sharpening, clarity and noise reduction.
+- **Local adjustments** – linear and radial masks with their own light/colour/clarity, dragged right on the photo.
+- **Crop & size** – original size or any ratio (1:1, 4:5, 9:16, 16:9 …), rotate, flip, straighten, output size presets or custom width × height.
+- **Effects** – black & white, film grain, vignette, light leaks, bloom, dust & scratches, and frames (solid, Polaroid, film strip, inner line).
+- **Before/after & zoom** – split view or hold to compare; zoom up to 1:1 and beyond.
+- **Text (optional)** – per-word colour/weight/italic/size, any installed font, shadow, outline, letter and line spacing; drag with smart guides.
+- **Watermark (optional)** – any corner, centre or tiled, with opacity and size.
+- **Copy / paste settings**, undo/redo, themes (Tonefect, light, classic gold, cyberpunk, retro, pixel).
+- **Export** – JPEG, PNG or WebP with quality, numbered or original names, optional EXIF (location always removed), all photos or just one.
 
 ## Download (Windows)
 Get `Tonefect-Setup.exe` from the [Releases](../../releases) page and run it (no admin rights needed). Then open **Tonefect** from the Start menu or desktop. No Python needed.
@@ -50,19 +52,21 @@ npm run build        # then copy webui/dist to ./web
 
 # Türkçe
 
-Tonefect (eski adıyla Grainline), fotoğraflarını ve kısa sözlerini koyu, sinematik, Instagram'a hazır görsellere (4:5, 1080×1350) dönüştüren küçük bir masaüstü aracı. Söz/motivasyon sayfaları için yapıldı: yazıyı, film greni, vinyet ve marka imzasını ekler ve numaralı JPEG'ler olarak dışa aktarır.
+Tonefect (eski adıyla Grainline) küçük bir masaüstü fotoğraf düzenleyicisidir: tek tıkla renk görünümleri ve efektler, orijinal boyutta kırpma ve boyutlandırma, yerel düzenlemeler ve söz/sosyal medya paylaşımları için isteğe bağlı yazı ve filigran. Her şey bilgisayarında çalışır.
 
 ## Özellikler
-- **Canlı önizleme** – ekranda gördüğün, dışa aktarılanla birebir aynıdır.
-- **Tek tıkla renk ayarları** – doğal, sinematik, film ve siyah-beyaz görünümler; kendi fotoğrafının üzerinde canlı küçük önizlemeler, yoğunluk kaydırıcısı ve ince ayar (pozlama, kontrast, sıcaklık, doygunluk). Kendi Lightroom ayarlarını (.xmp, .lrtemplate, mobil .dng) ve LUT'larını (.cube), .zip paketi olarak bile içe aktarabilirsin.
-- **Kelime bazlı stil** – her kelimeye renk, kalınlık (İnce → Ekstra), italik ve boyut; yüzen biçim çubuğuyla.
-- **Sürükleyerek yerleştirme** – tüm metni ya da tek tek kelimeleri taşı. Canva tarzı akıllı kılavuz çizgileri ortaya, kenar boşluklarına ve yan kelimelerin merkez/kenarlarına yapışır; ok tuşlarıyla ince ayar.
-- **Otomatik güncelleme** – kurulu uygulama açılışta yeni sürümü duyurur ve tek tıkla kendini günceller.
-- **Ayarlar menüsü** – çıktı klasörü, imza yazısı, yeni fotoğraf varsayılanları, akıllı kılavuzları aç/kapat.
-- **Fotoğraf efektleri** – siyah-beyaz aç/kapat, grain ve vinyet kaydırıcıları, hepsine uygula.
-- **İki ton** – *sessiz* (serif, alt üçte bir) ve *sert* (kalın, ortalı, büyük harf) ve vurgu kelimesi.
-- **Toplu üretim** – numaralı JPEG'ler ve her görseli anlatan `manifest.json`.
-- **Modern arayüz** – React + Tailwind + shadcn/ui; küçük bir yerel Python sunucusuyla çalışır (hiçbir şey bilgisayarından çıkmaz).
+- **Tek tıkla renk kütüphanesi** – doğal, sinematik, film ve siyah-beyaz görünümler örnek fotoğraf üzerinde, yoğunluk ayarıyla. Kendi görünümlerini kaydet; Lightroom ayarlarını (.xmp, .lrtemplate, mobil .dng) ve LUT'ları (.cube), .zip paketi olarak bile içe aktar.
+- **Otomatik iyileştirme** – pozlama, ton aralığı, parlak alan/gölge ve kontrastı tek tıkla düzeltir; değerler sonra değiştirilebilir.
+- **Işık ve renk** – pozlama, kontrast, parlak alanlar, gölgeler, beyazlar, siyahlar, soldurma, sıcaklık, renk tonu, canlılık, doygunluk ve 8 renkli HSL karıştırıcı.
+- **Detay** – keskinlik, netlik ve gürültü azaltma.
+- **Yerel düzenlemeler** – kendi ışık/renk/netlik ayarları olan degrade ve dairesel maskeler; doğrudan fotoğrafın üzerinde sürüklenir.
+- **Kırp ve boyut** – orijinal boyut ya da her oran (1:1, 4:5, 9:16, 16:9 …), döndür, çevir, eğim düzelt, hazır ya da elle genişlik × yükseklik.
+- **Efektler** – siyah-beyaz, film greni, vinyet, ışık sızıntısı, ışıma, toz ve çizik ile çerçeveler (düz, Polaroid, film şeridi, ince çizgi).
+- **Önce/sonra ve yakınlaştırma** – bölünmüş görünüm ya da basılı tutarak karşılaştır; %100 ve üstüne yakınlaştır.
+- **Yazı (isteğe bağlı)** – kelime bazında renk/kalınlık/italik/boyut, bilgisayardaki her yazı tipi, gölge, kontur, harf ve satır aralığı; akıllı kılavuzlarla sürükle.
+- **Filigran (isteğe bağlı)** – köşeler, orta ya da döşeme; opaklık ve boyut.
+- **Ayarları kopyala/yapıştır**, geri al/yinele, temalar (Tonefect, gündüz, klasik altın, cyberpunk, retro, pixel).
+- **Dışa aktarma** – JPEG, PNG ya da WebP, kalite, numaralı ya da orijinal ad, isteğe bağlı EXIF (konum her zaman silinir), tüm fotoğraflar ya da tek fotoğraf.
 
 ## İndir (Windows)
 [Releases](../../releases) sayfasından `Tonefect-Setup.exe` dosyasını indirip çalıştır (yönetici izni gerekmez). Kurulumdan sonra Başlat menüsü ya da masaüstünden **Tonefect**'i aç. Python gerekmez.

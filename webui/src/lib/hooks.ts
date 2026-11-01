@@ -1,9 +1,11 @@
 import { RefObject, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { api } from "@/lib/api"
-import type { Item, PreviewData } from "@/types"
+import type { Item, PreviewData, Watermark } from "@/types"
 
 /** Sunucudan önizleme ister; hızlı değişimlerde sadece en son isteği gönderir (aynı anda tek istek). */
-export function usePreview(item: Item | undefined, width: number, rev = "") {
+/** wm: filigran; istekle gönderilir ki ayar kaydedilmeden de önizleme doğru olsun.
+ *  original: önce/sonra için düzenlenmemiş hali (yalnızca kırpma/döndürme uygulanır). */
+export function usePreview(item: Item | undefined, width: number, wm: Watermark | null = null, original = false) {
   const [preview, setPreview] = useState<PreviewData | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -18,9 +20,11 @@ export function usePreview(item: Item | undefined, width: number, rev = "") {
     }
   }, [])
 
-  const key = item
-    ? JSON.stringify([item.id, item.text, item.tone, item.accent, item.styles, item.block, item.offsets, item.fx, width, rev])
-    : ""
+  const key = !item
+    ? ""
+    : original
+    ? JSON.stringify([item.id, item.geo ?? null, width, "original"])
+    : JSON.stringify([item.id, item.text, item.tone, item.accent, item.styles, item.block, item.offsets, item.fx, item.geo ?? null, item.font ?? null, item.textFx ?? null, width, wm])
 
   async function pump() {
     if (running.current) return
@@ -53,7 +57,7 @@ export function usePreview(item: Item | undefined, width: number, rev = "") {
     }
     pending.current = {
       photo: item.id, text: item.text, tone: item.tone, accent: item.accent, styles: item.styles,
-      block: item.block, offsets: item.offsets, fx: item.fx, w: width,
+      block: item.block, offsets: item.offsets, fx: item.fx, geo: item.geo ?? null, font: item.font ?? null, textfx: item.textFx ?? null, wm, w: width, original,
     }
     const t = setTimeout(pump, 30)
     return () => clearTimeout(t)

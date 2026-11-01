@@ -61,6 +61,15 @@ PRESETS = looks.load_all(USER_PRESETS)
 STATE = {"quit_on_close": True, "last_beat": 0.0, "closing_at": 0.0, "seen": False}
 
 
+def num(v, lo, hi, default=0.0):
+    """Sayıya çevirir, NaN/sonsuz değerleri ve aralık dışını engeller."""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return default
+    return max(lo, min(hi, f)) if math.isfinite(f) else default
+
+
 def read_prefs():
     try:
         return json.loads(PREFS.read_text(encoding="utf-8"))
@@ -74,17 +83,37 @@ def write_prefs(**kw):
     PREFS.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
 
 
+WATERMARK = {}
+
+
+def clean_wm(w):
+    w = w if isinstance(w, dict) else {}
+    return {"enabled": bool(w.get("enabled")), "text": str(w.get("text") or "").strip()[:40],
+            "position": w.get("position") if w.get("position") in engine.WM_POSITIONS else "br",
+            "opacity": round(num(w.get("opacity"), 0.05, 1.0, 0.7), 3),
+            "size": round(num(w.get("size"), 0.3, 6.0, 1.0), 3)}
+
+
 def load_prefs():
     d = read_prefs()
-    if "signature" in d:  # boş kaydedildiyse imza kapalı
+    if "signature" in d:  # eski sürüm: boş kaydedildiyse imza kapalı
         CFG["brand"]["signature_text"] = str(d["signature"]).strip()[:40]
+    WATERMARK.clear()
+    WATERMARK.update(clean_wm(d["watermark"]) if "watermark" in d else engine.default_watermark(CFG))
     STATE["quit_on_close"] = bool(d.get("quitOnClose", True))
 
 
+def save_watermark(w):
+    WATERMARK.clear()
+    WATERMARK.update(clean_wm(w))
+    write_prefs(watermark=WATERMARK)
+    return WATERMARK
+
+
 def save_signature(text):
+    """Eski arayüz uyumluluğu: yalnızca yazıyı değiştirir, boşsa filigranı kapatır."""
     text = (text or "").strip()[:40]
-    CFG["brand"]["signature_text"] = text
-    write_prefs(signature=text)
+    save_watermark({**WATERMARK, "text": text, "enabled": bool(text)})
     return text
 
 
@@ -125,27 +154,73 @@ def clean_styles(styles, n_words):
     return out
 
 
-def num(v, lo, hi, default=0.0):
-    """Sayıya çevirir, NaN/sonsuz değerleri ve aralık dışını engeller."""
-    try:
-        f = float(v)
-    except (TypeError, ValueError):
-        return default
-    return max(lo, min(hi, f)) if math.isfinite(f) else default
-
-
 def clean_fx(fx_in):
     preset = str(fx_in.get("preset") or "")
     if preset not in PRESETS:  # silinmiş ayar -> klasik görünüm
         preset = ""
+    recipe = PRESETS[preset].get("recipe")
+    if recipe:  # kendi kaydedilen ayar: temel görünümüne çevir (arayüz değerleri zaten kopyalar)
+        preset = recipe["base"] if recipe.get("base") in PRESETS and not PRESETS[recipe["base"]].get("recipe") else ""
     adj_in = fx_in.get("adjust") if isinstance(fx_in.get("adjust"), dict) else {}
-    adjust = {k: round(num(adj_in.get(k), -1.0, 1.0), 3) for k in looks.ADJUST_KEYS}
+    adjust = {k: round(num(adj_in.get(k), 0.0 if k in looks.POSITIVE_KEYS else -1.0, 1.0), 3)
+              for k in looks.ADJUST_KEYS}
+    hsl_in = adj_in.get("hsl") if isinstance(adj_in.get("hsl"), dict) else {}
+    hsl = {}
+    for band, v in hsl_in.items():
+        if band in looks.HUE_BANDS and isinstance(v, list):
+            vals = [round(num(x, -1.0, 1.0), 3) for x in (v + [0, 0, 0])[:3]]
+            if any(vals):
+                hsl[band] = vals
+    adjust["hsl"] = hsl
+    lv = adj_in.get("levels")  # otomatik iyileştirmenin ton germe noktaları
+    if isinstance(lv, list) and len(lv) == 2:
+        lo, hi = num(lv[0], 0.0, 0.9), num(lv[1], 0.1, 1.0, 1.0)
+        if hi - lo > 0.05 and (lo > 0 or hi < 1):
+            adjust["levels"] = [round(lo, 3), round(hi, 3)]
     return {"bw": bool(fx_in.get("bw", True)),
             "grain": num(fx_in.get("grain", 1.0), 0.0, 2.0, 1.0),
             "vignette": num(fx_in.get("vignette", 1.0), 0.0, 2.0, 1.0),
             "preset": preset, "look": PRESETS[preset]["look"],
             "amount": num(fx_in.get("amount", 1.0), 0.0, 1.0, 1.0),
-            "adjust": {k: v for k, v in adjust.items() if v}}
+            "adjust": {k: v for k, v in adjust.items() if v},
+            "texture": clean_texture(fx_in.get("texture")), "frame": clean_frame(fx_in.get("frame")),
+            "masks": clean_masks(fx_in.get("masks"))}
+
+
+def clean_masks(ms):
+    """Yerel düzenlemeler (en fazla 8)."""
+    out = []
+    pt = lambda v, lo=-0.5, hi=1.5: [num(v[0], lo, hi, 0.5), num(v[1], lo, hi, 0.5)] if isinstance(v, list) and len(v) == 2 else [0.5, 0.5]
+    for m in (ms if isinstance(ms, list) else [])[:8]:
+        if not isinstance(m, dict) or m.get("type") not in ("linear", "radial"):
+            continue
+        adj_in = m.get("adjust") if isinstance(m.get("adjust"), dict) else {}
+        adj = {k: round(num(adj_in.get(k), -1.0, 1.0), 3) for k in engine.MASK_KEYS}
+        c = {"type": m["type"], "invert": bool(m.get("invert")), "adjust": {k: v for k, v in adj.items() if v}}
+        if m["type"] == "linear":
+            c.update(a=pt(m.get("a")), b=pt(m.get("b")))
+        else:
+            c.update(c=pt(m.get("c")), r=pt(m.get("r"), 0.01, 2.0), feather=round(num(m.get("feather"), 0.0, 1.0, 0.5), 3))
+        if c["adjust"]:
+            out.append(c)
+    return out
+
+
+def clean_texture(t):
+    t = t if isinstance(t, dict) else {}
+    out = {k: round(num(t.get(k), 0.0, 1.0), 3) for k in ("leak", "bloom", "dust")}
+    out = {k: v for k, v in out.items() if v}
+    if out.get("leak"):
+        out["variant"] = int(num(t.get("variant"), 0, 3))
+    return out
+
+
+def clean_frame(f):
+    f = f if isinstance(f, dict) else {}
+    if f.get("style") not in engine.FRAME_STYLES:
+        return {}
+    color = f.get("color") if isinstance(f.get("color"), str) and re.fullmatch(r"#[0-9a-fA-F]{6}", f["color"]) else None
+    return {"style": f["style"], "size": round(num(f.get("size"), 0.0, 1.0, 0.4), 3), "color": color}
 
 
 def clean_item(d):
@@ -162,10 +237,60 @@ def clean_item(d):
         "text": text, "tone": tone, "accent": str(d.get("accent", "")).strip(),
         "styles": clean_styles(d.get("styles"), len(text.split())),
         "fx": fx, "block": (float(block[0]), float(block[1])), "offsets": offsets,
+        "geo": clean_geo(d.get("geo")),
+        "font": clean_font(d.get("font")), "textfx": clean_textfx(d.get("textfx")),
     }
 
 
+def clean_font(f):
+    """Kullanıcının seçtiği yazı tipi ailesi; bilinmiyorsa tonun kendi yazı tipi."""
+    return f if isinstance(f, str) and f in engine.font_registry()["families"] else None
+
+
+def clean_textfx(t):
+    t = t if isinstance(t, dict) else {}
+    out = {}
+    if "shadow" in t:
+        out["shadow"] = round(num(t["shadow"], 0.0, 1.0, 0.65), 3)
+    if t.get("outline"):
+        out["outline"] = round(num(t["outline"], 0.0, 1.0), 3)
+        c = t.get("outlineColor")
+        out["outlineColor"] = c if isinstance(c, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", c) else "#000000"
+    if t.get("tracking"):
+        out["tracking"] = round(num(t["tracking"], -0.1, 0.5), 3)
+    if t.get("leading"):
+        out["leading"] = round(num(t["leading"], 0.6, 2.0, 1.0), 3)
+    return out
+
+
+def font_list():
+    reg = engine.font_registry()
+    fams = sorted(reg["families"], key=str.casefold)
+    return {"bundled": [f for f in fams if f in reg["bundled"]], "system": [f for f in fams if f not in reg["bundled"]]}
+
+
+def clean_geo(g):
+    """Kırpma/döndürme/boyut. None: eski fotoğraflar (1080x1350, ortadan kırpılmış)."""
+    if not isinstance(g, dict):
+        return None
+    aspect = str(g.get("aspect") or "original")
+    if aspect not in ("original", "free") and not engine.aspect_ratio(aspect):
+        aspect = "original"
+    crop = g.get("crop")
+    crop = [num(v, 0.0, 1.0) for v in crop] if isinstance(crop, list) and len(crop) == 4 else None
+    out = {}
+    for k in ("outW", "outH"):
+        v = g.get(k)
+        out[k] = int(num(v, 16, engine.MAX_SIDE)) if isinstance(v, (int, float)) and v else None
+    if not (out["outW"] and out["outH"]):
+        out = {"outW": None, "outH": None}
+    return {"aspect": aspect, "crop": crop, "rotate": int(num(g.get("rotate"), 0, 270)) // 90 * 90,
+            "flipH": bool(g.get("flipH")), "flipV": bool(g.get("flipV")),
+            "straighten": round(num(g.get("straighten"), -45.0, 45.0), 2), **out}
+
+
 def get_crop(path):
+    """Eski fotoğraflar için 1080x1350 kırpılmış görsel."""
     crop = CROP.pop(str(path), None) or engine.load_cropped(CFG, path)
     CROP[str(path)] = crop
     while len(CROP) > 8:
@@ -173,35 +298,144 @@ def get_crop(path):
     return crop
 
 
-def get_base(path, fx):
-    key = (str(path), fx["bw"], round(fx["grain"], 2), round(fx["vignette"], 2),
-           fx["preset"], round(fx["amount"], 2), tuple(sorted(fx["adjust"].items())))
+PROXY_PIXELS = 4_000_000   # önizleme için küçültülmüş kaynak
+WORK_PIXELS = 2_200_000    # önizlemenin işlendiği en büyük tuval (1080x1350 tam boyutta kalır)
+SRC, FULL = {}, {}
+
+
+def _lru(cache, key, make, limit):
+    if key in cache:
+        cache[key] = cache.pop(key)
+        return cache[key]
+    cache[key] = make()
+    while len(cache) > limit:
+        cache.pop(next(iter(cache)))
+    return cache[key]
+
+
+def get_src(path):
+    """{"size": tam boyut, "proxy": en fazla ~4 MP kopya}"""
+    def make():
+        proxy = engine.open_photo(path, PROXY_PIXELS)
+        if proxy.width * proxy.height > PROXY_PIXELS * 1.5:  # JPEG dışı biçimler
+            f = math.sqrt(PROXY_PIXELS / (proxy.width * proxy.height))
+            proxy = proxy.resize((round(proxy.width * f), round(proxy.height * f)), Image.LANCZOS)
+        return {"size": engine.photo_size(path), "proxy": proxy}
+    return _lru(SRC, str(path), make, 6)
+
+
+def geo_image(path, geo, target):
+    """Kırpılmış/döndürülmüş görsel; yeterince keskinse küçültülmüş kaynaktan, değilse tam kaynaktan."""
+    src = get_src(path)
+    plan = engine.geo_plan(geo, *src["size"])
+    need = target[0] / max(1.0, plan["crop"][2] * plan["inner"][0])  # kaynakta gereken ölçek
+    img = src["proxy"]
+    if img.width / src["size"][0] < need * 0.9:
+        img = _lru(FULL, str(path), lambda: engine.open_photo(path), 2)
+    return engine.apply_geo(img, geo, src["size"], target)
+
+
+def fx_key(fx):
+    return (fx["bw"], round(fx["grain"], 2), round(fx["vignette"], 2), fx["preset"],
+            round(fx["amount"], 2), json.dumps([fx["adjust"], fx["texture"], fx["frame"], fx["masks"]], sort_keys=True))
+
+
+def get_base(path, fx, geo=None, want_w=0):
+    """Önizleme zemini. (görsel, tam tuval boyutu, işleme ölçeği f) döndürür.
+    want_w: yakınlaştırınca istenen genişlik; gerekirse tam çözünürlüğe kadar çıkılır."""
+    if geo is None:
+        size, f = (W, H), 1.0
+    else:
+        size = engine.geo_plan(geo, *get_src(path)["size"])["size"]
+        f = min(1.0, math.sqrt(WORK_PIXELS / (size[0] * size[1])))
+        if want_w > size[0] * f * 1.05:
+            f = min(1.0, want_w / size[0])
+    key = (str(path), json.dumps(geo, sort_keys=True), fx_key(fx), round(f, 4))
     if key in BASE:
         BASE[key] = BASE.pop(key)
-        return BASE[key]
-    crop = get_crop(path)
-    base = engine.grade_base(CFG, crop, path, fx)
+        return BASE[key], size, f
+    if geo is None:
+        base = engine.grade_base(CFG, get_crop(path), path, fx)
+    else:
+        target = (max(1, round(size[0] * f)), max(1, round(size[1] * f)))
+        img = geo_image(path, geo, target)
+        base = engine.grade_base(CFG, img, path, fx, engine.canvas_scale(*size) * f)
     BASE[key] = base
     while len(BASE) > 6:
         BASE.pop(next(iter(BASE)))
-    return base
+    return base, size, f
+
+
+ORIGINAL_FX = {"preset": "b:original", "bw": False, "grain": 0.0, "vignette": 0.0}
 
 
 def render_preview(d):
     path = photo_path(d["photo"])
     item = clean_item(d)
+    want = max(200, min(engine.MAX_SIDE, int(num(d.get("w"), 200, engine.MAX_SIDE, 640))))
+    original = bool(d.get("original"))  # önce/sonra: renk, efekt, yazı ve filigran yok
+    if original:
+        item["fx"] = clean_fx(ORIGINAL_FX)
     with LOCK:
-        base = get_base(path, item["fx"])
-        img, layout = engine.compose(CFG, base, item["text"], item["tone"], item["accent"],
-                                     styles=item["styles"], block=item["block"], offsets=item["offsets"])
-    out_w = max(200, min(1080, int(d.get("w", 640))))
-    im = img.convert("RGB").resize((out_w, round(out_w * H / W)), Image.LANCZOS)
+        base, (cw, ch), f = get_base(path, item["fx"], item["geo"], want)
+        k = engine.canvas_scale(cw, ch)
+        if original:
+            img, layout = base, None
+        else:
+            img, layout = engine.compose(CFG, base, item["text"], item["tone"], item["accent"],
+                                         styles=item["styles"], block=item["block"], offsets=item["offsets"],
+                                         k=k * f, wm=clean_wm(d["wm"]) if isinstance(d.get("wm"), dict) else WATERMARK,
+                                         font=item["font"], textfx=item["textfx"])
+    out_w = max(200, min(want, max(1600, base.width)))
+    out_h = max(1, round(out_w * base.height / base.width))
+    im = img.convert("RGB").resize((out_w, out_h), Image.LANCZOS)
     buf = io.BytesIO()
     im.save(buf, "JPEG", quality=88)
-    boxes = [{"idx": b["idx"], "box": [round(v, 1) for v in b["box"]]}
+    # kutular tam tuval pikselinde; k: kaydırma birimi (1080x1350 tuval pikseli) -> piksel
+    boxes = [{"idx": b["idx"], "box": [round(v / f, 1) for v in b["box"]]}
              for b in (layout["boxes"] if layout else [])]
     return {"image": "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode(),
-            "boxes": boxes, "size": layout["size"] if layout else 0, "w": W, "h": H}
+            "boxes": boxes, "size": layout["size"] if layout else 0, "w": cw, "h": ch, "k": k}
+
+
+def auto_enhance(d):
+    """Otomatik iyileştirme: seçili görünümle işlenmiş (ince ayarsız) küçük görselden değerler."""
+    path = photo_path(d["photo"])
+    geo = clean_geo(d.get("geo"))
+    fx = {**clean_fx(d.get("fx") or {}), "grain": 0.0, "vignette": 0.0, "adjust": {}, "texture": {}, "frame": {}, "masks": []}
+    with LOCK:
+        if geo is None:
+            img = get_crop(path).resize((432, 540), Image.BILINEAR)
+        else:
+            size = engine.geo_plan(geo, *get_src(path)["size"])["size"]
+            f = 480 / max(size)
+            img = geo_image(path, geo, (max(1, round(size[0] * f)), max(1, round(size[1] * f))))
+    graded = engine.grade(img, CFG, 0, fx, engine.canvas_scale(*img.size))
+    arr = np.asarray(graded, dtype=np.float32) / 255.0
+    return {"adjust": looks.auto_adjust(arr, bw=fx["bw"])}
+
+
+def geo_source(d):
+    """Kırpma aracı için: döndürülmüş/düzeltilmiş ama kırpılmamış görsel ve ölçüleri."""
+    path = photo_path(d["photo"])
+    geo = clean_geo(d.get("geo")) or {"aspect": "4:5"}
+    fx = {**clean_fx(d.get("fx") or {}), "grain": 0.0, "vignette": 0.0, "frame": {}, "masks": []}
+    tw = max(200, min(1600, int(d.get("w", 900))))
+    with LOCK:
+        src = get_src(path)
+        plan = engine.geo_plan({**geo, "crop": None, "aspect": "original"}, *src["size"])
+        small = src["proxy"]
+        f = tw * 1.3 / max(small.size)  # döndürmeden önce ekrana yetecek boyuta küçült (hız)
+        if f < 1:
+            small = small.resize((max(1, round(small.width * f)), max(1, round(small.height * f))), Image.BILINEAR)
+        img, box = engine.orient(small, plan)
+    iw, ih = plan["inner"]
+    img = img.resize((tw, max(1, round(tw * ih / iw))), Image.LANCZOS, box=box, reducing_gap=3.0)
+    img = engine.grade(img, CFG, 0, fx, engine.canvas_scale(*img.size))
+    buf = io.BytesIO()
+    img.save(buf, "JPEG", quality=85)
+    return {"image": "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode(),
+            "inner": [round(iw, 2), round(ih, 2)], "source": list(src["size"])}
 
 
 def preset_list():
@@ -232,8 +466,11 @@ def preset_thumbs():
         img = sample_image()
         for p in todo:
             fx = {"bw": p["bw"], "grain": 0.0, "vignette": 0.0, "look": p["look"], "amount": 1.0}
+            if p.get("recipe"):
+                r = clean_fx({**p["recipe"], "preset": p["recipe"].get("base"), "grain": 0, "vignette": 0})
+                fx = {**r, "grain": 0.0, "vignette": 0.0}
             buf = io.BytesIO()
-            engine.grade(img, CFG, 0, fx).save(buf, "JPEG", quality=82)
+            engine.grade(img, CFG, 0, fx, engine.canvas_scale(*img.size)).save(buf, "JPEG", quality=82)
             SAMPLE_THUMBS[p["id"]] = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
     return {"thumbs": {k: SAMPLE_THUMBS[k] for k in PRESETS if k in SAMPLE_THUMBS}}
 
@@ -248,12 +485,25 @@ def import_presets(name, data):
             "warnings": warns}
 
 
+def save_preset(d):
+    """Seçili fotoğrafın renk ayarlarını kendi hazır ayarı olarak kaydeder."""
+    global PRESETS
+    name = str(d.get("name") or "").strip()[:60]
+    if not name:
+        raise ValueError("Hazır ayara bir ad ver")
+    fx = clean_fx(d.get("fx") or {})
+    recipe = {"base": fx["preset"], "amount": fx["amount"], "adjust": fx["adjust"], "bw": fx["bw"]}
+    saved = looks.save_recipe(USER_PRESETS, name, recipe)
+    PRESETS = looks.load_all(USER_PRESETS)
+    return looks.meta(PRESETS[saved["id"]])
+
+
 def delete_preset(pid):
     global PRESETS
     looks.delete_user(USER_PRESETS, pid)
     PRESETS = looks.load_all(USER_PRESETS)
     with LOCK:
-        for k in [k for k in BASE if k[4] == pid]:
+        for k in [k for k in BASE if k[2][3] == pid]:
             BASE.pop(k, None)
 
 
@@ -286,6 +536,8 @@ def delete_photo(pid):
         for k in [k for k in BASE if k[0] == str(p)]:
             BASE.pop(k, None)
         CROP.pop(str(p), None)
+        SRC.pop(str(p), None)
+        FULL.pop(str(p), None)
 
 
 def load_session():
@@ -329,10 +581,15 @@ def prune_uploads():
 
 
 # ------------------------------------------------------------------ guncelleme
-REPO = "emirhnkocakk/grainline-photo-editor"
-# Depo eski adından taşındı; GitHub eski adla gelen istekleri yeni ada yönlendirir.
-ASSET_PREFIXES = tuple(f"https://github.com/{r}/releases/download/"
-                       for r in (REPO, "emirhnkocakk/basic-photo-editor"))
+REPO = "emirhnkocakk/Tonefect"
+OWNER = REPO.split("/")[0]
+# Depo adı birkaç kez değişti (basic-photo-editor -> grainline-photo-editor -> Tonefect); GitHub eski adları
+# yönlendirir. Bu yüzden ada değil hesaba güvenilir: yalnızca bu hesabın sürüm indirmeleri kurulur.
+ASSET_URL = re.compile(rf"https://github\.com/{OWNER}/[\w.-]+/releases/download/[^/\s]+/[^/\s]+$")
+
+
+def trusted_asset(url):
+    return bool(ASSET_URL.match(str(url or "")))
 UPDATE = {"checked": 0.0, "info": None, "state": "idle", "done": 0, "total": 0, "error": ""}
 
 
@@ -377,7 +634,7 @@ def check_update(force=False):
         latest = str(rel.get("tag_name", "")).lstrip("v")
         info.update(latest=latest, notes=rel.get("body") or "", page=rel.get("html_url") or "")
         asset = next((a for a in rel.get("assets", []) if a.get("name", "").lower().endswith("-setup.exe")), None)
-        if asset and str(asset.get("browser_download_url", "")).startswith(ASSET_PREFIXES):
+        if asset and trusted_asset(asset.get("browser_download_url")):
             info["_asset"] = asset["browser_download_url"]
             info["size"] = asset.get("size", 0)
         info["newer"] = VERSION != "dev" and vtuple(latest) > vtuple(VERSION)
@@ -397,7 +654,7 @@ def open_download():
     """Otomatik kurulum yapılamıyorsa kurulum dosyasını (yoksa sürüm sayfasını) tarayıcıda açar."""
     info = check_update()
     url = info.get("_asset") or info.get("page") or ""
-    if not url.startswith(f"https://github.com/{REPO}/"):
+    if not (trusted_asset(url) or re.match(rf"https://github\.com/{OWNER}/[\w.-]+/releases/", url)):
         url = f"https://github.com/{REPO}/releases/latest"
     webbrowser.open(url)
 
@@ -439,33 +696,54 @@ def resolve_out(path):
     return p if p.is_absolute() else HERE / p
 
 
+def clean_export(e):
+    e = e if isinstance(e, dict) else {}
+    return {"format": e.get("format") if e.get("format") in engine.EXPORT_FORMATS else "jpg",
+            "quality": int(num(e.get("quality"), 50, 100, 95)),
+            "naming": "original" if e.get("naming") == "original" else "number",
+            "exif": bool(e.get("exif"))}
+
+
 def run_job(jid, d):
     job = JOBS[jid]
     try:
         out_dir = resolve_out(d.get("outDir"))
         out_dir.mkdir(parents=True, exist_ok=True)
         job["outDir"] = str(out_dir)
-        manifest = []
+        ex = clean_export(d.get("export"))
+        single = bool(d.get("single"))  # tek fotoğraf: toplu manifest.json'a dokunma
+        manifest, used = [], set()
         for i, raw in enumerate(d["items"], start=1):
             try:
                 item = clean_item(raw)
                 path = photo_path(raw["id"])
                 stem = Path(safe_name(str(raw.get("name") or path.name))).stem[:40]
-                out = out_dir / f"{i:03d}_{stem}.jpg"
+                if ex["naming"] == "number":
+                    stem = f"{i:03d}_{stem}"
+                name, n = stem, 2
+                while name.lower() in used:  # aynı adlı iki fotoğraf birbirini ezmesin
+                    name, n = f"{stem}_{n}", n + 1
+                used.add(name.lower())
+                out = out_dir / f"{name}.{ex['format']}"
                 engine.render_one(CFG, path, item["text"], item["tone"], item["accent"], out,
                                   styles=item["styles"], fx=item["fx"], block=item["block"],
-                                  offsets=item["offsets"])
+                                  offsets=item["offsets"], geo=item["geo"], wm=WATERMARK,
+                                  font=item["font"], textfx=item["textfx"],
+                                  fmt=ex["format"], quality=ex["quality"], keep_exif=ex["exif"])
+                with Image.open(out) as done:
+                    out_size = list(done.size)
                 manifest.append({
                     "image": raw.get("name", path.name), "text": item["text"], "tone": item["tone"],
                     "accent_word": item["accent"],
                     "preset": PRESETS.get(item["fx"]["preset"], looks.CLASSIC)["name"],
-                    "caption": "", "output": str(out)})
+                    "size": out_size, "caption": "", "output": str(out)})
                 job["files"].append({"name": out.name, "text": item["text"]})
             except Exception as e:
                 job["errors"].append(f"{raw.get('name', '?')}: {e}")
             job["done"] = i
-        (out_dir / "manifest.json").write_text(
-            json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        if not single:
+            (out_dir / "manifest.json").write_text(
+                json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     except Exception as e:
         job["errors"].append(f"{e}")
         traceback.print_exc()
@@ -567,7 +845,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({
                     "canvas": {"w": W, "h": H}, "tones": TONES, "brand": CFG["brand"],
                     "limits": CFG.get("limits", {}), "version": VERSION, "quitOnClose": STATE["quit_on_close"], "updateFailed": update_failure(),
-                    "fontWarn": missing, "outDir": str(DEFAULT_OUT)})
+                    "fontWarn": missing, "outDir": str(DEFAULT_OUT),
+                    "watermark": WATERMARK})
             if c == "/api/ping" and m == "GET":
                 return self._json({"app": "grainline", "version": VERSION})
             if c == "/api/heartbeat" and m == "POST":
@@ -580,6 +859,14 @@ class Handler(BaseHTTPRequestHandler):
                 STATE["quit_on_close"] = bool(json.loads(self._body()).get("quitOnClose", True))
                 write_prefs(quitOnClose=STATE["quit_on_close"])
                 return self._json({"ok": True})
+            if c == "/api/watermark" and m == "PUT":
+                return self._json(save_watermark(json.loads(self._body())))
+            if c == "/api/fonts" and m == "GET":
+                return self._json(font_list())
+            if c == "/api/auto" and m == "POST":
+                return self._json(auto_enhance(json.loads(self._body())))
+            if c == "/api/geo/source" and m == "POST":
+                return self._json(geo_source(json.loads(self._body())))
             if c == "/api/signature" and m == "PUT":
                 return self._json({"signature": save_signature(json.loads(self._body()).get("text"))})
             if c == "/api/session" and m == "GET":
@@ -599,6 +886,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(preset_list())
             if c == "/api/presets/thumbs" and m == "GET":
                 return self._json(preset_thumbs())
+            if c == "/api/presets/save" and m == "POST":
+                return self._json(save_preset(json.loads(self._body())))
             if c == "/api/presets/import" and m == "POST":
                 return self._json(import_presets(q.get("name", [""])[0], self._body()))
             if c.startswith("/api/presets/") and m == "DELETE":
@@ -741,6 +1030,7 @@ def main():
     # eski sürümlerden kalan ayrı tarayıcı profili artık kullanılmıyor
     shutil.rmtree(HERE / ".webprofile", ignore_errors=True)
     prune_uploads()
+    threading.Thread(target=engine.font_registry, daemon=True).start()  # yazı tipi taraması önceden
     PORT = free_port(int(os.environ.get("NV_PORT", 8765)))
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     srv.daemon_threads = True

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { ArrowUpCircle, Loader2, Power, Redo2, Settings as Cog, Sparkles, Undo2 } from "lucide-react"
+import { ArrowUpCircle, Download, Loader2, Power, Redo2, Settings as Cog, Sparkles, Undo2 } from "lucide-react"
 import { Toaster, toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { TooltipProvider } from "@/components/ui/tooltip"
@@ -11,12 +11,15 @@ import { UpdateDialog } from "@/components/UpdateDialog"
 import { SettingsDialog } from "@/components/SettingsDialog"
 import { api } from "@/lib/api"
 import { mergeStyle, naturalSort, remap, words } from "@/lib/text"
-import type { Config, Item, Job, Mode, PresetMeta, Settings, Style, UpdateInfo } from "@/types"
+import { legacyGeo, naturalSize, newGeo } from "@/lib/geo"
+import { applyTheme, isLightTheme } from "@/lib/themes"
+import type { Config, Geo, Item, Job, Mask, Mode, PresetMeta, Settings, Style, UpdateInfo, Watermark } from "@/types"
 
 // Vinyet ve parazit yeni fotoğraflarda kapalı başlar; kullanıcı isterse açar.
 const DEFAULT_FX: Item["fx"] = { bw: true, grain: 0, vignette: 0, preset: "", amount: 1, adjust: {} }
 const SETTINGS_VERSION = 2
-const DEFAULTS: Settings = { outDir: "output", tone: "quiet", fx: DEFAULT_FX, guides: true, v: SETTINGS_VERSION }
+const DEFAULT_EXPORT: Settings["export"] = { format: "jpg", quality: 95, naming: "number", exif: false }
+const DEFAULTS: Settings = { outDir: "output", tone: "quiet", fx: DEFAULT_FX, guides: true, export: DEFAULT_EXPORT, aspect: "original", theme: "tonefect", v: SETTINGS_VERSION }
 const IMG = /\.(jpe?g|png|webp)$/i
 const HISTORY_MAX = 100
 const HISTORY_GROUP_MS = 600 // art arda gelen değişiklikler (sürükleme, yazma) tek adım sayılır
@@ -35,7 +38,11 @@ export default function App() {
   const [dlg, setDlg] = useState(false)
   const [bye, setBye] = useState(false)
   const [cog, setCog] = useState(false)
-  const [signature, setSignature] = useState("")
+  const [wm, setWm] = useState<Watermark | null>(null)
+  const [tab, setTab] = useState("color")
+  const [clip, setClip] = useState<Item["fx"] | null>(null) // kopyalanan renk/efekt ayarları
+  const [maskSel, setMaskSel] = useState<string | null>(null) // seçili yerel düzenleme
+  const [maskShow, setMaskShow] = useState(false)
   const [quitOnClose, setQuitOnClose] = useState(true)
   const [upd, setUpd] = useState<UpdateInfo | null>(null)
   const [updOpen, setUpdOpen] = useState(false)
@@ -64,8 +71,8 @@ export default function App() {
         const st = s.settings || {}
         // eski kayıtlarda varsayılan vinyet/parazit açıktı; bir kez kapalıya çek
         const fx = { ...DEFAULTS.fx, ...(st.fx || {}), ...((st.v ?? 1) < SETTINGS_VERSION ? { grain: 0, vignette: 0 } : {}) }
-        setSettings({ ...DEFAULTS, ...st, fx, v: SETTINGS_VERSION, outDir: st.outDir || c.outDir || "output" })
-        setSignature(c.brand.signature_text)
+        setSettings({ ...DEFAULTS, ...st, fx, export: { ...DEFAULT_EXPORT!, ...(st.export || {}) }, v: SETTINGS_VERSION, outDir: st.outDir || c.outDir || "output" })
+        setWm(c.watermark)
         setQuitOnClose(c.quitOnClose !== false)
         const its: Item[] = (s.items || []).map(normItem)
         setItems(its)
@@ -96,6 +103,8 @@ export default function App() {
       window.removeEventListener("pagehide", bye)
     }
   }, [loaded])
+
+  useEffect(() => applyTheme(settings.theme), [settings.theme])
 
   // oturumu otomatik kaydet
   useEffect(() => {
@@ -152,7 +161,11 @@ export default function App() {
       if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return
       const z = e.code === "KeyZ" || e.key.toLowerCase() === "z"
       const y = e.code === "KeyY" || e.key.toLowerCase() === "y"
-      if (z && !e.shiftKey) travel("undo")
+      // Ctrl+C / Ctrl+V (ya da Shift ile): renk ve efekt ayarlarını kopyala/yapıştır; seçili yazı varsa tarayıcıya bırak
+      const noText = !window.getSelection()?.toString()
+      if (e.code === "KeyC" && noText) clipRef.current.copyFx()
+      else if (e.code === "KeyV") clipRef.current.pasteFx()
+      else if (z && !e.shiftKey) travel("undo")
       else if ((z && e.shiftKey) || y) travel("redo")
       else return
       e.preventDefault()
@@ -203,6 +216,88 @@ export default function App() {
 
   const resetPosition = () => update((it) => ({ ...it, block: [0, 0], offsets: {} }))
 
+  const setMasks = (masks: Mask[]) => update((it) => ({ ...it, fx: { ...it.fx, masks } }))
+  const setMask = (p: Partial<Mask>) =>
+    update((it) => ({ ...it, fx: { ...it.fx, masks: (it.fx.masks ?? []).map((m) => (m.id === maskSel ? { ...m, ...p } : m)) } }))
+  useEffect(() => setMaskSel(null), [currentId])
+  const curMask = tab === "local" ? item?.fx.masks?.find((m) => m.id === maskSel) : undefined
+
+  const copyFx = () => {
+    if (!item) return
+    setClip(JSON.parse(JSON.stringify(item.fx)))
+    toast.success("Renk ve efekt ayarları kopyalandı")
+  }
+  const pasteFx = (id = currentId) => {
+    if (!clip || !id) return
+    setItems((a) => a.map((i) => (i.id === id ? { ...i, fx: JSON.parse(JSON.stringify(clip)) } : i)))
+    toast.success("Ayarlar yapıştırıldı")
+  }
+  const clipRef = useRef({ copyFx, pasteFx })
+  clipRef.current = { copyFx, pasteFx }
+
+  // Kırp/döndür/boyut. Çıktı boyutu sabit ve kilitliyse kırpma değişince uzun kenar korunur, oran uyarlanır.
+  const setGeo = (p: Partial<Geo>) =>
+    update((it) => {
+      const g: Geo = { ...(it.geo ?? legacyGeo()), ...p }
+      const reshaped = "crop" in p || "rotate" in p || "straighten" in p || "aspect" in p
+      if (reshaped && !("outW" in p) && g.lock !== false && g.outW && g.outH && it.src) {
+        const n = naturalSize(g, it.src)
+        const s = Math.max(g.outW, g.outH) / Math.max(n[0], n[1])
+        g.outW = Math.max(16, Math.round(n[0] * s))
+        g.outH = Math.max(16, Math.round(n[1] * s))
+      }
+      return { ...it, geo: g }
+    })
+
+  const applyAllGeo = () => {
+    if (!item) return
+    const g = item.geo ?? legacyGeo()
+    const long = g.outW && g.outH ? Math.max(g.outW, g.outH) : null
+    setItems((a) =>
+      a.map((i) => {
+        if (i.id === item.id) return i
+        const ng: Geo = { ...(i.geo ?? legacyGeo()), aspect: g.aspect, crop: null, lock: g.lock, outW: g.outW, outH: g.outH }
+        if (long && g.lock !== false && i.src) {
+          const n = naturalSize(ng, i.src)
+          const s = long / Math.max(n[0], n[1])
+          ng.outW = Math.round(n[0] * s)
+          ng.outH = Math.round(n[1] * s)
+        }
+        return { ...i, geo: ng }
+      })
+    )
+    toast.success("Oran ve boyut tüm fotoğraflara uygulandı")
+  }
+
+  // Kırp sekmesi açıkken önizleme yerine döndürülmüş ama kırpılmamış görsel gösterilir.
+  const cropping = tab === "crop" && !!item
+  const [geoSrc, setGeoSrc] = useState<{ id: string; image: string; inner: [number, number] } | null>(null)
+  const g0 = item?.geo
+  const srcKey = cropping && item
+    ? JSON.stringify([item.id, g0?.rotate ?? 0, !!g0?.flipH, !!g0?.flipV, g0?.straighten ?? 0, item.fx])
+    : ""
+  useEffect(() => {
+    if (!srcKey || !item) return
+    let alive = true
+    const id = item.id
+    const t = setTimeout(() => {
+      api
+        .geoSource({ photo: id, geo: item.geo ?? legacyGeo(), fx: item.fx, w: 1000 })
+        .then((r) => {
+          if (!alive) return
+          setGeoSrc({ id, image: r.image, inner: r.inner })
+          // eski fotoğraflarda kaynak boyutu yoktu
+          setItems((a) => (a.some((i) => i.id === id && !i.src) ? a.map((i) => (i.id === id ? { ...i, src: r.source } : i)) : a))
+        })
+        .catch((e) => alive && toast.error(e.message))
+    }, 120)
+    return () => {
+      alive = false
+      clearTimeout(t)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [srcKey])
+
   const addFiles = async (files: File[]) => {
     const list = files.filter((f) => IMG.test(f.name)).sort(naturalSort)
     if (!list.length) return toast.error("Desteklenen fotoğraf bulunamadı (jpg, png, webp)")
@@ -211,7 +306,8 @@ export default function App() {
     for (const f of list) {
       try {
         const r = await api.upload(f)
-        const it = newItem(r.id, r.name, settings.fx, settings.tone)
+        const geo = settings.aspect === "insta" ? legacyGeo() : newGeo()
+        const it = { ...newItem(r.id, r.name, settings.fx, settings.tone), src: [r.width, r.height] as [number, number], geo }
         setItems((a) => [...a, it])
         last = last ?? r.id
       } catch (e: any) {
@@ -247,13 +343,16 @@ export default function App() {
       return b
     })
 
-  const generate = async () => {
+  // one: yalnızca o fotoğrafı dışa aktar (toplu manifest.json'a dokunulmaz)
+  const generate = async (one?: Item) => {
     // metin isteğe bağlı: metinsiz fotoğraflar yalnızca renk/efektle üretilir
     if (!items.length) return toast.error("Önce fotoğraf ekle")
     setJob(null)
     setDlg(true)
     try {
-      const { job: id } = await api.generate({ items, outDir: settings.outDir })
+      const { job: id } = await api.generate({
+        items: one ? [one] : items, outDir: settings.outDir, export: settings.export, single: !!one,
+      })
       setJobId(id)
       for (;;) {
         const j = await api.job(id)
@@ -313,7 +412,10 @@ export default function App() {
             <Button variant="ghost" size="icon-sm" aria-label="Yinele" title="Yinele (Ctrl+Y)" disabled={!histLen.future} onClick={() => travel("redo")}>
               <Redo2 className="h-4 w-4" />
             </Button>
-            <Button onClick={generate} disabled={!items.length} className="h-8 gap-1.5">
+            <Button variant="secondary" size="sm" onClick={() => item && generate(item)} disabled={!item} className="h-8 gap-1.5" title="Yalnızca seçili fotoğrafı dışa aktar">
+              <Download className="!size-4" /> Bu fotoğraf
+            </Button>
+            <Button onClick={() => generate()} disabled={!items.length} className="h-8 gap-1.5">
               <Sparkles className="!size-4" /> Görselleri üret
             </Button>
             <Button variant="ghost" size="icon-sm" aria-label="Ayarlar" onClick={() => setCog(true)}>
@@ -325,23 +427,28 @@ export default function App() {
           </div>
         </header>
         <div className="flex min-h-0 flex-1">
-          <Sidebar items={items} currentId={currentId} select={setCurrentId} move={move} remove={removeItem} pickFiles={() => fileRef.current?.click()} uploading={uploading} />
+          <Sidebar items={items} currentId={currentId} select={setCurrentId} move={move} remove={removeItem} pickFiles={() => fileRef.current?.click()} uploading={uploading} pasteTo={clip ? pasteFx : undefined} exportOne={(id) => { const it = items.find((i) => i.id === id); if (it) generate(it) }} />
           <Stage
             item={item} cfg={cfg} mode={mode} setMode={setMode} selected={selected} setSelected={setSelected}
             update={update} applyStyle={applyStyle} resetPosition={resetPosition} pickFiles={() => fileRef.current?.click()}
-            guides={settings.guides} rev={signature}
+            guides={settings.guides} wm={wm}
+            cropping={cropping} geoSrc={geoSrc && geoSrc.id === item?.id ? geoSrc : null} setGeo={setGeo}
+            localMode={tab === "local"} mask={curMask} maskShow={maskShow} setMask={setMask}
           />
           <Panel
             item={item} items={items} cfg={cfg} selected={selected} setSelected={setSelected} setText={setText}
             patch={(p, all) => (all && p.fx ? patchAllFx() : patch(p, all))}
             presets={presets} groups={groups} onPresetsChange={loadPresets}
+            tab={tab} setTab={setTab} setGeo={setGeo} applyAllGeo={applyAllGeo}
+            onCopy={copyFx} onPaste={() => pasteFx()} canPaste={!!clip}
+            maskSel={maskSel} setMaskSel={setMaskSel} setMasks={setMasks} maskShow={maskShow} setMaskShow={setMaskShow}
           />
         </div>
         <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => { addFiles([...(e.target.files || [])]); e.target.value = "" }} />
         <GenerateDialog open={dlg} onClose={() => setDlg(false)} job={job} jobId={jobId} />
-        <SettingsDialog open={cog} onClose={() => setCog(false)} cfg={cfg} settings={settings} setSettings={setSettings} defaults={DEFAULTS} signature={signature} onSignature={setSignature} quitOnClose={quitOnClose} onQuitOnClose={(v) => { setQuitOnClose(v); api.setPrefs({ quitOnClose: v }).catch((e) => toast.error(e.message)) }} version={cfg.version} update={upd} onUpdate={(u) => { setUpd(u); if (u.newer) { setCog(false); setUpdOpen(true) } }} />
+        <SettingsDialog open={cog} onClose={() => setCog(false)} cfg={cfg} settings={settings} setSettings={setSettings} defaults={DEFAULTS} watermark={wm} onWatermark={setWm} quitOnClose={quitOnClose} onQuitOnClose={(v) => { setQuitOnClose(v); api.setPrefs({ quitOnClose: v }).catch((e) => toast.error(e.message)) }} version={cfg.version} update={upd} onUpdate={(u) => { setUpd(u); if (u.newer) { setCog(false); setUpdOpen(true) } }} />
         <UpdateDialog open={updOpen} onClose={() => setUpdOpen(false)} info={upd} />
-        <Toaster theme="dark" position="bottom-center" />
+        <Toaster theme={isLightTheme(settings.theme) ? "light" : "dark"} position="bottom-center" />
       </div>
     </TooltipProvider>
   )
