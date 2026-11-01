@@ -1,4 +1,4 @@
-import type { Adjust, Config, Fx, Job, PresetMeta, UpdateInfo, UpdateStatus, Watermark } from "@/types"
+import type { Adjust, AiStatus, Config, Fx, Job, PresetMeta, UpdateInfo, UpdateStatus, Watermark } from "@/types"
 
 type PresetList = { presets: PresetMeta[]; groups: string[] }
 
@@ -25,6 +25,7 @@ export const api = {
     fetch("/api/photos?name=" + encodeURIComponent(file.name), { method: "POST", headers: H, body: file }).then((r) =>
       j<{ id: string; name: string; width: number; height: number }>(r)
     ),
+  duplicate: (id: string) => fetch("/api/photos/" + encodeURIComponent(id) + "/duplicate", json("POST", {})).then((r) => j<{ id: string }>(r)),
   remove: (id: string) => fetch("/api/photos/" + encodeURIComponent(id), { method: "DELETE", headers: H }).then((r) => j(r)),
   presets: () => fetch("/api/presets").then((r) => j<PresetList>(r)),
   presetThumbs: () => fetch("/api/presets/thumbs").then((r) => j<{ thumbs: Record<string, string> }>(r)),
@@ -35,10 +36,22 @@ export const api = {
   savePreset: (name: string, fx: Fx) => fetch("/api/presets/save", json("POST", { name, fx })).then((r) => j<PresetMeta>(r)),
   deletePreset: (id: string) => fetch("/api/presets/" + encodeURIComponent(id), { method: "DELETE", headers: H }).then((r) => j<PresetList>(r)),
   preview: (p: unknown) => fetch("/api/preview", json("POST", p)).then((r) => j<any>(r)),
+  extractSelection: (body: unknown) =>
+    fetch("/api/selection/extract", json("POST", body)).then((r) =>
+      j<{ id: string; name: string; width: number; height: number; x: number; y: number; w: number }>(r)
+    ),
+  renderFile: (body: unknown) =>
+    fetch("/api/render-file", json("POST", body)).then(async (r) => {
+      if (!r.ok) await j(r)
+      return r.blob()
+    }),
   generate: (body: unknown) => fetch("/api/generate", json("POST", body)).then((r) => j<{ job: string }>(r)),
   job: (id: string) => fetch("/api/job/" + id).then((r) => j<Job>(r)),
   openFolder: (path: string) => fetch("/api/open-folder", json("POST", { path })).then((r) => j(r)),
   watermark: (w: Watermark) => fetch("/api/watermark", json("PUT", w)).then((r) => j<Watermark>(r)),
+  maskView: (body: unknown) => fetch("/api/mask/view", json("POST", body)).then((r) => j<{ image: string; coverage: number }>(r)),
+  aiStatus: () => fetch("/api/ai/status").then((r) => j<AiStatus>(r)),
+  aiInstall: () => fetch("/api/ai/install", json("POST", {})).then((r) => j<AiStatus>(r)),
   fonts: () => fetch("/api/fonts").then((r) => j<{ bundled: string[]; system: string[] }>(r)),
   auto: (body: unknown) => fetch("/api/auto", json("POST", body)).then((r) => j<{ adjust: Adjust }>(r)),
   geoSource: (body: unknown) =>

@@ -20,6 +20,10 @@ SolidCompression=yes
 WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64compatible
 DisableProgramGroupPage=yes
+; The app has no window of its own (the UI is a browser window), so Restart Manager cannot ask it
+; to close. PrepareToInstall below ends it first; force is the fallback if anything still holds files.
+CloseApplications=force
+RestartApplications=no
 
 [Languages]
 Name: "turkish"; MessagesFile: "compiler:Languages\Turkish.isl"
@@ -48,3 +52,31 @@ Type: files; Name: "{autodesktop}\Grainline.lnk"
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\.webprofile"
 Type: filesandordirs; Name: "{app}\uploads"
+Type: filesandordirs; Name: "{app}\models"
+
+[Code]
+procedure EndApp(const ExeName: String);
+var
+  ResultCode: Integer;
+begin
+  { only the app's own process (no /T): the browser window it opened must stay untouched }
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM ' + ExeName, '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  EndApp('Tonefect.exe');
+  EndApp('Grainline.exe');
+  Sleep(800);
+  Result := '';
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep = usUninstall then
+  begin
+    EndApp('Tonefect.exe');
+    EndApp('Grainline.exe');
+    Sleep(800);
+  end;
+end;

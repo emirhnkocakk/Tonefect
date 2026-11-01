@@ -4,12 +4,15 @@ import { Button } from "@/components/ui/button"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { StyleBar } from "@/components/StyleBar"
 import { CropEditor } from "@/components/CropEditor"
+import { LayerOverlay } from "@/components/LayerOverlay"
+import { FULL_QUAD, PerspEditor, type Quad } from "@/components/PerspEditor"
 import { MaskOverlay } from "@/components/MaskOverlay"
-import { canvasScale, canvasSize, cropOf, innerSize, legacyGeo, lockRatio } from "@/lib/geo"
+import { SelectOverlay } from "@/components/SelectOverlay"
+import { canvasScale, canvasSize, cropOf, innerSize, legacyGeo, lockRatio, photoRect } from "@/lib/geo"
 import { useFit, usePreview } from "@/lib/hooks"
-import { commonStyle, words } from "@/lib/text"
+import { commonStyle } from "@/lib/text"
 import { cn } from "@/lib/utils"
-import type { Config, Geo, Item, Mask, Mode, Style, Watermark } from "@/types"
+import type { Config, Geo, ImgLayer, Item, Mask, Mode, SelectTool, Style, Watermark } from "@/types"
 
 type Props = {
   item?: Item
@@ -26,11 +29,17 @@ type Props = {
   wm: Watermark | null
   cropping: boolean
   geoSrc: { image: string; inner: [number, number] } | null
+  perspEdit?: boolean
+  designMode?: boolean
+  layerSel?: string[]
+  setLayerSel?: (ids: string[]) => void
+  setLayers?: (l: ImgLayer[]) => void
   setGeo: (p: Partial<Geo>) => void
   localMode: boolean // Yerel sekmesi: yazı etkileşimi kapalı, maske tutamaçları açık
   mask?: Mask
   maskShow: boolean
   setMask: (p: Partial<Mask>) => void
+  selTool: SelectTool
 }
 
 type Drag = {
@@ -53,7 +62,7 @@ type Guide = { x1: number; y1: number; x2: number; y2: number }
 const THRESH = 8
 const MARGIN = 0.08
 
-export function Stage({ item, cfg, mode, setMode, selected, setSelected, update, applyStyle, resetPosition, pickFiles, guides: guidesOn, wm, cropping, geoSrc, setGeo, localMode, mask, maskShow, setMask }: Props) {
+export function Stage({ item, cfg, mode, setMode, selected, setSelected, update, applyStyle, resetPosition, pickFiles, guides: guidesOn, wm, cropping, geoSrc, setGeo, perspEdit, designMode, layerSel, setLayerSel, setLayers, localMode, mask, maskShow, setMask, selTool }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const stageRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef<Drag | null>(null)
@@ -397,7 +406,6 @@ export function Stage({ item, cfg, mode, setMode, selected, setSelected, update,
         : { left, top: top - 12, transform: "translateY(-100%)" }
   }
 
-  const wordCount = item ? words(item.text).length : 0
   const common = useMemo(
     () => (item && selected.length ? commonStyle(item.styles, selected) : null),
     [item, selected]
@@ -487,6 +495,19 @@ export function Stage({ item, cfg, mode, setMode, selected, setSelected, update,
             <span className="text-sm font-medium">Fotoğraflarını buraya sürükle</span>
             <span className="text-xs">ya da tıklayıp seç</span>
           </button>
+        ) : cropping && perspEdit ? (
+          (() => {
+            const g = item.geo ?? legacyGeo()
+            const src = item.src ?? [W, H]
+            return (
+              <PerspEditor
+                image={geoSrc?.image ?? null}
+                size={geoSrc?.inner ?? ((g.rotate % 180 ? [src[1], src[0]] : src) as [number, number])}
+                quad={(g.persp as Quad | null | undefined) ?? FULL_QUAD}
+                onChange={(q) => setGeo({ persp: q, crop: null })}
+              />
+            )
+          })()
         ) : cropping ? (
           (() => {
             const g = item.geo ?? legacyGeo()
@@ -577,7 +598,22 @@ export function Stage({ item, cfg, mode, setMode, selected, setSelected, update,
               ))}
             </div>
 
-            {mask && !holdOrig && <MaskOverlay mask={mask} w={size.w} h={size.h} show={maskShow} onChange={setMask} />}
+            {designMode && !holdOrig && setLayers && setLayerSel && (
+              <LayerOverlay layers={item.layers ?? []} sel={layerSel ?? []} setSel={setLayerSel} onChange={setLayers} w={size.w} h={size.h} />
+            )}
+            {mask && !holdOrig && (() => {
+              // maskeler fotoğrafa göre; tuval genişletildiyse fotoğrafın olduğu alana yerleşir
+              const [rx, ry, rw, rh] = photoRect(item.geo, item.src)
+              const w = size.w * rw
+              const h = size.h * rh
+              return (
+                <div className="absolute" style={{ left: size.w * rx, top: size.h * ry, width: w, height: h }}>
+                  {mask.type === "select"
+                    ? <SelectOverlay mask={mask} w={w} h={h} photo={item.id} geo={item.geo ?? null} tool={selTool} onChange={setMask} />
+                    : <MaskOverlay mask={mask} w={w} h={h} show={maskShow} onChange={setMask} />}
+                </div>
+              )
+            })()}
             {compare && !holdOrig && (
               <div className="absolute inset-y-0 z-20" style={{ left: `${splitX * 100}%` }}>
                 <div className="pointer-events-none absolute inset-y-0 -left-px w-0.5 bg-white/90 shadow-[0_0_6px_rgba(0,0,0,0.6)]" />
@@ -608,11 +644,6 @@ export function Stage({ item, cfg, mode, setMode, selected, setSelected, update,
               <StyleBar common={common} count={selected.length} apply={applyStyle} onClose={() => setSelected([])} style={barStyle} />
             )}
 
-            {wordCount === 0 && !busy && (
-              <div className="pointer-events-none absolute inset-x-0 bottom-[14%] text-center text-xs text-white/50">
-                Sağdan bir cümle yaz
-              </div>
-            )}
           </div>
         )}
       </div>

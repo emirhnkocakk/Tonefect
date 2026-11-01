@@ -82,6 +82,7 @@ def grade(img, cfg, seed, fx=None, grain_scale=1.0):
         s["grain"] = s["grain"] * float(fx.get("grain", 1.0))
         s["vignette"] = s["vignette"] * float(fx.get("vignette", 1.0))
     arr = np.asarray(img, dtype=np.float32) / 255.0
+    src = arr  # akilli secim renk ayarlarindan onceki fotograf uzerinden yapilir
     look = fx.get("look") if fx else None
     if look is not None:
         graded = looks.apply(arr, look)
@@ -104,8 +105,9 @@ def grade(img, cfg, seed, fx=None, grain_scale=1.0):
     if sharpen or clarity or denoise:
         arr = detail(arr, sharpen, max(-1.0, min(1.0, clarity)), denoise, grain_scale)
 
+    matte_fn = (fx or {}).get("_matte") if fx else None  # konu maskesi: boyut -> 0..1 dizi (sunucu saglar)
     for m in ((fx or {}).get("masks") or []) if fx else []:
-        arr = apply_mask(arr, m, grain_scale)
+        arr = apply_mask(arr, m, grain_scale, src, matte_fn)
 
     tex = ((fx or {}).get("texture") or {}) if fx else {}
     if tex.get("bloom"):
@@ -131,6 +133,11 @@ def grade(img, cfg, seed, fx=None, grain_scale=1.0):
         arr = arr + noise[..., None]
 
     img = Image.fromarray((np.clip(arr, 0, 1) * 255).astype(np.uint8), "RGB")
+    bg = ((fx or {}).get("background") or {}) if fx else {}
+    if bg.get("mode") in BG_MODES:
+        if matte_fn is None:
+            raise ValueError("Arka plan için yapay zekâ modeli gerekli.")
+        img = apply_background(img, matte_fn(img.size), bg, grain_scale)
     if tex.get("dust"):
         img = dust(img, float(tex["dust"]), seed, grain_scale)
     frame = ((fx or {}).get("frame") or {}) if fx else {}
@@ -147,7 +154,10 @@ def grade(img, cfg, seed, fx=None, grain_scale=1.0):
 MASK_KEYS = ("exposure", "contrast", "highlights", "shadows", "temperature", "tint", "saturation", "clarity")
 
 
-def mask_weight(m, h, w):
+def mask_weight(m, h, w, src=None, matte_fn=None):
+    if m.get("type") == "select":
+        wgt = select_weight(m, src if src is not None else np.zeros((h, w, 3), np.float32), matte_fn)
+        return (1 - wgt if m.get("invert") else wgt).astype(np.float32)
     X = ((np.arange(w, dtype=np.float32) + 0.5))[None, :]
     Y = ((np.arange(h, dtype=np.float32) + 0.5))[:, None]
     if m.get("type") == "linear":
@@ -167,7 +177,25 @@ def mask_weight(m, h, w):
     return wgt.astype(np.float32)
 
 
-def apply_mask(arr, m, k=1.0):
+def fill_region(arr, wgt):
+    """Secilen alani cevresinden doldurur (alan tasindiysa arkada kalan bosluk icin).
+    Cok olcekli normalize bulaniklastirma: yakin pikseller once, uzaktakiler sonra."""
+    h, w = arr.shape[:2]
+    known = np.clip(1 - wgt * 1.5, 0, 1).astype(np.float32)  # kenarda secimden biraz pay birak
+    est = (arr * known[..., None]).sum((0, 1)) / max(float(known.sum()), 1.0)
+    est = np.broadcast_to(est, arr.shape).astype(np.float32)
+    for f in (0.3, 0.12, 0.05, 0.02, 0.008):
+        s = max(1.0, max(h, w) * f)
+        den = gauss(known, s)
+        e = gauss(arr * known[..., None], s) / np.maximum(den, 1e-4)[..., None]
+        conf = np.clip(den * 3, 0, 1)[..., None]
+        est = est * (1 - conf) + e * conf
+    return arr * (1 - wgt[..., None]) + est * wgt[..., None]
+
+
+def apply_mask(arr, m, k=1.0, src=None, matte_fn=None):
+    if m.get("fill"):  # alan tasindi: arkada kalan yer cevreden doldurulur
+        arr = fill_region(np.clip(arr, 0, 1), mask_weight(m, *arr.shape[:2], src, matte_fn))
     adj = m.get("adjust") or {}
     look = {key: adj[key] for key in MASK_KEYS if key != "clarity" and adj.get(key)}
     clarity = float(adj.get("clarity") or 0)
@@ -177,8 +205,127 @@ def apply_mask(arr, m, k=1.0):
     out = looks.apply(arr, look) if look else arr
     if clarity:
         out = detail(out, 0.0, clarity, 0.0, k)
-    wgt = mask_weight(m, *arr.shape[:2])[..., None]
+    wgt = mask_weight(m, *arr.shape[:2], src, matte_fn)[..., None]
     return arr + (out - arr) * wgt
+
+
+# ------------------------------------------------------------ akilli secim
+# {"type": "select", "ops": [...], "feather": 0..1, "invert", "adjust"}
+#   wand:  {"kind": "wand", "p": [x, y], "tol": 0..1, "contiguous": bool, "add": bool}
+#   brush: {"kind": "brush", "pts": [[x, y], ...], "r": yaricap (kisa kenara oranli), "hard": 0..1, "add": bool}
+# Adimlar saklanir, piksel degil: her cozunurlukte ayni secim yeniden hesaplanir.
+WAND_W = np.array([1.0, 1.25, 0.85], np.float32)  # yesile biraz daha duyarli (goz gibi)
+WAND_GRID = 256  # bitisik bolge bu boyutta bulunur, kenarlar tam cozunurlukte rafine edilir
+
+
+def _color_dist(src, seed):
+    return np.sqrt((((src - seed) * WAND_W) ** 2).sum(-1))
+
+
+def wand_region(src, op):
+    h, w = src.shape[:2]
+    sx = min(w - 1, max(0, int(op["p"][0] * w)))
+    sy = min(h - 1, max(0, int(op["p"][1] * h)))
+    rr = max(1, round(min(h, w) / 200))
+    seed = src[max(0, sy - rr):sy + rr + 1, max(0, sx - rr):sx + rr + 1].reshape(-1, 3).mean(0)
+    thr = 0.03 + 0.5 * float(op.get("tol", 0.3))
+    within = _color_dist(src, seed) < thr
+    if not op.get("contiguous", True):
+        return within.astype(np.float32)
+    # bitisik bolge: kucuk izgarada tasma doldurma, sonra tam cozunurlukte renk kosuluyla kirp
+    f = min(1.0, WAND_GRID / max(h, w))
+    gw, gh = max(1, round(w * f)), max(1, round(h * f))
+    small = np.asarray(Image.fromarray((np.clip(src, 0, 1) * 255).astype(np.uint8)).resize((gw, gh), Image.BILINEAR),
+                       np.float32) / 255.0
+    ok = _color_dist(small, seed) < thr
+    gx, gy = min(gw - 1, int(sx * f)), min(gh - 1, int(sy * f))
+    region = np.zeros((gh, gw), bool)
+    if ok[gy, gx]:
+        region[gy, gx] = True
+        stack = [(gy, gx)]
+        while stack:
+            y, x = stack.pop()
+            for ny, nx in ((y - 1, x), (y + 1, x), (y, x - 1), (y, x + 1)):
+                if 0 <= ny < gh and 0 <= nx < gw and ok[ny, nx] and not region[ny, nx]:
+                    region[ny, nx] = True
+                    stack.append((ny, nx))
+    up = np.asarray(Image.fromarray(region.astype(np.uint8) * 255).resize((w, h), Image.BILINEAR), np.float32) / 255.0
+    grow = gauss(up, max(1.0, 1.5 / f)) > 0.02
+    out = within & grow
+    out[sy, sx] = True
+    return out.astype(np.float32)
+
+
+def brush_region(h, w, op):
+    pts = [(x * w, y * h) for x, y in op.get("pts") or []]
+    if not pts:
+        return np.zeros((h, w), np.float32)
+    r = max(0.5, float(op.get("r", 0.03)) * min(h, w))
+    layer = Image.new("L", (w, h), 0)
+    d = ImageDraw.Draw(layer)
+    if len(pts) > 1:
+        d.line(pts, fill=255, width=max(1, round(2 * r)), joint="curve")
+    for x, y in pts:
+        d.ellipse([x - r, y - r, x + r, y + r], fill=255)
+    out = np.asarray(layer, np.float32) / 255.0
+    soft = (1 - float(op.get("hard", 0.6))) * r * 0.6
+    return gauss(out, soft) if soft >= 1 else out
+
+
+def select_weight(m, src, matte_fn=None):
+    h, w = src.shape[:2]
+    out = np.zeros((h, w), np.float32)
+    for op in (m.get("ops") or [])[:300]:
+        kind = op.get("kind")
+        if kind == "subject":  # yapay zeka konu maskesi (inverse: arka plan)
+            if matte_fn is None:
+                raise ValueError("Konu seçimi için yapay zekâ modeli gerekli.")
+            reg = matte_fn((w, h))
+            reg = 1 - reg if op.get("inverse") else reg
+        elif kind == "wand":
+            reg = wand_region(src, op)
+        else:
+            reg = brush_region(h, w, op)
+        out = np.maximum(out, reg) if op.get("add", True) else np.minimum(out, 1 - reg)
+    f = float(m.get("feather") or 0)
+    if f > 0:
+        out = gauss(out, f * 0.02 * min(h, w))
+    return np.clip(out, 0, 1)
+
+
+# ------------------------------------------------------------ arka plan (yapay zeka konu maskesiyle)
+BG_MODES = ("remove", "color", "blur")
+
+
+def align_matte(matte, geo, full_size, size, guide=None):
+    """Tam kare konu maskesini (L) fotografin kirpma/dondurmesine ve hedef boyuta hizalar -> 0..1."""
+    if not geo:
+        m = ImageOps.fit(matte, size, method=Image.BILINEAR)
+    else:
+        m = apply_geo(matte, geo, full_size, size, guide)
+    return np.asarray(m, np.float32) / 255.0
+
+
+def apply_background(img, matte, bg, k=1.0):
+    """remove: seffaf (RGBA), color: duz renk, blur: arka plani bulaniklastir."""
+    a = np.clip(matte, 0, 1)[..., None]
+    fg = np.asarray(img, np.float32) / 255.0
+    mode = bg.get("mode")
+    if mode == "remove":
+        rgba = np.dstack([fg, a[..., 0]])
+        return Image.fromarray((rgba * 255).astype(np.uint8), "RGBA")
+    if mode == "color":
+        try:
+            back = np.array(hex_to_rgb(bg.get("color") or "#FFFFFF"), np.float32) / 255.0
+        except (ValueError, TypeError):
+            back = np.ones(3, np.float32)
+        back = np.broadcast_to(back, fg.shape)
+    else:  # blur: konuyu arka plana tasirmadan bulaniklastir (konu yerini arka planin ortalamasiyla doldur)
+        sigma = (4 + 36 * float(bg.get("blur", 0.5))) * k
+        wb = gauss((1 - a[..., 0]).astype(np.float32), sigma)[..., None]
+        back = gauss((fg * (1 - a)).astype(np.float32), sigma) / np.maximum(wb, 1e-3)
+    out = fg * a + back * (1 - a)
+    return Image.fromarray((np.clip(out, 0, 1) * 255).astype(np.uint8), "RGB")
 
 
 # ------------------------------------------------------------ doku ve cerceve
@@ -230,7 +377,8 @@ def dust(img, amount, seed, k=1.0):
         y0 = rng.uniform(0, h * 0.7)
         y1 = y0 + rng.uniform(0.1, 0.5) * h
         d.line([x, y0, x + rng.uniform(-0.01, 0.01) * w, y1], fill=(235, 235, 235, int(70 * amount + 20)), width=max(1, round(0.7 * k)))
-    return Image.alpha_composite(img.convert("RGBA"), layer).convert("RGB")
+    out = Image.alpha_composite(img.convert("RGBA"), layer)
+    return out if img.mode == "RGBA" else out.convert("RGB")
 
 
 FRAME_STYLES = ("solid", "polaroid", "film", "line")
@@ -259,7 +407,7 @@ def apply_frame(img, frame):
         left = right = max(1, round(t * 0.45))
         top = bottom = round(t * 1.7)
     inner = (max(1, W - left - right), max(1, H - top - bottom))
-    out = Image.new("RGB", (W, H), color)
+    out = Image.new(img.mode, (W, H), color + ((255,) if img.mode == "RGBA" else ()))
     out.paste(ImageOps.fit(img, inner, method=Image.LANCZOS), (left, top))
     if style == "film":  # film delikleri
         d = ImageDraw.Draw(out)
@@ -662,7 +810,9 @@ def signature_layer(cfg, W, H):
 # ------------------------------------------------------------------ geometri
 # geo: {"aspect": "original" | "free" | "a:b", "crop": [x, y, w, h] (0..1) ya da None,
 #       "rotate": 0/90/180/270 (saat yonu), "flipH", "flipV", "straighten": -45..45 derece,
-#       "outW", "outH": cikti boyutu (None = kirpilan alanin dogal boyutu)}
+#       "outW", "outH": cikti boyutu (None = kirpilan alanin dogal boyutu),
+#       "fit": "content" -> orana kirparak degil icerige duyarli olcekleyerek uy (onemsiz alanlar daralir/genisler),
+#       "persp": [[x, y] x4] 0..1 (sol ust, sag ust, sag alt, sol alt) - perspektif kirpma, dondurmeden sonraki goruntude}
 # geo None: eski davranis, 1080x1350'ye ortadan doldurarak kirp.
 MAX_SIDE = 12000
 
@@ -693,34 +843,66 @@ def _inner(w, h, deg):
     return wr, hr
 
 
+def persp_quad(geo):
+    q = geo.get("persp")
+    if isinstance(q, (list, tuple)) and len(q) == 4 and all(isinstance(p, (list, tuple)) and len(p) == 2 for p in q):
+        return [(float(p[0]), float(p[1])) for p in q]
+    return None
+
+
+def persp_size(quad, w, h):
+    """Dortgenin duzeltilmis dikdortgen boyutu (karsilikli kenarlarin ortalamasi)."""
+    pts = [(x * w, y * h) for x, y in quad]
+    d = lambda a, b: math.hypot(pts[a][0] - pts[b][0], pts[a][1] - pts[b][1])
+    return max(16, round((d(0, 1) + d(3, 2)) / 2)), max(16, round((d(0, 3) + d(1, 2)) / 2))
+
+
+def persp_coeffs(quad, w, h, out_w, out_h):
+    """PIL PERSPECTIVE katsayilari: cikti (out_w x out_h) -> kaynak dortgeni (w x h)."""
+    src = [(x * w, y * h) for x, y in quad]
+    dst = [(0, 0), (out_w, 0), (out_w, out_h), (0, out_h)]
+    A, b = [], []
+    for (X, Y), (x, y) in zip(dst, src):
+        A.append([X, Y, 1, 0, 0, 0, -x * X, -x * Y]); b.append(x)
+        A.append([0, 0, 0, X, Y, 1, -y * X, -y * Y]); b.append(y)
+    return tuple(np.linalg.solve(np.array(A, float), np.array(b, float)))
+
+
 def geo_plan(geo, w, h):
     """Kaynak boyutundan (EXIF duzeltilmis) kirpma plani ve cikti boyutu."""
     rot = int(geo.get("rotate") or 0) % 360 // 90 * 90
     ow, oh = (h, w) if rot in (90, 270) else (w, h)
+    quad = persp_quad(geo)
+    pre = (ow, oh)
+    if quad:
+        ow, oh = persp_size(quad, ow, oh)
     ang = max(-45.0, min(45.0, float(geo.get("straighten") or 0)))
     iw, ih = _inner(ow, oh, ang)
     crop = geo.get("crop")
+    r = aspect_ratio(geo.get("aspect"))
+    content = geo.get("fit") == "content" and r
     if isinstance(crop, (list, tuple)) and len(crop) == 4:
         cx, cy, cw, ch = (float(v) for v in crop)
         cw, ch = max(0.01, min(1.0, cw)), max(0.01, min(1.0, ch))
         cx, cy = max(0.0, min(1 - cw, cx)), max(0.0, min(1 - ch, cy))
     else:
-        r = aspect_ratio(geo.get("aspect"))
         cx, cy, cw, ch = 0.0, 0.0, 1.0, 1.0
-        if r:
+        if r and not content:
             if iw / ih > r:
                 cw = r * ih / iw
             else:
                 ch = iw / r / ih
             cx, cy = (1 - cw) / 2, (1 - ch) / 2
     nat = (max(1, round(cw * iw)), max(1, round(ch * ih)))
+    if content:  # kirpilan alan orana daraltilarak sigdirilir (buyuk kenar kisalir)
+        nat = (max(1, round(nat[1] * r)), nat[1]) if nat[0] / nat[1] > r else (nat[0], max(1, round(nat[0] / r)))
     try:
         size = (int(geo["outW"]), int(geo["outH"]))
     except (KeyError, TypeError, ValueError):
         size = nat
     size = tuple(max(16, min(MAX_SIDE, v)) for v in size)
     return {"rot": rot, "flipH": bool(geo.get("flipH")), "flipV": bool(geo.get("flipV")), "angle": ang,
-            "oriented": (ow, oh), "inner": (iw, ih), "crop": (cx, cy, cw, ch), "natural": nat, "size": size}
+            "quad": quad, "pre": pre, "oriented": (ow, oh), "content": bool(content), "inner": (iw, ih), "crop": (cx, cy, cw, ch), "natural": nat, "size": size}
 
 
 def open_photo(path, max_pixels=None):
@@ -749,6 +931,10 @@ def orient(img, plan):
         img = ImageOps.mirror(img)
     if plan["flipV"]:
         img = ImageOps.flip(img)
+    if plan.get("quad"):  # perspektif: dortgeni dikdortgene ac
+        s0 = img.width / plan["pre"][0]
+        tw, th = max(1, round(plan["oriented"][0] * s0)), max(1, round(plan["oriented"][1] * s0))
+        img = img.transform((tw, th), Image.PERSPECTIVE, persp_coeffs(plan["quad"], img.width, img.height, tw, th), Image.BICUBIC)
     if not plan["angle"]:
         return img, (0.0, 0.0, float(img.width), float(img.height))
     s = img.width / plan["oriented"][0]  # kucultulmus kaynakta olcek
@@ -757,7 +943,7 @@ def orient(img, plan):
     return img, ((img.width - iw) / 2, (img.height - ih) / 2, (img.width + iw) / 2, (img.height + ih) / 2)
 
 
-def apply_geo(img, geo, full_size, target=None):
+def apply_geo(img, geo, full_size, target=None, guide=None):
     """img: tam ya da kucultulmus kaynak (EXIF duzeltilmis); full_size: tam kaynak boyutu.
     target: cikti boyutu (varsayilan plandaki boyut). Kirpilmis ve olceklenmis RGB dondurur."""
     plan = geo_plan(geo, *full_size)
@@ -765,7 +951,81 @@ def apply_geo(img, geo, full_size, target=None):
     cx, cy, cw, ch = plan["crop"]
     bw, bh = box[2] - box[0], box[3] - box[1]
     crop = (box[0] + cx * bw, box[1] + cy * bh, box[0] + (cx + cw) * bw, box[1] + (cy + ch) * bh)
-    return img.resize(target or plan["size"], Image.LANCZOS, box=crop, reducing_gap=3.0)
+    target = target or plan["size"]
+    if plan.get("content"):
+        g = None
+        if guide is not None:  # maske gibi ikincil goruntu: fotografla ayni bukulme
+            gi, gb = orient(guide, plan)
+            gw, gh = gb[2] - gb[0], gb[3] - gb[1]
+            g = gi.crop((round(gb[0] + cx * gw), round(gb[1] + cy * gh), round(gb[0] + (cx + cw) * gw), round(gb[1] + (cy + ch) * gh)))
+        return content_resize(img.crop(tuple(round(v) for v in crop)), target, g)
+    return img.resize(target, Image.LANCZOS, box=crop, reducing_gap=3.0)
+
+
+# ------------------------------------------------------------------ icerige duyarli olcekleme
+def _importance(img, axis, n):
+    """Sutun (axis=1) ya da satir (axis=0) basina onem 0..1 (n parca): kenar/doku yogunlugu, yumusatilmis."""
+    small = img.convert("L")
+    small.thumbnail((512, 512))
+    g = np.asarray(small, np.float32) / 255.0
+    e = np.abs(np.diff(g, axis=1, append=g[:, -1:])) + np.abs(np.diff(g, axis=0, append=g[-1:, :]))
+    prof = e.mean(axis=0 if axis == 1 else 1)
+    prof = gauss(prof[:, None].astype(np.float32), max(1.0, len(prof) / 60))[:, 0]
+    lo, hi = np.percentile(prof, 20), np.percentile(prof, 95)
+    imp = np.clip((prof - lo) / max(hi - lo, 1e-6), 0, 1)
+    return np.interp(np.linspace(0, len(imp) - 1, n), np.arange(len(imp)), imp)
+
+
+def _warp_axis(img, n_out, axis, guide=None):
+    """Tek eksende onemsiz bolgeleri daha cok daraltip/genisleterek n_out'a getirir.
+    guide: onemin hesaplandigi goruntu (ayni kadraj; verilmezse img)."""
+    n = img.width if axis == 1 else img.height
+    q = n_out / n
+    imp = _importance(guide if guide is not None else img, axis, n)
+    room = 1 - imp  # degisime acik pay
+
+    def scales(t):
+        return np.clip(1 + t * room, 0.12, 4.0) if q > 1 else np.clip(1 - t * room, 0.12, 1.0)
+    lo, hi = 0.0, 50.0
+    for _ in range(50):  # ortalama olcek = q olacak t
+        mid = (lo + hi) / 2
+        if (scales(mid).mean() < q) == (q > 1):
+            lo = mid
+        else:
+            hi = mid
+    s = scales((lo + hi) / 2)
+    bounds = np.concatenate([[0.0], np.cumsum(s)])
+    bounds *= n_out / bounds[-1]
+    src_x = np.interp(np.arange(n_out) + 0.5, bounds, np.arange(n + 1)) - 0.5
+    i0 = np.clip(np.floor(src_x).astype(int), 0, n - 1)
+    i1 = np.clip(i0 + 1, 0, n - 1)
+    fr = np.clip(src_x - i0, 0, 1).astype(np.float32)
+    a = np.asarray(img)
+    gray = a.ndim == 2  # konu maskesi (L) de ayni sekilde bukulur
+    if gray:
+        a = a[..., None]
+    if axis == 0:
+        a = a.transpose(1, 0, 2)
+    out = np.empty((a.shape[0], n_out, a.shape[2]), np.uint8)
+    for r in range(0, a.shape[0], 256):  # bellek: satir parcalari halinde
+        blk = a[r:r + 256].astype(np.float32)
+        out[r:r + 256] = np.clip(blk[:, i0] * (1 - fr)[None, :, None] + blk[:, i1] * fr[None, :, None] + 0.5, 0, 255).astype(np.uint8)
+    if axis == 0:
+        out = out.transpose(1, 0, 2)
+    return Image.fromarray(np.ascontiguousarray(out[..., 0] if gray else out), img.mode)
+
+
+def content_resize(img, size, guide=None):
+    """Icerige duyarli olcekleme (Content-Aware Scale): once oran korunarak kisa yonde olceklenir,
+    sonra fazla/eksik kalan yon onemli bolgeler (kisiler, nesneler, doku) korunarak daraltilir ya da genisletilir."""
+    tw, th = size
+    if abs(img.width / img.height - tw / th) < 1e-3:
+        return img.resize(size, Image.LANCZOS)
+    if img.width / img.height > tw / th:  # fazla genis: yuksekligi esitle, genisligi buk
+        img = img.resize((max(1, round(img.width * th / img.height)), th), Image.LANCZOS)
+        return _warp_axis(img, tw, 1, guide)
+    img = img.resize((tw, max(1, round(img.height * tw / img.width))), Image.LANCZOS)
+    return _warp_axis(img, th, 0, guide)
 
 
 # ------------------------------------------------------------------ ana akis
@@ -785,16 +1045,75 @@ def make_base(cfg, image_path, fx=None, geo=None):
         return grade_base(cfg, load_cropped(cfg, image_path), image_path, fx)
     img = open_photo(image_path)
     cropped = apply_geo(img, geo, img.size)
-    return grade_base(cfg, cropped, image_path, fx, canvas_scale(*cropped.size))
+    return extend_canvas(grade_base(cfg, cropped, image_path, fx, canvas_scale(*cropped.size)), geo)
+
+
+# ------------------------------------------------------------------ tuval boyutu
+# geo["canvas"]: {"w", "h": son tuval (px), "anchor": [ax, ay] 0..1 (fotografin yeri), "color": "#RRGGBB" | "transparent"}
+def canvas_plan(geo, photo_size):
+    """(tuval boyutu, fotografin sol ust kosesi) - tuval yoksa fotografin kendisi."""
+    c = (geo or {}).get("canvas") if geo else None
+    pw, ph = photo_size
+    if not c:
+        return (pw, ph), (0, 0)
+    W, H = int(c["w"]), int(c["h"])
+    ax, ay = c.get("anchor") or (0.5, 0.5)
+    return (W, H), (round((W - pw) * float(ax)), round((H - ph) * float(ay)))
+
+
+def extend_canvas(img, geo, f=1.0):
+    """Islenmis fotografi daha buyuk (ya da kucuk) tuvale yerlestirir. f: onizleme olcegi."""
+    c = (geo or {}).get("canvas") if geo else None
+    if not c:
+        return img
+    (W, H), (x, y) = canvas_plan(geo, (img.width / f, img.height / f))
+    W, H = max(1, round(W * f)), max(1, round(H * f))
+    if c.get("color") == "transparent":
+        fill = (0, 0, 0, 0)
+    else:
+        try:
+            fill = hex_to_rgb(c.get("color") or "#FFFFFF") + (255,)
+        except (ValueError, TypeError):
+            fill = (255, 255, 255, 255)
+    layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    layer.paste(img.convert("RGBA"), (round(x * f), round(y * f)))  # tuval kucukse fotograf kirpilir
+    return Image.alpha_composite(Image.new("RGBA", (W, H), fill), layer)
+
+
+# ------------------------------------------------------------------ gorsel katmanlari (birlestirme)
+# layer: {"photo": id, "x", "y": merkez (0..1 tuval), "w": genislik (tuvalin orani), "rot": derece,
+#         "opacity": 0..1, "flipH": bool, "cutout": yapay zeka ile konuyu kes}
+def place_layers(base, layers, loader):
+    """Fotografin ustune (yazinin altina) baska gorselleri yerlestirir. loader(layer) -> RGBA."""
+    if not layers:
+        return base
+    W, H = base.size
+    img = base.convert("RGBA")
+    for ly in layers:
+        src = loader(ly)
+        w = max(1, round(float(ly["w"]) * W))
+        h = max(1, round(w * src.height / src.width))
+        im = src.resize((w, h), Image.LANCZOS)
+        if ly.get("flipH"):
+            im = ImageOps.mirror(im)
+        if ly.get("rot"):
+            im = im.rotate(-float(ly["rot"]), resample=Image.BICUBIC, expand=True)
+        op = float(ly.get("opacity", 1.0))
+        if op < 1:
+            im.putalpha(im.getchannel("A").point(lambda v: round(v * op)))
+        layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        layer.paste(im, (round(float(ly["x"]) * W - im.width / 2), round(float(ly["y"]) * H - im.height / 2)))
+        img = Image.alpha_composite(img, layer)
+    return img
 
 
 def compose(cfg, base, text, tone, accent_word="", styles=None, block=(0, 0), offsets=None,
-            k=None, wm=None, font=None, textfx=None):
-    """Hazir zemine yazi ve filigrani ekle. (gorsel, yerlesim) dondurur; yazi yoksa yerlesim None.
+            k=None, wm=None, font=None, textfx=None, layers=None, loader=None):
+    """Hazir zemine gorsel katmanlarini, yaziyi ve filigrani ekle. (gorsel, yerlesim) dondurur; yazi yoksa yerlesim None.
     k: yazi olcegi (varsayilan tuval boyutundan), wm: filigran (varsayilan marka imzasi)."""
     W, H = base.size
     k = canvas_scale(W, H) if k is None else k
-    layout, img = None, base
+    layout, img = None, place_layers(base, layers, loader)
     if text.strip():
         specs = build_specs(text, accent_word, styles, cfg["tones"][tone]["uppercase"])
         tfx = textfx or {}
@@ -806,7 +1125,31 @@ def compose(cfg, base, text, tone, accent_word="", styles=None, block=(0, 0), of
     return img, layout
 
 
-EXPORT_FORMATS = {"jpg": "JPEG", "png": "PNG", "webp": "WEBP"}
+EXPORT_FORMATS = {"jpg": "JPEG", "png": "PNG", "webp": "WEBP", "tiff": "TIFF"}
+# renk modu -> kaydedebilen bicimler (ilki varsayilan)
+COLOR_MODES = {"rgb": ("jpg", "png", "webp", "tiff"), "gray": ("jpg", "png", "tiff"), "cmyk": ("jpg", "tiff"),
+               "bitmap": ("png", "tiff"), "indexed": ("png", "tiff"), "lab": ("tiff",)}
+
+
+def to_color_mode(img, color):
+    """RGB(A) -> istenen renk modu. Seffaflik yalnizca rgb/gray'de korunur."""
+    if color == "gray":
+        return img.convert("LA") if img.mode == "RGBA" else img.convert("L")
+    if img.mode == "RGBA":
+        flat = Image.new("RGB", img.size, (255, 255, 255))
+        flat.paste(img, mask=img.getchannel("A"))
+        img = flat
+    if color == "cmyk":
+        return img.convert("CMYK")
+    if color == "bitmap":
+        return img.convert("L").convert("1")  # Floyd-Steinberg ile siyah-beyaz noktalar
+    if color == "indexed":
+        return img.quantize(256, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.FLOYDSTEINBERG)
+    if color == "lab":
+        from PIL import ImageCms
+        t = ImageCms.buildTransform(ImageCms.createProfile("sRGB"), ImageCms.createProfile("LAB"), "RGB", "LAB")
+        return ImageCms.applyTransform(img, t)
+    return img
 
 
 def source_exif(image_path):
@@ -821,10 +1164,26 @@ def source_exif(image_path):
         return None
 
 
-def save_image(img, out_path, fmt="jpg", quality=95, exif=None):
-    img = img.convert("RGB")
+def save_image(img, out_path, fmt="jpg", quality=95, exif=None, color="rgb", dpi=None):
+    """Seffaf arka plan PNG/WebP/TIFF'te korunur; JPEG seffaflik tasimaz, beyaz zemine yerlestirilir.
+    color: COLOR_MODES anahtari, dpi: baski cozunurlugu (dosyaya yazilir, pikselleri degistirmez)."""
+    alpha = img.mode == "RGBA" and img.getchannel("A").getextrema()[0] < 255
+    if alpha and fmt in ("png", "webp", "tiff"):
+        pass
+    elif alpha:
+        flat = Image.new("RGB", img.size, (255, 255, 255))
+        flat.paste(img, mask=img.getchannel("A"))
+        img = flat
+    else:
+        img = img.convert("RGB")
+    if color in COLOR_MODES and color != "rgb":
+        img = to_color_mode(img, color)
     kw = {"exif": exif} if exif else {}
-    if fmt == "png":
+    if dpi:
+        kw["dpi"] = (int(dpi), int(dpi))
+    if fmt == "tiff":
+        img.save(out_path, "TIFF", compression="tiff_lzw" if img.mode not in ("1", "LAB") else None, **kw)
+    elif fmt == "png":
         img.save(out_path, "PNG", compress_level=6, **kw)
     elif fmt == "webp":
         img.save(out_path, "WEBP", quality=int(quality), method=4, **kw)
@@ -834,13 +1193,15 @@ def save_image(img, out_path, fmt="jpg", quality=95, exif=None):
 
 def render_one(cfg, image_path, text, tone, accent_word, out_path,
                styles=None, fx=None, block=(0, 0), offsets=None, geo=None, wm=None,
-               fmt="jpg", quality=95, keep_exif=False, font=None, textfx=None):
+               fmt="jpg", quality=95, keep_exif=False, font=None, textfx=None, color="rgb", dpi=None,
+               layers=None, loader=None):
     out_path = Path(out_path)
     base = make_base(cfg, image_path, fx, geo)
-    img, layout = compose(cfg, base, text, tone, accent_word, styles, block, offsets, wm=wm, font=font, textfx=textfx)
+    img, layout = compose(cfg, base, text, tone, accent_word, styles, block, offsets, wm=wm, font=font, textfx=textfx,
+                          layers=layers, loader=loader)
     size = layout["size"] if layout else 0
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    save_image(img, out_path, fmt, quality, source_exif(image_path) if keep_exif else None)
+    save_image(img, out_path, fmt, quality, source_exif(image_path) if keep_exif else None, color, dpi)
     return size
 
 

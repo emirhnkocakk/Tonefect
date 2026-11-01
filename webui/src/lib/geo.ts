@@ -51,13 +51,22 @@ function inner(w: number, h: number, deg: number): [number, number] {
 
 /** Döndürme/düzeltme sonrası kırpılabilir alan (tam piksel). */
 export function innerSize(geo: Geo, src: [number, number]): [number, number] {
-  const [w, h] = geo.rotate % 180 ? [src[1], src[0]] : src
+  let [w, h] = geo.rotate % 180 ? [src[1], src[0]] : src
+  if (geo.persp) [w, h] = perspSize(geo.persp, w, h)
   return inner(w, h, geo.straighten || 0)
+}
+
+/** render.persp_size: dörtgenin düzeltilmiş boyutu. */
+export function perspSize(q: [number, number][], w: number, h: number): [number, number] {
+  const p = q.map(([x, y]) => [x * w, y * h])
+  const d = (a: number, b: number) => Math.hypot(p[a][0] - p[b][0], p[a][1] - p[b][1])
+  return [Math.max(16, Math.round((d(0, 1) + d(3, 2)) / 2)), Math.max(16, Math.round((d(0, 3) + d(1, 2)) / 2))]
 }
 
 /** Kırpma kutusu (0..1). crop yoksa orana göre ortalanmış en büyük kutu. */
 export function cropOf(geo: Geo, iw: number, ih: number): [number, number, number, number] {
   if (geo.crop) return geo.crop
+  if (geo.fit === "content") return [0, 0, 1, 1]
   const r = ratioOf(geo.aspect)
   if (!r) return [0, 0, 1, 1]
   let cw = 1
@@ -69,7 +78,7 @@ export function cropOf(geo: Geo, iw: number, ih: number): [number, number, numbe
 
 /** Kırpma kutusunun en-boy kilidi (0..1 biriminde w/h); serbestse null. */
 export function lockRatio(geo: Geo, iw: number, ih: number): number | null {
-  if (geo.aspect === "free") return null
+  if (geo.aspect === "free" || geo.fit === "content") return null
   if (geo.aspect === "original") return 1
   const r = ratioOf(geo.aspect)
   return r ? (r * ih) / iw : null
@@ -78,11 +87,28 @@ export function lockRatio(geo: Geo, iw: number, ih: number): number | null {
 export function naturalSize(geo: Geo, src: [number, number]): [number, number] {
   const [iw, ih] = innerSize(geo, src)
   const c = cropOf(geo, iw, ih)
-  return [Math.max(1, Math.round(c[2] * iw)), Math.max(1, Math.round(c[3] * ih))]
+  const n: [number, number] = [Math.max(1, Math.round(c[2] * iw)), Math.max(1, Math.round(c[3] * ih))]
+  const r = ratioOf(geo.aspect)
+  if (geo.fit === "content" && r) return n[0] / n[1] > r ? [Math.max(1, Math.round(n[1] * r)), n[1]] : [n[0], Math.max(1, Math.round(n[0] / r))]
+  return n
 }
 
-/** Çıktı (tuval) boyutu. */
+/** Son tuval boyutu (tuval genişletmesi dahil). */
 export function canvasSize(geo: Geo | null | undefined, src?: [number, number] | null): [number, number] | null {
+  if (geo?.canvas) return [geo.canvas.w, geo.canvas.h]
+  return photoSize(geo, src)
+}
+
+/** Fotoğrafın tuval içindeki yeri (0..1): [x, y, w, h] (render.canvas_plan). */
+export function photoRect(geo: Geo | null | undefined, src?: [number, number] | null): [number, number, number, number] {
+  const p = photoSize(geo, src)
+  const c = geo?.canvas
+  if (!c || !p) return [0, 0, 1, 1]
+  return [(Math.round((c.w - p[0]) * c.anchor[0])) / c.w, Math.round((c.h - p[1]) * c.anchor[1]) / c.h, p[0] / c.w, p[1] / c.h]
+}
+
+/** Fotoğrafın çıktı boyutu (kırpma + ölçek; tuval genişletmesi hariç). */
+export function photoSize(geo: Geo | null | undefined, src?: [number, number] | null): [number, number] | null {
   if (!geo) return LEGACY_SIZE
   if (!src) return null
   const clamp = (v: number) => Math.max(16, Math.min(MAX_SIDE, Math.round(v)))

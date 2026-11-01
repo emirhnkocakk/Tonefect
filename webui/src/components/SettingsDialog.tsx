@@ -13,7 +13,7 @@ import { api } from "@/lib/api"
 import { TONE_INFO } from "@/lib/constants"
 import { THEMES } from "@/lib/themes"
 import { cn } from "@/lib/utils"
-import type { Config, ExportOpts, Settings, UpdateInfo, Watermark } from "@/types"
+import type { ColorMode, Config, ExportOpts, Settings, UpdateInfo, Watermark } from "@/types"
 
 type Props = {
   open: boolean
@@ -35,7 +35,18 @@ const FORMATS: [ExportOpts["format"], string, string][] = [
   ["jpg", "JPEG", "en yaygın"],
   ["png", "PNG", "kayıpsız, büyük"],
   ["webp", "WebP", "küçük, web için"],
+  ["tiff", "TIFF", "baskı, arşiv"],
 ]
+// render.COLOR_MODES ile aynı: renk modu -> kaydedebilen biçimler
+const COLORS: [ColorMode, string, string, ExportOpts["format"][]][] = [
+  ["rgb", "RGB", "ekran, sosyal medya", ["jpg", "png", "webp", "tiff"]],
+  ["gray", "Gri tonlama", "tek kanal", ["jpg", "png", "tiff"]],
+  ["cmyk", "CMYK", "matbaa baskısı", ["jpg", "tiff"]],
+  ["bitmap", "Bitmap", "yalnızca siyah ve beyaz", ["png", "tiff"]],
+  ["indexed", "Indexed", "256 renk, küçük", ["png", "tiff"]],
+  ["lab", "Lab", "geniş renk, TIFF", ["tiff"]],
+]
+const DPIS: [string, number | null][] = [["Yok", null], ["72", 72], ["150", 150], ["300", 300]]
 
 const WM_POSITIONS: [string, string][] = [
   ["tl", "Sol üst"], ["tr", "Sağ üst"], ["center", "Orta"],
@@ -72,6 +83,12 @@ export function SettingsDialog({ open, onClose, cfg, settings, setSettings, defa
   const wm = watermark
   const ex = settings.export ?? { format: "jpg", quality: 95, naming: "number", exif: false }
   const setEx = (p: Partial<ExportOpts>) => setSettings({ ...settings, export: { ...ex, ...p } })
+  const color = ex.color ?? "rgb"
+  const allowed = COLORS.find(([c]) => c === color)![3]
+  const setColor = (c: ColorMode) => {
+    const fm = COLORS.find(([x]) => x === c)![3]
+    setEx({ color: c, format: fm.includes(ex.format) ? ex.format : fm[0] })
+  }
   const fx = settings.fx
   const check = async () => {
     setChecking(true)
@@ -134,13 +151,15 @@ export function SettingsDialog({ open, onClose, cfg, settings, setSettings, defa
           </div>
           <div className="space-y-2">
             <Label>Dosya biçimi</Label>
-            <div className="grid grid-cols-3 gap-1.5">
+            <div className="grid grid-cols-4 gap-1.5">
               {FORMATS.map(([v, l, hint]) => (
                 <button
                   key={v}
+                  disabled={!allowed.includes(v)}
+                  title={allowed.includes(v) ? undefined : "Bu renk moduyla kaydedilemez"}
                   onClick={() => setEx({ format: v })}
                   className={cn(
-                    "rounded-lg border px-2 py-1.5 text-left transition-colors hover:border-primary/60",
+                    "rounded-lg border px-2 py-1.5 text-left transition-colors hover:border-primary/60 disabled:pointer-events-none disabled:opacity-35",
                     ex.format === v ? "border-primary/70 bg-primary/15 text-foreground" : "text-muted-foreground"
                   )}
                 >
@@ -149,8 +168,48 @@ export function SettingsDialog({ open, onClose, cfg, settings, setSettings, defa
                 </button>
               ))}
             </div>
+            {ex.format === "jpg" && <p className="text-[11px] text-muted-foreground">Arka planı kaldırılmış fotoğraflar JPEG'de beyaz zemine yerleşir; şeffaflık için PNG ya da WebP seç.</p>}
           </div>
-          {ex.format !== "png" && (
+          <div className="space-y-2">
+            <Label>Renk modu</Label>
+            <div className="grid grid-cols-3 gap-1.5">
+              {COLORS.map(([c, l, hint]) => (
+                <button
+                  key={c}
+                  onClick={() => setColor(c)}
+                  className={cn(
+                    "rounded-lg border px-2 py-1.5 text-left transition-colors hover:border-primary/60",
+                    color === c ? "border-primary/70 bg-primary/15 text-foreground" : "text-muted-foreground"
+                  )}
+                >
+                  <span className="block text-xs font-medium">{l}</span>
+                  <span className="block text-[10px] opacity-70">{hint}</span>
+                </button>
+              ))}
+            </div>
+            {color === "cmyk" && <p className="text-[11px] text-muted-foreground">CMYK'ya basit dönüştürülür; matbaanın kendi renk profili varsa son kontrolü onlara bırak.</p>}
+            {color !== "rgb" && color !== "gray" && <p className="text-[11px] text-muted-foreground">Bu modda şeffaflık korunmaz; arka plan beyaz olur.</p>}
+          </div>
+          <div className="space-y-2">
+            <Label>Çözünürlük (DPI)</Label>
+            <div className="flex items-center gap-1.5">
+              {DPIS.map(([l, v]) => (
+                <button
+                  key={l}
+                  onClick={() => setEx({ dpi: v })}
+                  className={cn(
+                    "rounded-lg border px-3 py-1.5 text-xs transition-colors hover:border-primary/60",
+                    (ex.dpi ?? null) === v ? "border-primary/70 bg-primary/15 text-foreground" : "text-muted-foreground"
+                  )}
+                >
+                  {l}
+                </button>
+              ))}
+              <Input type="number" aria-label="Özel DPI" placeholder="özel" value={ex.dpi && ![72, 150, 300].includes(ex.dpi) ? ex.dpi : ""} onChange={(e) => setEx({ dpi: Math.max(1, Math.min(2400, Number(e.target.value))) || null })} className="h-8 w-20 text-center text-xs" />
+            </div>
+            <p className="text-[11px] text-muted-foreground">Pikselleri değiştirmez; baskıda kaç cm çıkacağını belirler. Baskı için 300, ekran için gerekmez.</p>
+          </div>
+          {ex.format !== "png" && ex.format !== "tiff" && (
             <div className="space-y-2">
               <div className="flex justify-between"><Label>Kalite</Label><span className="text-xs text-muted-foreground">{ex.quality}</span></div>
               <Slider min={50} max={100} step={1} value={[ex.quality]} onValueChange={([v]) => setEx({ quality: v })} />

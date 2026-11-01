@@ -3,7 +3,11 @@ import { ArrowUpCircle, Download, Loader2, Power, Redo2, Settings as Cog, Sparkl
 import { Toaster, toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { TooltipProvider } from "@/components/ui/tooltip"
-import { Sidebar } from "@/components/Sidebar"
+import { Filmstrip } from "@/components/Filmstrip"
+import { SaveMenu } from "@/components/SaveMenu"
+import { COLOR_FORMATS, saveAs } from "@/lib/save"
+import { LayersPanel } from "@/components/LayersPanel"
+import { ToolRail } from "@/components/ToolRail"
 import { Stage } from "@/components/Stage"
 import { Panel } from "@/components/Panel"
 import { GenerateDialog } from "@/components/GenerateDialog"
@@ -13,7 +17,8 @@ import { api } from "@/lib/api"
 import { mergeStyle, naturalSort, remap, words } from "@/lib/text"
 import { legacyGeo, naturalSize, newGeo } from "@/lib/geo"
 import { applyTheme, isLightTheme } from "@/lib/themes"
-import type { Config, Geo, Item, Job, Mask, Mode, PresetMeta, Settings, Style, UpdateInfo, Watermark } from "@/types"
+import { effectiveItem, removeLayer, type Layer } from "@/lib/layers"
+import type { Config, ExportOpts, Geo, ImgLayer, Item, Job, Mask, Mode, SelectTool, PresetMeta, Settings, Style, UpdateInfo, Watermark } from "@/types"
 
 // Vinyet ve parazit yeni fotoğraflarda kapalı başlar; kullanıcı isterse açar.
 const DEFAULT_FX: Item["fx"] = { bw: true, grain: 0, vignette: 0, preset: "", amount: 1, adjust: {} }
@@ -43,6 +48,7 @@ export default function App() {
   const [clip, setClip] = useState<Item["fx"] | null>(null) // kopyalanan renk/efekt ayarları
   const [maskSel, setMaskSel] = useState<string | null>(null) // seçili yerel düzenleme
   const [maskShow, setMaskShow] = useState(false)
+  const [selTool, setSelTool] = useState<SelectTool>({ mode: "wand", tol: 0.3, contiguous: true, size: 0.04, hard: 0.6 })
   const [quitOnClose, setQuitOnClose] = useState(true)
   const [upd, setUpd] = useState<UpdateInfo | null>(null)
   const [updOpen, setUpdOpen] = useState(false)
@@ -163,7 +169,8 @@ export default function App() {
       const y = e.code === "KeyY" || e.key.toLowerCase() === "y"
       // Ctrl+C / Ctrl+V (ya da Shift ile): renk ve efekt ayarlarını kopyala/yapıştır; seçili yazı varsa tarayıcıya bırak
       const noText = !window.getSelection()?.toString()
-      if (e.code === "KeyC" && noText) clipRef.current.copyFx()
+      if (e.code === "KeyS") e.shiftKey ? saveRef.current.saveAs(false) : saveRef.current.save()
+      else if (e.code === "KeyC" && noText) clipRef.current.copyFx()
       else if (e.code === "KeyV") clipRef.current.pasteFx()
       else if (z && !e.shiftKey) travel("undo")
       else if ((z && e.shiftKey) || y) travel("redo")
@@ -216,11 +223,60 @@ export default function App() {
 
   const resetPosition = () => update((it) => ({ ...it, block: [0, 0], offsets: {} }))
 
+  // Tasarım: görsel katmanları
+  const [layerSel, setLayerSel] = useState<string[]>([])
+  const setLayers = (layers: ImgLayer[]) => update((it) => ({ ...it, layers }))
+  useEffect(() => setLayerSel([]), [currentId])
+  // Yerel → seçimi katmana kopyala / taşı: seçili alan şeffaf PNG katman olur, Tasarım aracında taşınır
+  const selectionToLayer = async (cut: boolean) => {
+    if (!item || !maskSel) return
+    try {
+      const r = await api.extractSelection({ item: effectiveItem(item), maskId: maskSel })
+      const ly: ImgLayer = { id: Math.random().toString(36).slice(2, 9), photo: r.id, name: r.name, x: r.x, y: r.y, w: r.w, ar: r.height / r.width, rot: 0, opacity: 1, flipH: false, cutout: false }
+      const mid = maskSel
+      update((it) => ({
+        ...it,
+        layers: [...(it.layers ?? []), ly],
+        fx: cut ? { ...it.fx, masks: (it.fx.masks ?? []).map((m) => (m.id === mid ? { ...m, fill: true } : m)) } : it.fx,
+      }))
+      setTab("design")
+      setLayerSel([ly.id])
+      toast.success(cut ? "Alan taşındı: şimdi sürükleyip yerleştir" : "Alan katmana kopyalandı")
+    } catch (e: any) {
+      toast.error(e.message)
+    }
+  }
+
   const setMasks = (masks: Mask[]) => update((it) => ({ ...it, fx: { ...it.fx, masks } }))
   const setMask = (p: Partial<Mask>) =>
     update((it) => ({ ...it, fx: { ...it.fx, masks: (it.fx.masks ?? []).map((m) => (m.id === maskSel ? { ...m, ...p } : m)) } }))
   useEffect(() => setMaskSel(null), [currentId])
   const curMask = tab === "local" ? item?.fx.masks?.find((m) => m.id === maskSel) : undefined
+
+  // Katmanlar paneli
+  const openLayer = (l: Layer) => {
+    if (l.tool === "settings") return setCog(true)
+    setTab(l.tool)
+    if (l.maskId) setMaskSel(l.maskId)
+    if (l.layerId) setLayerSel([l.layerId])
+  }
+  const toggleLayer = (l: Layer) =>
+    update((it) => {
+      const h = new Set(it.hidden ?? [])
+      h.has(l.key) ? h.delete(l.key) : h.add(l.key)
+      return { ...it, hidden: [...h] }
+    })
+  const removeLayerFx = (l: Layer) => {
+    if (l.kind === "watermark") {
+      if (!wm) return
+      const next = { ...wm, enabled: false }
+      setWm(next)
+      api.watermark(next).catch((e) => toast.error(e.message))
+      toast("Filigran kapatıldı", { action: { label: "Geri al", onClick: () => { setWm(wm); api.watermark(wm).catch(() => {}) } } })
+      return
+    }
+    update((it) => removeLayer(it, l))
+  }
 
   const copyFx = () => {
     if (!item) return
@@ -271,10 +327,14 @@ export default function App() {
 
   // Kırp sekmesi açıkken önizleme yerine döndürülmüş ama kırpılmamış görsel gösterilir.
   const cropping = tab === "crop" && !!item
+  const [perspEdit, setPerspEdit] = useState(false)
+  useEffect(() => {
+    if (!cropping) setPerspEdit(false)
+  }, [cropping])
   const [geoSrc, setGeoSrc] = useState<{ id: string; image: string; inner: [number, number] } | null>(null)
   const g0 = item?.geo
   const srcKey = cropping && item
-    ? JSON.stringify([item.id, g0?.rotate ?? 0, !!g0?.flipH, !!g0?.flipV, g0?.straighten ?? 0, item.fx])
+    ? JSON.stringify([item.id, g0?.rotate ?? 0, !!g0?.flipH, !!g0?.flipV, perspEdit ? "edit" : [g0?.straighten ?? 0, g0?.persp ?? null], item.fx])
     : ""
   useEffect(() => {
     if (!srcKey || !item) return
@@ -282,7 +342,8 @@ export default function App() {
     const id = item.id
     const t = setTimeout(() => {
       api
-        .geoSource({ photo: id, geo: item.geo ?? legacyGeo(), fx: item.fx, w: 1000 })
+        // perspektif düzenlerken düzeltilmemiş (yalnızca döndürülmüş) görsel
+        .geoSource({ photo: id, geo: perspEdit ? { ...(item.geo ?? legacyGeo()), persp: null, straighten: 0 } : item.geo ?? legacyGeo(), fx: item.fx, w: 1000 })
         .then((r) => {
           if (!alive) return
           setGeoSrc({ id, image: r.image, inner: r.inner })
@@ -319,6 +380,24 @@ export default function App() {
   }
 
   // Dosya hemen silinmez (geri alınabilsin diye); kullanılmayan yüklemeleri sunucu açılışta temizler.
+  const duplicateItem = async (id: string) => {
+    const src = items.find((i) => i.id === id)
+    if (!src) return
+    try {
+      const { id: nid } = await api.duplicate(id)
+      const base = src.name.replace(/\.[^.]+$/, "")
+      const copy: Item = { ...structuredClone(src), id: nid, name: src.name.replace(base, base + " kopya") }
+      setItems((a) => {
+        const i = a.findIndex((x) => x.id === id)
+        return [...a.slice(0, i + 1), copy, ...a.slice(i + 1)]
+      })
+      setCurrentId(nid)
+      toast.success("Fotoğraf çoğaltıldı; kopyayı ayrı düzenleyebilirsin")
+    } catch (e: any) {
+      toast.error(e.message)
+    }
+  }
+
   const removeItem = (id: string) => {
     const idx = items.findIndex((i) => i.id === id)
     const removed = items[idx]
@@ -351,7 +430,7 @@ export default function App() {
     setDlg(true)
     try {
       const { job: id } = await api.generate({
-        items: one ? [one] : items, outDir: settings.outDir, export: settings.export, single: !!one,
+        items: (one ? [one] : items).map(effectiveItem), outDir: settings.outDir, export: settings.export, single: !!one,
       })
       setJobId(id)
       for (;;) {
@@ -365,6 +444,20 @@ export default function App() {
       setDlg(false)
     }
   }
+
+  const saveFile = async (copy: boolean) => {
+    if (!item) return
+    const ex: ExportOpts = { format: "jpg", quality: 95, naming: "number", exif: false, ...settings.export }
+    const formats = COLOR_FORMATS[ex.color ?? "rgb"]
+    try {
+      const name = await saveAs(effectiveItem(item), ex, formats, copy)
+      if (name) toast.success(`Kaydedildi: ${name}`)
+    } catch (e: any) {
+      toast.error(e.message)
+    }
+  }
+  const saveRef = useRef({ save: () => {}, saveAs: (_copy: boolean) => {} })
+  saveRef.current = { save: () => item && generate(item), saveAs: saveFile }
 
   const quit = async () => {
     setBye(true)
@@ -412,9 +505,7 @@ export default function App() {
             <Button variant="ghost" size="icon-sm" aria-label="Yinele" title="Yinele (Ctrl+Y)" disabled={!histLen.future} onClick={() => travel("redo")}>
               <Redo2 className="h-4 w-4" />
             </Button>
-            <Button variant="secondary" size="sm" onClick={() => item && generate(item)} disabled={!item} className="h-8 gap-1.5" title="Yalnızca seçili fotoğrafı dışa aktar">
-              <Download className="!size-4" /> Bu fotoğraf
-            </Button>
+            <SaveMenu disabled={!item} onSave={() => saveRef.current.save()} onSaveAs={() => saveRef.current.saveAs(false)} onSaveCopy={() => saveRef.current.saveAs(true)} />
             <Button onClick={() => generate()} disabled={!items.length} className="h-8 gap-1.5">
               <Sparkles className="!size-4" /> Görselleri üret
             </Button>
@@ -427,22 +518,31 @@ export default function App() {
           </div>
         </header>
         <div className="flex min-h-0 flex-1">
-          <Sidebar items={items} currentId={currentId} select={setCurrentId} move={move} remove={removeItem} pickFiles={() => fileRef.current?.click()} uploading={uploading} pasteTo={clip ? pasteFx : undefined} exportOne={(id) => { const it = items.find((i) => i.id === id); if (it) generate(it) }} />
-          <Stage
-            item={item} cfg={cfg} mode={mode} setMode={setMode} selected={selected} setSelected={setSelected}
-            update={update} applyStyle={applyStyle} resetPosition={resetPosition} pickFiles={() => fileRef.current?.click()}
-            guides={settings.guides} wm={wm}
-            cropping={cropping} geoSrc={geoSrc && geoSrc.id === item?.id ? geoSrc : null} setGeo={setGeo}
-            localMode={tab === "local"} mask={curMask} maskShow={maskShow} setMask={setMask}
-          />
+          {/* sol: araç çubuğu + seçili aracın ayarları */}
+          <ToolRail tool={tab} setTool={setTab} />
           <Panel
             item={item} items={items} cfg={cfg} selected={selected} setSelected={setSelected} setText={setText}
             patch={(p, all) => (all && p.fx ? patchAllFx() : patch(p, all))}
             presets={presets} groups={groups} onPresetsChange={loadPresets}
-            tab={tab} setTab={setTab} setGeo={setGeo} applyAllGeo={applyAllGeo}
+            tab={tab} setTab={setTab} setGeo={setGeo} applyAllGeo={applyAllGeo} perspEdit={perspEdit} setPerspEdit={setPerspEdit} setLayers={setLayers} layerSel={layerSel} setLayerSel={setLayerSel} selectionToLayer={selectionToLayer}
             onCopy={copyFx} onPaste={() => pasteFx()} canPaste={!!clip}
             maskSel={maskSel} setMaskSel={setMaskSel} setMasks={setMasks} maskShow={maskShow} setMaskShow={setMaskShow}
+            selTool={selTool} setSelTool={setSelTool}
           />
+          {/* orta: önizleme + fotoğraf şeridi */}
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <Stage
+              item={item ? effectiveItem(item) : undefined} cfg={cfg} mode={mode} setMode={setMode} selected={selected} setSelected={setSelected}
+              update={update} applyStyle={applyStyle} resetPosition={resetPosition} pickFiles={() => fileRef.current?.click()}
+              guides={settings.guides} wm={wm}
+              cropping={cropping} geoSrc={geoSrc && geoSrc.id === item?.id ? geoSrc : null} setGeo={setGeo} perspEdit={perspEdit}
+              designMode={tab === "design"} layerSel={layerSel} setLayerSel={setLayerSel} setLayers={setLayers}
+              localMode={tab === "local"} mask={curMask} maskShow={maskShow} setMask={setMask} selTool={selTool}
+            />
+            <Filmstrip items={items} currentId={currentId} select={setCurrentId} move={move} remove={removeItem} pickFiles={() => fileRef.current?.click()} uploading={uploading} pasteTo={clip ? pasteFx : undefined} exportOne={(id) => { const it = items.find((i) => i.id === id); if (it) generate(it) }} duplicate={duplicateItem} />
+          </div>
+          {/* sağ: katmanlar ve efektler */}
+          <LayersPanel item={item} presets={presets} wm={wm} tool={tab} maskSel={maskSel} open={openLayer} toggle={toggleLayer} remove={removeLayerFx} />
         </div>
         <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => { addFiles([...(e.target.files || [])]); e.target.value = "" }} />
         <GenerateDialog open={dlg} onClose={() => setDlg(false)} job={job} jobId={jobId} />

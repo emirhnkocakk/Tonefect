@@ -3,19 +3,22 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Slider } from "@/components/ui/slider"
 import { Switch } from "@/components/ui/switch"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Tabs, TabsContent } from "@/components/ui/tabs"
+import { TOOLS } from "@/components/ToolRail"
 import { Textarea } from "@/components/ui/textarea"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { TONE_INFO } from "@/lib/constants"
 import { words } from "@/lib/text"
 import { cn } from "@/lib/utils"
 import { ColorPanel } from "@/components/ColorPanel"
+import { BackgroundPanel } from "@/components/BackgroundPanel"
 import { FramePanel } from "@/components/FramePanel"
 import { MaskPanel } from "@/components/MaskPanel"
 import { TextStylePanel } from "@/components/TextStylePanel"
 import { GeoPanel } from "@/components/GeoPanel"
-import { legacyGeo } from "@/lib/geo"
-import type { Config, Fx, Geo, Item, Mask, PresetMeta } from "@/types"
+import { canvasSize, legacyGeo } from "@/lib/geo"
+import { DesignPanel } from "@/components/DesignPanel"
+import type { Config, Fx, Geo, ImgLayer, Item, Mask, PresetMeta, SelectTool } from "@/types"
 
 type Props = {
   item?: Item
@@ -40,29 +43,39 @@ type Props = {
   setMasks: (m: Mask[]) => void
   maskShow: boolean
   setMaskShow: (v: boolean) => void
+  selTool: SelectTool
+  setSelTool: (t: SelectTool) => void
+  perspEdit: boolean
+  setPerspEdit: (v: boolean) => void
+  setLayers: (l: ImgLayer[]) => void
+  layerSel: string[]
+  setLayerSel: (ids: string[]) => void
+  selectionToLayer: (cut: boolean) => Promise<void>
 }
 
-export function Panel({ item, items, cfg, selected, setSelected, setText, patch, presets, groups, onPresetsChange, tab, setTab, setGeo, applyAllGeo, onCopy, onPaste, canPaste, maskSel, setMaskSel, setMasks, maskShow, setMaskShow }: Props) {
+export function Panel({ item, items, cfg, selected, setSelected, setText, patch, presets, groups, onPresetsChange, tab, setTab, setGeo, applyAllGeo, onCopy, onPaste, canPaste, maskSel, setMaskSel, setMasks, maskShow, setMaskShow, selTool, setSelTool, perspEdit, setPerspEdit, setLayers, layerSel, setLayerSel, selectionToLayer }: Props) {
   const ws = item ? words(item.text) : []
   const max = cfg.limits.max_words
   const setFx = (p: Partial<Fx>, all = false) => item && patch({ fx: { ...item.fx, ...p } }, all)
 
   return (
-    <aside className="flex h-full w-[340px] shrink-0 flex-col border-l bg-card/40">
+    <aside className="flex h-full w-[320px] shrink-0 flex-col border-r bg-card/40">
       <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
-        <TabsList className="mx-4 mt-4 grid grid-cols-5">
-          <TabsTrigger value="crop" className="px-1">Kırp</TabsTrigger>
-          <TabsTrigger value="color" className="px-1">Renk</TabsTrigger>
-          <TabsTrigger value="fx" className="px-1">Efekt</TabsTrigger>
-          <TabsTrigger value="local" className="px-1">Yerel</TabsTrigger>
-          <TabsTrigger value="text" className="px-1">Metin</TabsTrigger>
-        </TabsList>
+        {(() => {
+          const t = TOOLS.find(([id]) => id === tab)
+          return t ? (
+            <div className="px-4 pb-3 pt-4">
+              <p className="text-sm font-semibold">{t[1]}</p>
+              <p className="text-[11px] text-muted-foreground">{t[2]}</p>
+            </div>
+          ) : null
+        })()}
 
         <TabsContent value="crop" className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 pt-1">
           {!item ? (
             <p className="pt-6 text-sm text-muted-foreground">Önce bir fotoğraf ekle.</p>
           ) : (
-            <GeoPanel item={item} geo={item.geo ?? legacyGeo()} setGeo={setGeo} applyAll={applyAllGeo} />
+            <GeoPanel item={item} geo={item.geo ?? legacyGeo()} setGeo={setGeo} applyAll={applyAllGeo} perspEdit={perspEdit} setPerspEdit={setPerspEdit} />
           )}
         </TabsContent>
 
@@ -155,7 +168,15 @@ export function Panel({ item, items, cfg, selected, setSelected, setText, patch,
           {!item ? (
             <p className="pt-6 text-sm text-muted-foreground">Önce bir fotoğraf ekle.</p>
           ) : (
-            <MaskPanel item={item} selected={maskSel} select={setMaskSel} setMasks={setMasks} show={maskShow} setShow={setMaskShow} />
+            <MaskPanel item={item} selected={maskSel} select={setMaskSel} setMasks={setMasks} show={maskShow} setShow={setMaskShow} tool={selTool} setTool={setSelTool} toLayer={selectionToLayer} />
+          )}
+        </TabsContent>
+
+        <TabsContent value="design" className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 pt-1">
+          {!item ? (
+            <p className="pt-6 text-sm text-muted-foreground">Önce bir fotoğraf ekle.</p>
+          ) : (
+            <DesignPanel layers={item.layers ?? []} setLayers={setLayers} sel={layerSel} setSel={setLayerSel} canvas={canvasSize(item.geo, item.src) ?? [1080, 1350]} />
           )}
         </TabsContent>
 
@@ -186,6 +207,7 @@ export function Panel({ item, items, cfg, selected, setSelected, setText, patch,
                 </div>
                 <Slider min={0} max={100} step={1} value={[Math.round(item.fx.vignette * 100)]} onValueChange={([v]) => setFx({ vignette: v / 100 })} />
               </div>
+              <BackgroundPanel fx={item.fx} setFx={(p) => setFx(p)} />
               <FramePanel fx={item.fx} setFx={(p) => setFx(p)} />
               <Button variant="secondary" size="sm" className="w-full" onClick={() => setFx({}, true)}>
                 Renk ve efektleri tüm fotoğraflara uygula

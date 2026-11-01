@@ -34,6 +34,7 @@ if sys.stderr is None:
 import numpy as np
 from PIL import Image, ImageOps
 
+import ai
 import looks
 import render as engine
 
@@ -41,6 +42,7 @@ HERE = engine.HERE
 WEB = HERE / "web"
 UPLOADS = HERE / "uploads"
 THUMBS = UPLOADS / ".thumbs"
+MATTES = UPLOADS / ".mattes"  # yapay zeka konu maskeleri (fotograf basina bir kez)
 SESSION = HERE / "oturum_web.json"
 PREFS = HERE / "ayarlar.json"
 PENDING = Path(tempfile.gettempdir()) / "grainline_update_pending.json"
@@ -184,26 +186,161 @@ def clean_fx(fx_in):
             "amount": num(fx_in.get("amount", 1.0), 0.0, 1.0, 1.0),
             "adjust": {k: v for k, v in adjust.items() if v},
             "texture": clean_texture(fx_in.get("texture")), "frame": clean_frame(fx_in.get("frame")),
-            "masks": clean_masks(fx_in.get("masks"))}
+            "masks": clean_masks(fx_in.get("masks")), "background": clean_background(fx_in.get("background"))}
 
 
-def clean_masks(ms):
-    """Yerel düzenlemeler (en fazla 8)."""
+def clean_background(b):
+    b = b if isinstance(b, dict) else {}
+    if b.get("mode") not in engine.BG_MODES:
+        return {}
+    c = b.get("color")
+    return {"mode": b["mode"], "color": c if isinstance(c, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", c) else "#FFFFFF",
+            "blur": round(num(b.get("blur"), 0.0, 1.0, 0.5), 3)}
+
+
+AI_LOCK = threading.Lock()
+
+
+def needs_matte(fx):
+    return bool(fx.get("background")) or any(op.get("kind") == "subject" for m in fx.get("masks") or [] for op in m.get("ops") or [])
+
+
+def matte_provider(path, geo):
+    """Konu maskesini fotoğrafın kırpma/döndürmesine ve istenen boyuta hizalayan fonksiyon (gecikmeli yükler)."""
+    held = {}
+
+    def fn(size):
+        if "m" not in held:
+            if not ai.installed(HERE):
+                raise ValueError("Yapay zekâ modeli kurulu değil. Yerel → Akıllı seçim → Konuyu seç ile kurabilirsin.")
+            with AI_LOCK:
+                held["m"] = ai.matte_for(HERE, path, MATTES)
+        guide = get_src(path)["proxy"] if geo and geo.get("fit") == "content" else None  # aynı bükülme için
+        return engine.align_matte(held["m"], geo, get_src(path)["size"] if geo else None, size, guide)
+    return fn
+
+
+def attach_matte(fx, path, geo):
+    if needs_matte(fx):
+        fx["_matte"] = matte_provider(path, geo)
+    return fx
+
+
+def _pt(v, lo=-0.5, hi=1.5):
+    return [num(v[0], lo, hi, 0.5), num(v[1], lo, hi, 0.5)] if isinstance(v, list) and len(v) == 2 else [0.5, 0.5]
+
+
+def clean_select_ops(ops):
+    """Akıllı seçim adımları (sihirli değnek / fırça); toplam nokta sayısı sınırlı."""
+    out, budget = [], 6000
+    for op in (ops if isinstance(ops, list) else [])[:300]:
+        if not isinstance(op, dict):
+            continue
+        add = op.get("add", True) is not False
+        if op.get("kind") == "subject":
+            out.append({"kind": "subject", "add": add, "inverse": bool(op.get("inverse"))})
+        elif op.get("kind") == "wand":
+            out.append({"kind": "wand", "p": _pt(op.get("p"), 0.0, 1.0), "tol": round(num(op.get("tol"), 0.0, 1.0, 0.3), 3),
+                        "contiguous": op.get("contiguous", True) is not False, "add": add})
+        elif op.get("kind") == "brush" and isinstance(op.get("pts"), list):
+            pts = [_pt(q, -0.2, 1.2) for q in op["pts"][:budget]]
+            budget -= len(pts)
+            if pts:
+                out.append({"kind": "brush", "pts": [[round(x, 4), round(y, 4)] for x, y in pts],
+                            "r": round(num(op.get("r"), 0.002, 0.3, 0.03), 4), "hard": round(num(op.get("hard"), 0.0, 1.0, 0.6), 3), "add": add})
+        if budget <= 0:
+            break
+    return out
+
+
+def clean_masks(ms, keep_empty=False):
+    """Yerel düzenlemeler (en fazla 8). keep_empty: ayarı olmayan maskeyi de tut (seçim görünümü için)."""
     out = []
-    pt = lambda v, lo=-0.5, hi=1.5: [num(v[0], lo, hi, 0.5), num(v[1], lo, hi, 0.5)] if isinstance(v, list) and len(v) == 2 else [0.5, 0.5]
+    pt = _pt
     for m in (ms if isinstance(ms, list) else [])[:8]:
-        if not isinstance(m, dict) or m.get("type") not in ("linear", "radial"):
+        if not isinstance(m, dict) or m.get("type") not in ("linear", "radial", "select"):
             continue
         adj_in = m.get("adjust") if isinstance(m.get("adjust"), dict) else {}
         adj = {k: round(num(adj_in.get(k), -1.0, 1.0), 3) for k in engine.MASK_KEYS}
         c = {"type": m["type"], "invert": bool(m.get("invert")), "adjust": {k: v for k, v in adj.items() if v}}
         if m["type"] == "linear":
             c.update(a=pt(m.get("a")), b=pt(m.get("b")))
+        elif m["type"] == "select":
+            c.update(ops=clean_select_ops(m.get("ops")), feather=round(num(m.get("feather"), 0.0, 1.0, 0.1), 3))
         else:
             c.update(c=pt(m.get("c")), r=pt(m.get("r"), 0.01, 2.0), feather=round(num(m.get("feather"), 0.0, 1.0, 0.5), 3))
-        if c["adjust"]:
+        if m["type"] == "select" and m.get("fill"):
+            c["fill"] = True
+        if c["adjust"] or c.get("fill") or keep_empty:
             out.append(c)
     return out
+
+
+def mask_view(d):
+    """Akıllı seçimin önizlemede kırmızı katman olarak gösterimi (PNG, alfa = seçim)."""
+    path = photo_path(d["photo"])
+    geo = clean_geo(d.get("geo"))
+    masks = clean_masks([d.get("mask")], keep_empty=True)
+    if not masks:
+        raise ValueError("Geçersiz maske")
+    tw = max(120, min(1200, int(num(d.get("w"), 120, 1200, 600))))
+    with LOCK:
+        if geo is None:
+            img = get_crop(path).resize((tw, round(tw * H / W)), Image.BILINEAR)
+        else:
+            size = engine.geo_plan(geo, *get_src(path)["size"])["size"]
+            img = geo_image(path, geo, (tw, max(1, round(tw * size[1] / size[0]))))
+    src = np.asarray(img, dtype=np.float32) / 255.0
+    mfx = attach_matte({"masks": masks}, path, geo)
+    wgt = engine.mask_weight(masks[0], *src.shape[:2], src, mfx.get("_matte"))
+    rgba = np.zeros(src.shape[:2] + (4,), np.uint8)
+    rgba[..., 0], rgba[..., 1], rgba[..., 2] = 255, 40, 70
+    rgba[..., 3] = (wgt * 120).astype(np.uint8)
+    buf = io.BytesIO()
+    Image.fromarray(rgba, "RGBA").save(buf, "PNG")
+    return {"image": "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode(),
+            "coverage": round(float((wgt > 0.5).mean()), 4)}
+
+
+EXTRACT_SIDE = 4096
+
+
+def extract_selection(d):
+    """Seçili alanı (renk ayarları uygulanmış) şeffaf PNG katmana çevirir: Photoshop'taki "kopyalayarak katman".
+    Dönen x, y, w katmanın tuvaldeki yeri; böylece katman tam seçildiği yerde başlar."""
+    raw = d.get("item") or {}
+    item = clean_item(raw)
+    path = photo_path(raw["id"])
+    geo, fx = item["geo"], item["fx"]
+    mraw = next((m for m in (raw.get("fx") or {}).get("masks") or [] if isinstance(m, dict) and m.get("id") == d.get("maskId")), None)
+    masks = clean_masks([{**mraw, "fill": False}], keep_empty=True) if mraw else []
+    if not masks or not masks[0].get("ops"):
+        raise ValueError("Önce bir alan seç.")
+    attach_matte(fx, path, geo)
+    with LOCK:
+        if geo is None:
+            src_img, size = get_crop(path), (W, H)
+        else:
+            size = engine.geo_plan(geo, *get_src(path)["size"])["size"]
+            f = min(1.0, EXTRACT_SIDE / max(size))
+            src_img = geo_image(path, geo, (max(1, round(size[0] * f)), max(1, round(size[1] * f))))
+    f = src_img.width / size[0]
+    graded = engine.grade_base(CFG, src_img, path, fx, engine.canvas_scale(*size) * f)
+    src = np.asarray(src_img, dtype=np.float32) / 255.0
+    wgt = engine.mask_weight(masks[0], *src.shape[:2], src, fx.get("_matte"))
+    ys, xs = np.nonzero(wgt > 0.02)
+    if not len(xs):
+        raise ValueError("Seçim boş.")
+    x0, x1, y0, y1 = int(xs.min()), int(xs.max()) + 1, int(ys.min()), int(ys.max()) + 1
+    a = (wgt[y0:y1, x0:x1] * 255).astype(np.uint8)
+    out = graded.crop((x0, y0, x1, y1))
+    out.putalpha(Image.fromarray(np.minimum(np.asarray(out.getchannel("A")), a)))
+    buf = io.BytesIO()
+    out.save(buf, "PNG")
+    stem = Path(str(raw.get("name") or "foto")).stem[:30]
+    info = save_photo(f"{stem}_secim.png", buf.getvalue())
+    (cw, ch), (ox, oy) = engine.canvas_plan(geo, size) if geo else ((W, H), (0, 0))
+    return {**info, "x": (ox + (x0 + x1) / 2 / f) / cw, "y": (oy + (y0 + y1) / 2 / f) / ch, "w": (x1 - x0) / f / cw}
 
 
 def clean_texture(t):
@@ -239,7 +376,53 @@ def clean_item(d):
         "fx": fx, "block": (float(block[0]), float(block[1])), "offsets": offsets,
         "geo": clean_geo(d.get("geo")),
         "font": clean_font(d.get("font")), "textfx": clean_textfx(d.get("textfx")),
+        "layers": clean_layers(d.get("layers"), d.get("hidden")),
     }
+
+
+def clean_layers(ls, hidden=None):
+    """Görsel katmanları (birleştirme). Gizlenenler ve dosyası olmayanlar atlanır."""
+    hidden = set(hidden) if isinstance(hidden, list) else set()
+    out = []
+    for ly in (ls if isinstance(ls, list) else [])[:20]:
+        if not isinstance(ly, dict) or f"img:{ly.get('id')}" in hidden:
+            continue
+        pid = Path(str(ly.get("photo") or "")).name
+        if not pid or not (UPLOADS / pid).is_file():
+            continue
+        out.append({"photo": pid, "x": num(ly.get("x"), -2.0, 3.0, 0.5), "y": num(ly.get("y"), -2.0, 3.0, 0.5),
+                    "w": num(ly.get("w"), 0.01, 5.0, 0.4), "rot": num(ly.get("rot"), -360.0, 360.0, 0.0),
+                    "opacity": num(ly.get("opacity"), 0.0, 1.0, 1.0), "flipH": bool(ly.get("flipH")),
+                    "cutout": bool(ly.get("cutout"))})
+    return out
+
+
+LAYER_IMG = {}
+
+
+def layer_loader(full=False):
+    """Katman görselini (şeffaflığı korunarak, EXIF yönü uygulanmış) yükler; konuyu kes seçiliyse yapay zekâ maskesi alfa olur."""
+    def load(ly):
+        key = (ly["photo"], ly["cutout"], full)
+
+        def make():
+            path = photo_path(ly["photo"])
+            with Image.open(path) as im:
+                if not full:
+                    im.draft("RGB", (2048, 2048))
+                img = ImageOps.exif_transpose(im).convert("RGBA")
+            if not full and max(img.size) > 2048:
+                img.thumbnail((2048, 2048), Image.LANCZOS)
+            if ly["cutout"]:
+                if not ai.installed(HERE):
+                    raise ValueError("Konuyu kesmek için yapay zekâ modeli gerekli (Efekt → Arka plan'dan kurabilirsin).")
+                with AI_LOCK:
+                    m = ai.matte_for(HERE, path, MATTES).resize(img.size, Image.BILINEAR)
+                a = np.minimum(np.asarray(img.getchannel("A")), np.asarray(m))
+                img.putalpha(Image.fromarray(a))
+            return img
+        return _lru(LAYER_IMG, key, make, 8)
+    return load
 
 
 def clean_font(f):
@@ -286,7 +469,26 @@ def clean_geo(g):
         out = {"outW": None, "outH": None}
     return {"aspect": aspect, "crop": crop, "rotate": int(num(g.get("rotate"), 0, 270)) // 90 * 90,
             "flipH": bool(g.get("flipH")), "flipV": bool(g.get("flipV")),
-            "straighten": round(num(g.get("straighten"), -45.0, 45.0), 2), **out}
+            "straighten": round(num(g.get("straighten"), -45.0, 45.0), 2), **out, "canvas": clean_canvas(g.get("canvas")),
+            "persp": clean_persp(g.get("persp")), "fit": "content" if g.get("fit") == "content" else None}
+
+
+def clean_persp(q):
+    if not (isinstance(q, list) and len(q) == 4 and all(isinstance(p, list) and len(p) == 2 for p in q)):
+        return None
+    q = [[round(num(p[0], -0.5, 1.5), 4), round(num(p[1], -0.5, 1.5), 4)] for p in q]
+    return None if q == [[0, 0], [1, 0], [1, 1], [0, 1]] else q
+
+
+def clean_canvas(c):
+    """Tuval boyutu: fotoğrafın çevresine boşluk (ya da kırpma). Yoksa None."""
+    if not isinstance(c, dict) or not isinstance(c.get("w"), (int, float)) or not isinstance(c.get("h"), (int, float)):
+        return None
+    a = c.get("anchor")
+    a = [num(a[0], 0.0, 1.0, 0.5), num(a[1], 0.0, 1.0, 0.5)] if isinstance(a, list) and len(a) == 2 else [0.5, 0.5]
+    col = c.get("color")
+    col = col if col == "transparent" or (isinstance(col, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", col)) else "#FFFFFF"
+    return {"w": int(num(c["w"], 16, engine.MAX_SIDE)), "h": int(num(c["h"], 16, engine.MAX_SIDE)), "anchor": a, "color": col}
 
 
 def get_crop(path):
@@ -337,7 +539,7 @@ def geo_image(path, geo, target):
 
 def fx_key(fx):
     return (fx["bw"], round(fx["grain"], 2), round(fx["vignette"], 2), fx["preset"],
-            round(fx["amount"], 2), json.dumps([fx["adjust"], fx["texture"], fx["frame"], fx["masks"]], sort_keys=True))
+            round(fx["amount"], 2), json.dumps([fx["adjust"], fx["texture"], fx["frame"], fx["masks"], fx.get("background")], sort_keys=True))
 
 
 def get_base(path, fx, geo=None, want_w=0):
@@ -353,20 +555,29 @@ def get_base(path, fx, geo=None, want_w=0):
     key = (str(path), json.dumps(geo, sort_keys=True), fx_key(fx), round(f, 4))
     if key in BASE:
         BASE[key] = BASE.pop(key)
-        return BASE[key], size, f
+        return BASE[key], size if geo is None else engine.canvas_plan(geo, size)[0], f
     if geo is None:
         base = engine.grade_base(CFG, get_crop(path), path, fx)
     else:
         target = (max(1, round(size[0] * f)), max(1, round(size[1] * f)))
         img = geo_image(path, geo, target)
-        base = engine.grade_base(CFG, img, path, fx, engine.canvas_scale(*size) * f)
+        base = engine.extend_canvas(engine.grade_base(CFG, img, path, fx, engine.canvas_scale(*size) * f), geo, f)
     BASE[key] = base
     while len(BASE) > 6:
         BASE.pop(next(iter(BASE)))
-    return base, size, f
+    return base, size if geo is None else engine.canvas_plan(geo, size)[0], f
 
 
 ORIGINAL_FX = {"preset": "b:original", "bw": False, "grain": 0.0, "vignette": 0.0}
+
+
+def checkerboard(size, cell=None):
+    w, h = size
+    cell = cell or max(8, min(w, h) // 40)
+    yy, xx = np.mgrid[0:h, 0:w]
+    on = ((xx // cell + yy // cell) % 2).astype(bool)
+    a = np.where(on[..., None], np.array([205, 205, 205, 255], np.uint8), np.array([245, 245, 245, 255], np.uint8))
+    return Image.fromarray(a.astype(np.uint8), "RGBA")
 
 
 def render_preview(d):
@@ -376,6 +587,7 @@ def render_preview(d):
     original = bool(d.get("original"))  # önce/sonra: renk, efekt, yazı ve filigran yok
     if original:
         item["fx"] = clean_fx(ORIGINAL_FX)
+    attach_matte(item["fx"], path, item["geo"])
     with LOCK:
         base, (cw, ch), f = get_base(path, item["fx"], item["geo"], want)
         k = engine.canvas_scale(cw, ch)
@@ -385,9 +597,12 @@ def render_preview(d):
             img, layout = engine.compose(CFG, base, item["text"], item["tone"], item["accent"],
                                          styles=item["styles"], block=item["block"], offsets=item["offsets"],
                                          k=k * f, wm=clean_wm(d["wm"]) if isinstance(d.get("wm"), dict) else WATERMARK,
-                                         font=item["font"], textfx=item["textfx"])
+                                         font=item["font"], textfx=item["textfx"],
+                                         layers=item["layers"], loader=layer_loader())
     out_w = max(200, min(want, max(1600, base.width)))
     out_h = max(1, round(out_w * base.height / base.width))
+    if img.mode == "RGBA" and img.getchannel("A").getextrema()[0] < 255:
+        img = Image.alpha_composite(checkerboard(img.size), img)  # şeffaf arka plan dama deseninde
     im = img.convert("RGB").resize((out_w, out_h), Image.LANCZOS)
     buf = io.BytesIO()
     im.save(buf, "JPEG", quality=88)
@@ -402,7 +617,7 @@ def auto_enhance(d):
     """Otomatik iyileştirme: seçili görünümle işlenmiş (ince ayarsız) küçük görselden değerler."""
     path = photo_path(d["photo"])
     geo = clean_geo(d.get("geo"))
-    fx = {**clean_fx(d.get("fx") or {}), "grain": 0.0, "vignette": 0.0, "adjust": {}, "texture": {}, "frame": {}, "masks": []}
+    fx = {**clean_fx(d.get("fx") or {}), "grain": 0.0, "vignette": 0.0, "adjust": {}, "texture": {}, "frame": {}, "masks": [], "background": {}}
     with LOCK:
         if geo is None:
             img = get_crop(path).resize((432, 540), Image.BILINEAR)
@@ -419,7 +634,7 @@ def geo_source(d):
     """Kırpma aracı için: döndürülmüş/düzeltilmiş ama kırpılmamış görsel ve ölçüleri."""
     path = photo_path(d["photo"])
     geo = clean_geo(d.get("geo")) or {"aspect": "4:5"}
-    fx = {**clean_fx(d.get("fx") or {}), "grain": 0.0, "vignette": 0.0, "frame": {}, "masks": []}
+    fx = {**clean_fx(d.get("fx") or {}), "grain": 0.0, "vignette": 0.0, "frame": {}, "masks": [], "background": {}}
     tw = max(200, min(1600, int(d.get("w", 900))))
     with LOCK:
         src = get_src(path)
@@ -528,9 +743,21 @@ def save_photo(name, data):
     return {"id": pid, "name": name, "width": width, "height": height}
 
 
+def duplicate_photo(pid):
+    """Fotoğrafın kopyası (ayrı düzenlenebilsin diye ayrı dosya); küçük resim ve konu maskesi de kopyalanır."""
+    src = photo_path(pid)
+    new = f"{uuid.uuid4().hex[:8]}_{src.name.split('_', 1)[-1]}"
+    shutil.copyfile(src, UPLOADS / new)
+    for d, ext in ((THUMBS, ".jpg"), (MATTES, ".png")):
+        if (d / (src.name + ext)).is_file():
+            shutil.copyfile(d / (src.name + ext), d / (new + ext))
+    return {"id": new}
+
+
 def delete_photo(pid):
     p = UPLOADS / Path(pid).name
     (THUMBS / (p.name + ".jpg")).unlink(missing_ok=True)
+    (MATTES / (p.name + ".png")).unlink(missing_ok=True)
     p.unlink(missing_ok=True)
     with LOCK:  # önizleme iş parçacığı aynı anda önbelleği değiştirebilir
         for k in [k for k in BASE if k[0] == str(p)]:
@@ -659,6 +886,28 @@ def open_download():
     webbrowser.open(url)
 
 
+def launch_installer(exe, args):
+    """Kurulumu, bu süreç tamamen kapandıktan SONRA başlatır. Penceresi olmayan uygulamayı Windows'un
+    Restart Manager'ı kapatamıyor; kurulum bizi açık bulursa "uygulama kapatılamadı" diye takılıyordu.
+    Bağımsız bir PowerShell bekler, sonra kurulumu açar (bizim işlem ağacımızın dışında)."""
+    q = lambda s: str(s).replace("'", "''")
+    ps = (f"Wait-Process -Id {os.getpid()} -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 600; "
+          f"Start-Process -FilePath '{q(exe)}' -ArgumentList '{q(args)}'")
+    # NO_WINDOW | NEW_PROCESS_GROUP. DETACHED_PROCESS kullanma: konsolsuz PowerShell'de Start-Process
+    # hatasız çıkıp hiçbir şey başlatmıyor (denendi).
+    flags = 0x08000000 | 0x00000200
+    cmd = ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+           "-WindowStyle", "Hidden", "-Command", ps]
+    for extra in (0x01000000, 0):  # önce iş nesnesinden ayrılmayı dene (CREATE_BREAKAWAY_FROM_JOB)
+        try:
+            subprocess.Popen(cmd, creationflags=flags | extra, close_fds=True,
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return
+        except OSError:
+            continue
+    os.startfile(str(exe), "open", args)  # PowerShell yoksa eski yol (kurulum betiği bizi yine kapatır)
+
+
 def run_update():
     try:
         info = check_update(force=True)
@@ -681,9 +930,8 @@ def run_update():
         UPDATE["state"] = "installing"
         log = Path(tempfile.gettempdir()) / "grainline_update.log"
         PENDING.write_text(json.dumps({"target": info["latest"], "log": str(log)}), encoding="utf-8")
-        # ShellExecute ile başlat: kurulum bizim işlem ağacımızdan ve kapanışımızdan bağımsız çalışır.
-        os.startfile(str(dest), "open", f'/SILENT /NORESTART /CLOSEAPPLICATIONS /LOG="{log}"')
-        time.sleep(2)
+        launch_installer(dest, f'/SILENT /NORESTART /CLOSEAPPLICATIONS /LOG="{log}"')
+        time.sleep(0.5)  # durum yanıtı arayüze ulaşsın
         os._exit(0)
     except Exception as e:
         UPDATE.update(state="error", error=str(e))
@@ -698,10 +946,36 @@ def resolve_out(path):
 
 def clean_export(e):
     e = e if isinstance(e, dict) else {}
-    return {"format": e.get("format") if e.get("format") in engine.EXPORT_FORMATS else "jpg",
-            "quality": int(num(e.get("quality"), 50, 100, 95)),
+    color = e.get("color") if e.get("color") in engine.COLOR_MODES else "rgb"
+    fmt = e.get("format") if e.get("format") in engine.EXPORT_FORMATS else "jpg"
+    if fmt not in engine.COLOR_MODES[color]:  # örn. Lab yalnızca TIFF
+        fmt = engine.COLOR_MODES[color][0]
+    return {"format": fmt, "quality": int(num(e.get("quality"), 50, 100, 95)),
             "naming": "original" if e.get("naming") == "original" else "number",
-            "exif": bool(e.get("exif"))}
+            "exif": bool(e.get("exif")), "color": color, "dpi": int(num(e.get("dpi"), 0, 2400, 0)) or None}
+
+
+MIME = {"jpg": "image/jpeg", "png": "image/png", "webp": "image/webp", "tiff": "image/tiff"}
+
+
+def render_file(d):
+    """Farklı kaydet / kopya kaydet: tek fotoğrafı dosya baytları olarak döndürür (tarayıcı kaydeder)."""
+    raw = d.get("item") or {}
+    ex = clean_export(d.get("export"))
+    item = clean_item(raw)
+    path = photo_path(raw["id"])
+    attach_matte(item["fx"], path, item["geo"])
+    tmp = UPLOADS / f".save_{uuid.uuid4().hex[:8]}.{ex['format']}"
+    try:
+        engine.render_one(CFG, path, item["text"], item["tone"], item["accent"], tmp,
+                          styles=item["styles"], fx=item["fx"], block=item["block"],
+                          offsets=item["offsets"], geo=item["geo"], wm=WATERMARK,
+                          font=item["font"], textfx=item["textfx"],
+                          fmt=ex["format"], quality=ex["quality"], keep_exif=ex["exif"],
+                          color=ex["color"], dpi=ex["dpi"], layers=item["layers"], loader=layer_loader(True))
+        return tmp.read_bytes(), ex["format"]
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def run_job(jid, d):
@@ -717,6 +991,7 @@ def run_job(jid, d):
             try:
                 item = clean_item(raw)
                 path = photo_path(raw["id"])
+                attach_matte(item["fx"], path, item["geo"])
                 stem = Path(safe_name(str(raw.get("name") or path.name))).stem[:40]
                 if ex["naming"] == "number":
                     stem = f"{i:03d}_{stem}"
@@ -729,7 +1004,8 @@ def run_job(jid, d):
                                   styles=item["styles"], fx=item["fx"], block=item["block"],
                                   offsets=item["offsets"], geo=item["geo"], wm=WATERMARK,
                                   font=item["font"], textfx=item["textfx"],
-                                  fmt=ex["format"], quality=ex["quality"], keep_exif=ex["exif"])
+                                  fmt=ex["format"], quality=ex["quality"], keep_exif=ex["exif"],
+                                  color=ex["color"], dpi=ex["dpi"], layers=item["layers"], loader=layer_loader(True))
                 with Image.open(out) as done:
                     out_size = list(done.size)
                 manifest.append({
@@ -861,6 +1137,15 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": True})
             if c == "/api/watermark" and m == "PUT":
                 return self._json(save_watermark(json.loads(self._body())))
+            if c == "/api/ai/status" and m == "GET":
+                return self._json(ai.status(HERE))
+            if c == "/api/ai/install" and m == "POST":
+                if ai.STATE["state"] != "downloading" and not ai.installed(HERE):
+                    ai.STATE.update(state="downloading", done=0, error="")
+                    threading.Thread(target=ai.download, args=(HERE,), daemon=True).start()
+                return self._json(ai.status(HERE))
+            if c == "/api/mask/view" and m == "POST":
+                return self._json(mask_view(json.loads(self._body())))
             if c == "/api/fonts" and m == "GET":
                 return self._json(font_list())
             if c == "/api/auto" and m == "POST":
@@ -876,6 +1161,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": True})
             if c == "/api/photos" and m == "POST":
                 return self._json(save_photo(q.get("name", ["foto.jpg"])[0], self._body()))
+            if c.startswith("/api/photos/") and c.endswith("/duplicate") and m == "POST":
+                return self._json(duplicate_photo(c.split("/")[3]))
             if c.startswith("/api/photos/") and m == "DELETE":
                 delete_photo(c.rsplit("/", 1)[1])
                 return self._json({"ok": True})
@@ -895,6 +1182,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(preset_list())
             if c == "/api/preview" and m == "POST":
                 return self._json(render_preview(json.loads(self._body())))
+            if c == "/api/selection/extract" and m == "POST":
+                return self._json(extract_selection(json.loads(self._body())))
+            if c == "/api/render-file" and m == "POST":
+                body, fmt = render_file(json.loads(self._body()))
+                return self._send(200, body, MIME[fmt], {"X-Format": fmt})
             if c == "/api/generate" and m == "POST":
                 d = json.loads(self._body())
                 if not isinstance(d.get("items"), list) or not d["items"]:
@@ -993,7 +1285,7 @@ def open_window(url):
 
 
 def busy():
-    return UPDATE["state"] in ("downloading", "installing") or any(not j.get("finished") for j in JOBS.values())
+    return UPDATE["state"] in ("downloading", "installing") or ai.STATE["state"] == "downloading" or any(not j.get("finished") for j in JOBS.values())
 
 
 def watchdog():

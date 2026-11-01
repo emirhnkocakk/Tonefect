@@ -22,15 +22,23 @@ export type Texture = { leak?: number; variant?: number; bloom?: number; dust?: 
 export type Frame = { style: "solid" | "polaroid" | "film" | "line"; size: number; color: string | null }
 // Yerel düzenleme. Koordinatlar tuvale göre 0..1; degradede a'da tam etki, b'de sıfır.
 export type MaskAdjust = Partial<Record<"exposure" | "contrast" | "highlights" | "shadows" | "temperature" | "tint" | "saturation" | "clarity", number>>
+// Akıllı seçim adımları: piksel değil adım saklanır, her çözünürlükte yeniden hesaplanır.
+export type SelectOp =
+  | { kind: "wand"; p: [number, number]; tol: number; contiguous: boolean; add: boolean }
+  | { kind: "brush"; pts: [number, number][]; r: number; hard: number; add: boolean }
+  | { kind: "subject"; add: boolean; inverse: boolean } // yapay zekâ konu maskesi; inverse: arka plan
+export type SelectTool = { mode: "wand" | "brush" | "erase"; tol: number; contiguous: boolean; size: number; hard: number }
 export type Mask = {
   id: string
-  type: "linear" | "radial"
+  type: "linear" | "radial" | "select"
+  ops?: SelectOp[]
   a?: [number, number]
   b?: [number, number]
   c?: [number, number]
   r?: [number, number]
   feather?: number
   invert: boolean
+  fill?: boolean // seçim taşındı: arkada kalan yer çevreden doldurulur
   adjust: MaskAdjust
 }
 export type Fx = {
@@ -43,7 +51,10 @@ export type Fx = {
   texture?: Texture
   frame?: Frame // yoksa çerçeve yok
   masks?: Mask[]
+  background?: Background // yapay zekâ ile arka plan
 }
+export type Background = { mode?: "remove" | "color" | "blur"; color?: string; blur?: number }
+export type AiStatus = { state: "idle" | "downloading" | "ready" | "error"; done: number; total: number; error: string; size: number }
 // recipe: kendi kaydedilen ayar; seçilince bu değerler fotoğrafa kopyalanır
 export type Recipe = { base: string; amount: number; adjust: Adjust; bw: boolean }
 export type PresetMeta = { id: string; name: string; group: string; bw: boolean; grain: number; vignette: number; user: boolean; recipe?: Recipe }
@@ -61,10 +72,30 @@ export type Geo = {
   outW: number | null
   outH: number | null
   lock?: boolean // çıktı boyutu kırpma oranına kilitli (varsayılan); false = esnetme
+  canvas?: CanvasExt | null // tuval boyutu: fotoğrafın çevresine boşluk
+  persp?: [number, number][] | null
+  fit?: "content" | null // oran değişince kırpmak yerine içeriğe duyarlı ölçekle // perspektif kırpma: 4 köşe (0..1), döndürülmüş görselde
 }
+// w/h: son tuval (px), anchor: fotoğrafın yeri (0..1), color: "#RRGGBB" ya da "transparent"
+export type CanvasExt = { w: number; h: number; anchor: [number, number]; color: string }
 // shadow: 0..1 (varsayılan 0.65), outline: 0..1, tracking: em eklentisi, leading: satır aralığı çarpanı
 export type TextFx = { shadow?: number; outline?: number; outlineColor?: string; tracking?: number; leading?: number }
 export type Watermark = { enabled: boolean; text: string; position: string; opacity: number; size: number }
+
+// Görsel katmanı (birleştirme): x, y merkez (0..1 tuval), w: genişlik (tuvalin oranı), ar: yükseklik/genişlik
+export type ImgLayer = {
+  id: string
+  photo: string
+  name: string
+  x: number
+  y: number
+  w: number
+  ar: number
+  rot: number
+  opacity: number
+  flipH: boolean
+  cutout: boolean // yapay zekâ ile konuyu kes
+}
 
 export type Item = {
   id: string
@@ -72,7 +103,9 @@ export type Item = {
   src?: [number, number] // kaynak fotoğrafın boyutu (EXIF yönü uygulanmış)
   geo?: Geo | null // yoksa eski davranış: 1080x1350
   font?: string | null // yazı tipi ailesi; yoksa tonun kendi yazı tipi
+  hidden?: string[] // gizlenen katmanlar (lib/layers.ts); önizlemede ve dışa aktarmada atlanır
   textFx?: TextFx
+  layers?: ImgLayer[] // fotoğrafın üstündeki görseller (yazının altında)
   text: string
   tone: string
   accent: string
@@ -117,7 +150,8 @@ export type Job = {
   outDir: string
 }
 
-export type ExportOpts = { format: "jpg" | "png" | "webp"; quality: number; naming: "number" | "original"; exif: boolean }
+export type ColorMode = "rgb" | "gray" | "cmyk" | "bitmap" | "indexed" | "lab"
+export type ExportOpts = { format: "jpg" | "png" | "webp" | "tiff"; quality: number; naming: "number" | "original"; exif: boolean; color?: ColorMode; dpi?: number | null }
 
 export type Settings = {
   outDir: string
