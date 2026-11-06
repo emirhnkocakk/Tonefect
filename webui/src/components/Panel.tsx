@@ -4,15 +4,16 @@ import { Label } from "@/components/ui/label"
 import { Slider } from "@/components/ui/slider"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent } from "@/components/ui/tabs"
-import { TOOLS } from "@/components/ToolRail"
+import { X } from "lucide-react"
+import { useEffect } from "react"
+import { TOOLS } from "@/lib/tools"
 import { Textarea } from "@/components/ui/textarea"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { TONE_INFO } from "@/lib/constants"
 import { words } from "@/lib/text"
 import { cn } from "@/lib/utils"
 import { ColorPanel } from "@/components/ColorPanel"
-import { BackgroundPanel } from "@/components/BackgroundPanel"
-import { FramePanel } from "@/components/FramePanel"
+import { FxPanel } from "@/components/FxPanel"
 import { MaskPanel } from "@/components/MaskPanel"
 import { TextStylePanel } from "@/components/TextStylePanel"
 import { GeoPanel } from "@/components/GeoPanel"
@@ -51,12 +52,26 @@ type Props = {
   layerSel: string[]
   setLayerSel: (ids: string[]) => void
   selectionToLayer: (cut: boolean) => Promise<void>
+  section: { id: string; n: number } | null // menüden gelinen bölüm: oraya kaydırılır
+  intent: { cmd: string; n: number } | null // menüden gelen işlem (örn. yeni seçim, görsel ekle)
+  onClose: () => void
 }
 
-export function Panel({ item, items, cfg, selected, setSelected, setText, patch, presets, groups, onPresetsChange, tab, setTab, setGeo, applyAllGeo, onCopy, onPaste, canPaste, maskSel, setMaskSel, setMasks, maskShow, setMaskShow, selTool, setSelTool, perspEdit, setPerspEdit, setLayers, layerSel, setLayerSel, selectionToLayer }: Props) {
+export function Panel({ item, items, cfg, selected, setSelected, setText, patch, presets, groups, onPresetsChange, tab, setTab, setGeo, applyAllGeo, onCopy, onPaste, canPaste, maskSel, setMaskSel, setMasks, maskShow, setMaskShow, selTool, setSelTool, perspEdit, setPerspEdit, setLayers, layerSel, setLayerSel, selectionToLayer, section, intent, onClose }: Props) {
   const ws = item ? words(item.text) : []
   const max = cfg.limits.max_words
   const setFx = (p: Partial<Fx>, all = false) => item && patch({ fx: { ...item.fx, ...p } }, all)
+  useEffect(() => {
+    if (!section) return
+    const t = setTimeout(() => {
+      const el = document.getElementById("sec-" + section.id)
+      if (!el) return
+      el.scrollIntoView({ behavior: "smooth", block: "start" })
+      el.classList.add("menu-flash")
+      setTimeout(() => el.classList.remove("menu-flash"), 1200)
+    }, 60)
+    return () => clearTimeout(t)
+  }, [section])
 
   return (
     <aside className="flex h-full w-[320px] shrink-0 flex-col border-r bg-card/40">
@@ -64,9 +79,14 @@ export function Panel({ item, items, cfg, selected, setSelected, setText, patch,
         {(() => {
           const t = TOOLS.find(([id]) => id === tab)
           return t ? (
-            <div className="px-4 pb-3 pt-4">
-              <p className="text-sm font-semibold">{t[1]}</p>
-              <p className="text-[11px] text-muted-foreground">{t[2]}</p>
+            <div className="flex items-start justify-between px-4 pb-3 pt-4">
+              <div>
+                <p className="text-sm font-semibold">{t[1]}</p>
+                <p className="text-[11px] text-muted-foreground">{t[2]}</p>
+              </div>
+              <button aria-label="Paneli kapat" title="Paneli kapat" onClick={onClose} className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground">
+                <X className="h-4 w-4" />
+              </button>
             </div>
           ) : null
         })()}
@@ -168,7 +188,7 @@ export function Panel({ item, items, cfg, selected, setSelected, setText, patch,
           {!item ? (
             <p className="pt-6 text-sm text-muted-foreground">Önce bir fotoğraf ekle.</p>
           ) : (
-            <MaskPanel item={item} selected={maskSel} select={setMaskSel} setMasks={setMasks} show={maskShow} setShow={setMaskShow} tool={selTool} setTool={setSelTool} toLayer={selectionToLayer} />
+            <MaskPanel item={item} selected={maskSel} select={setMaskSel} setMasks={setMasks} show={maskShow} setShow={setMaskShow} tool={selTool} setTool={setSelTool} toLayer={selectionToLayer} intent={intent} />
           )}
         </TabsContent>
 
@@ -176,44 +196,12 @@ export function Panel({ item, items, cfg, selected, setSelected, setText, patch,
           {!item ? (
             <p className="pt-6 text-sm text-muted-foreground">Önce bir fotoğraf ekle.</p>
           ) : (
-            <DesignPanel layers={item.layers ?? []} setLayers={setLayers} sel={layerSel} setSel={setLayerSel} canvas={canvasSize(item.geo, item.src) ?? [1080, 1350]} />
+            <DesignPanel intent={intent} layers={item.layers ?? []} setLayers={setLayers} sel={layerSel} setSel={setLayerSel} canvas={canvasSize(item.geo, item.src) ?? [1080, 1350]} />
           )}
         </TabsContent>
 
-        <TabsContent value="fx" className="min-h-0 flex-1 space-y-6 overflow-y-auto px-4 pb-4">
-          {!item ? (
-            <p className="pt-6 text-sm text-muted-foreground">Önce bir fotoğraf ekle.</p>
-          ) : (
-            <>
-              <div className="flex items-center justify-between rounded-lg border p-3">
-                <div>
-                  <Label>Siyah-beyaz</Label>
-                  <p className="text-[11px] text-muted-foreground">Kapalıysa fotoğraf renkli kalır</p>
-                </div>
-                <Switch checked={item.fx.bw} onCheckedChange={(v) => setFx({ bw: v })} />
-              </div>
-              <div className="space-y-3">
-                <div className="flex justify-between">
-                  <Label>Parazit (grain)</Label>
-                  <span className="text-xs text-muted-foreground">{Math.round(item.fx.grain * 100)}%</span>
-                </div>
-                <Slider min={0} max={100} step={1} value={[Math.round(item.fx.grain * 100)]} onValueChange={([v]) => setFx({ grain: v / 100 })} />
-                <p className="text-[11px] text-muted-foreground">0 = tamamen temiz</p>
-              </div>
-              <div className="space-y-3">
-                <div className="flex justify-between">
-                  <Label>Vinyet (kenar karartma)</Label>
-                  <span className="text-xs text-muted-foreground">{Math.round(item.fx.vignette * 100)}%</span>
-                </div>
-                <Slider min={0} max={100} step={1} value={[Math.round(item.fx.vignette * 100)]} onValueChange={([v]) => setFx({ vignette: v / 100 })} />
-              </div>
-              <BackgroundPanel fx={item.fx} setFx={(p) => setFx(p)} />
-              <FramePanel fx={item.fx} setFx={(p) => setFx(p)} />
-              <Button variant="secondary" size="sm" className="w-full" onClick={() => setFx({}, true)}>
-                Renk ve efektleri tüm fotoğraflara uygula
-              </Button>
-            </>
-          )}
+        <TabsContent value="fx" className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 pt-1">
+          {!item ? <p className="pt-6 text-sm text-muted-foreground">Önce bir fotoğraf ekle.</p> : <FxPanel item={item} setFx={setFx} />}
         </TabsContent>
 
       </Tabs>

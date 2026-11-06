@@ -43,7 +43,9 @@ WEB = HERE / "web"
 UPLOADS = HERE / "uploads"
 THUMBS = UPLOADS / ".thumbs"
 MATTES = UPLOADS / ".mattes"  # yapay zeka konu maskeleri (fotograf basina bir kez)
-SESSION = HERE / "oturum_web.json"
+SESSION = HERE / "oturum_web.json"  # eski tek oturum; ilk açılışta projeye taşınır
+PROJECTS = HERE / "projects"
+PROJECT_LOCK = threading.Lock()
 PREFS = HERE / "ayarlar.json"
 PENDING = Path(tempfile.gettempdir()) / "grainline_update_pending.json"
 DEFAULT_OUT = HERE / "output"
@@ -659,11 +661,12 @@ def preset_list():
 
 SAMPLE = WEB / "sample.jpg"  # kütüphanedeki önizlemelerin stok görseli
 SAMPLE_THUMBS = {}
-THUMB_W = 216
+PHOTO_THUMBS = {}  # fotoğraf -> {önizleme anahtarı: data url}
+THUMB_W = 200
 
 
 def sample_image():
-    tw, th = THUMB_W, round(THUMB_W * H / W)
+    tw, th = THUMB_W, THUMB_W  # kare: panelde düzgün ızgara
     try:
         return engine.cover_crop(Image.open(SAMPLE), (tw, th))
     except Exception:  # görsel yoksa yumuşak bir gökyüzü/zemin geçişi
@@ -673,21 +676,58 @@ def sample_image():
         return Image.fromarray((a * 255).astype(np.uint8), "RGB")
 
 
-def preset_thumbs():
-    """Her hazır ayarın aynı stok görsel üzerindeki önizlemesi; bir kez hesaplanıp saklanır.
+def thumb_source(photo):
+    """Önizleme kutucuklarının kare görseli: kullanıcının fotoğrafı (düz renkli boş tuvalse stok görsel)."""
+    if photo:
+        try:
+            with LOCK:
+                src = get_src(photo_path(photo))["proxy"]
+            img = engine.cover_crop(src, (THUMB_W, THUMB_W))
+            if float(np.asarray(img.convert("L"), np.float32).std()) > 4:  # düz renk değil
+                return img, photo
+        except Exception:
+            pass
+    return sample_image(), ""
+
+
+def _data_url(img):
+    buf = io.BytesIO()
+    img.convert("RGB").save(buf, "JPEG", quality=82)
+    return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+def preset_thumbs(photo=None):
+    """Her hazır ayarın kare önizlemesi (Instagram filtreleri gibi kendi fotoğrafının üzerinde); bir kez hesaplanır.
     Vinyet ve parazit kullanıcıya ait olduğundan önizlemelerde yok."""
-    todo = [p for p in list(PRESETS.values()) if p["id"] not in SAMPLE_THUMBS]
-    if todo:
-        img = sample_image()
-        for p in todo:
-            fx = {"bw": p["bw"], "grain": 0.0, "vignette": 0.0, "look": p["look"], "amount": 1.0}
-            if p.get("recipe"):
-                r = clean_fx({**p["recipe"], "preset": p["recipe"].get("base"), "grain": 0, "vignette": 0})
-                fx = {**r, "grain": 0.0, "vignette": 0.0}
-            buf = io.BytesIO()
-            engine.grade(img, CFG, 0, fx, engine.canvas_scale(*img.size)).save(buf, "JPEG", quality=82)
-            SAMPLE_THUMBS[p["id"]] = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
-    return {"thumbs": {k: SAMPLE_THUMBS[k] for k in PRESETS if k in SAMPLE_THUMBS}}
+    img, key = thumb_source(photo)
+    cache = _lru(PHOTO_THUMBS, key, dict, 6)
+    for p in list(PRESETS.values()):
+        if p["id"] in cache:
+            continue
+        fx = {"bw": p["bw"], "grain": 0.0, "vignette": 0.0, "look": p["look"], "amount": 1.0}
+        if p.get("recipe"):
+            r = clean_fx({**p["recipe"], "preset": p["recipe"].get("base"), "grain": 0, "vignette": 0})
+            fx = {**r, "grain": 0.0, "vignette": 0.0}
+        cache[p["id"]] = _data_url(engine.grade(img, CFG, 0, fx, engine.canvas_scale(*img.size)))
+    return {"thumbs": {k: cache[k] for k in PRESETS if k in cache}}
+
+
+FX_SAMPLES = {
+    "orig": {}, "bw": {"bw": True}, "grain": {"grain": 1.0}, "vignette": {"vignette": 1.0},
+    "leak": {"texture": {"leak": 0.8, "variant": 0}}, "bloom": {"texture": {"bloom": 0.8}}, "dust": {"texture": {"dust": 0.9}},
+    **{f"frame:{s}": {"frame": {"style": s, "size": 0.45}} for s in engine.FRAME_STYLES},
+}
+
+
+def fx_thumbs(photo=None):
+    """Efekt kutucukları: her efekt kendi fotoğrafının kare kopyası üzerinde."""
+    img, key = thumb_source(photo)
+    cache = _lru(PHOTO_THUMBS, "fx:" + key, dict, 6)
+    for k, extra in FX_SAMPLES.items():
+        if k not in cache:
+            fx = clean_fx({"preset": "b:original", "bw": False, "grain": 0, "vignette": 0, **extra})
+            cache[k] = _data_url(engine.grade(img, CFG, 7, fx, engine.canvas_scale(*img.size) * 2.5))
+    return {"thumbs": dict(cache)}
 
 
 def import_presets(name, data):
@@ -789,14 +829,147 @@ def save_session(body):
     tmp.replace(SESSION)
 
 
-def prune_uploads():
-    """Oturumda artık kullanılmayan yüklemeleri siler.
-    Arayüz silinen fotoğrafı geri alınabilsin diye hemen silmez; temizlik açılışta yapılır."""
+# ------------------------------------------------------------------ projeler
+# projects/<id>.json: {"meta": {"name", "created", "updated", "size": [w, h] | None, "preset"}, "items", "currentId", "settings"}
+PID_RE = re.compile(r"[0-9a-f]{8}")
+
+
+def project_file(pid):
+    if not PID_RE.fullmatch(str(pid)):
+        raise FileNotFoundError("Proje bulunamadı")
+    return PROJECTS / f"{pid}.json"
+
+
+def read_project(pid):
+    data = json.loads(project_file(pid).read_text(encoding="utf-8"))
+    items = data.get("items") if isinstance(data.get("items"), list) else []
+    data["items"] = [it for it in items if isinstance(it, dict) and (UPLOADS / Path(str(it.get("id", ""))).name).is_file()]
+    data.setdefault("meta", {})
+    return data
+
+
+def write_project(pid, data):
+    PROJECTS.mkdir(exist_ok=True)
+    f = project_file(pid)
+    tmp = f.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(f)
+
+
+def migrate_session():
+    """Eski sürümlerin tek oturumunu ilk açılışta bir projeye çevirir (fotoğraflar ve ayarlar korunur)."""
+    if PROJECTS.is_dir() or not SESSION.is_file():
+        return
+    data = load_session()
+    PROJECTS.mkdir(exist_ok=True)
+    if not data.get("items"):
+        return
+    now = time.time()
+    data["meta"] = {"name": "Önceki çalışmam", "created": now, "updated": now, "size": None, "preset": "original"}
+    write_project(uuid.uuid4().hex[:8], data)
+
+
+def list_projects():
+    out = []
+    for f in PROJECTS.glob("*.json") if PROJECTS.is_dir() else []:
+        try:
+            d = read_project(f.stem)
+        except Exception:
+            continue
+        m = d["meta"]
+        out.append({"id": f.stem, "name": m.get("name") or "Adsız proje", "updated": m.get("updated") or f.stat().st_mtime,
+                    "count": len(d["items"]), "size": m.get("size"), "preset": m.get("preset")})
+    return sorted(out, key=lambda p: -p["updated"])
+
+
+def blank_canvas(w, h, color):
+    """Boş tuval: düz renkli bir PNG; proje bu "fotoğrafla" başlar, üstüne görsel ve yazı eklenir."""
     try:
-        data = json.loads(SESSION.read_text(encoding="utf-8"))
-        keep = {Path(str(it.get("id", ""))).name for it in data["items"]}
+        rgb = engine.hex_to_rgb(color)
+    except (ValueError, TypeError):
+        rgb = (255, 255, 255)
+    buf = io.BytesIO()
+    Image.new("RGB", (w, h), rgb).save(buf, "PNG")
+    return save_photo("Tuval.png", buf.getvalue())
+
+
+def blank_item(info, size):
+    geo = {"aspect": "original", "crop": None, "rotate": 0, "flipH": False, "flipV": False, "straighten": 0, "outW": None, "outH": None}
+    return {"id": info["id"], "name": "Tuval", "src": size, "geo": geo, "text": "", "tone": TONES[0], "accent": "",
+            "styles": [], "block": [0, 0], "offsets": {}, "fx": {"preset": "b:original", "bw": False, "grain": 0, "vignette": 0}}
+
+
+def create_project(d):
+    name = " ".join(str(d.get("name") or "").split())[:60] or "Yeni proje"
+    size = d.get("size")
+    size = [int(num(size[0], 16, engine.MAX_SIDE)), int(num(size[1], 16, engine.MAX_SIDE))] if isinstance(size, list) and len(size) == 2 else None
+    # ayarlar (tema, dışa aktarma tercihleri) son projeden devralınır
+    prev = list_projects()
+    settings = {}
+    if prev:
+        try:
+            settings = read_project(prev[0]["id"]).get("settings") or {}
+        except Exception:
+            settings = {}
+    preset = str(d.get("preset") or "original")[:40]
+    settings = {**settings, "aspect": preset}
+    items, cur = [], None
+    if size and d.get("blank", True):
+        info = blank_canvas(*size, d.get("color") or "#FFFFFF")
+        items, cur = [blank_item(info, size)], info["id"]
+    now = time.time()
+    pid = uuid.uuid4().hex[:8]
+    write_project(pid, {"meta": {"name": name, "created": now, "updated": now, "size": size, "preset": preset},
+                        "items": items, "currentId": cur, "settings": settings})
+    return {"id": pid}
+
+
+def save_project(pid, body):
+    data = json.loads(body)  # bozuk veri kaydedilip proje kaybolmasın
+    if not isinstance(data, dict) or not isinstance(data.get("items", []), list):
+        raise ValueError("Geçersiz proje verisi")
+    old = read_project(pid)
+    data["meta"] = {**old["meta"], "updated": time.time()}
+    write_project(pid, data)
+
+
+def rename_project(pid, name):
+    data = read_project(pid)
+    data["meta"]["name"] = " ".join(str(name or "").split())[:60] or "Adsız proje"
+    write_project(pid, data)
+
+
+def delete_project(pid):
+    project_file(pid).unlink(missing_ok=True)
+    (PROJECTS / f"{pid}.jpg").unlink(missing_ok=True)
+
+
+def project_thumb(pid):
+    """Başlangıç sayfası için küçük görsel: güncel değilse projenin seçili sayfasından çizilir."""
+    f, t = project_file(pid), PROJECTS / f"{pid}.jpg"
+    if t.is_file() and t.stat().st_mtime >= f.stat().st_mtime:
+        return t
+    d = read_project(pid)
+    it = next((i for i in d["items"] if i.get("id") == d.get("currentId")), d["items"][0] if d["items"] else None)
+    if not it:
+        return None
+    r = render_preview({**it, "photo": it["id"], "w": 480, "textfx": it.get("textFx")})
+    t.write_bytes(base64.b64decode(r["image"].split(",", 1)[1]))
+    return t
+
+
+def prune_uploads():
+    """Hiçbir projede kullanılmayan yüklemeleri siler (fotoğraflar ve görsel katmanları).
+    Arayüz silinen fotoğrafı geri alınabilsin diye hemen silmez; temizlik açılışta yapılır."""
+    keep = set()
+    try:
+        for f in PROJECTS.glob("*.json"):
+            data = json.loads(f.read_text(encoding="utf-8"))
+            for it in data["items"]:
+                keep.add(Path(str(it.get("id", ""))).name)
+                keep.update(Path(str(ly.get("photo", ""))).name for ly in it.get("layers") or [] if isinstance(ly, dict))
     except Exception:
-        return  # oturum okunamıyorsa hiçbir şeye dokunma
+        return  # bir proje okunamıyorsa hiçbir şeye dokunma
     if not UPLOADS.is_dir():
         return
     for p in UPLOADS.iterdir():
@@ -1154,6 +1327,29 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(geo_source(json.loads(self._body())))
             if c == "/api/signature" and m == "PUT":
                 return self._json({"signature": save_signature(json.loads(self._body()).get("text"))})
+            if c == "/api/projects" and m == "GET":
+                return self._json({"projects": list_projects()})
+            if c == "/api/projects" and m == "POST":
+                return self._json(create_project(json.loads(self._body())))
+            if c.startswith("/api/projects/"):
+                parts = c.split("/")
+                pid, part = parts[3], (parts[4] if len(parts) > 4 else "")
+                if part == "thumb" and m in ("GET", "HEAD"):
+                    with PROJECT_LOCK:
+                        t = project_thumb(pid)
+                    return self._file(t) if t else self._err(404, "Önizleme yok")
+                if part == "rename" and m == "POST":
+                    rename_project(pid, json.loads(self._body()).get("name"))
+                    return self._json({"ok": True})
+                if not part and m == "GET":
+                    return self._json(read_project(pid))
+                if not part and m == "PUT":
+                    with PROJECT_LOCK:
+                        save_project(pid, self._body())
+                    return self._json({"ok": True})
+                if not part and m == "DELETE":
+                    delete_project(pid)
+                    return self._json({"ok": True})
             if c == "/api/session" and m == "GET":
                 return self._json(load_session())
             if c == "/api/session" and m == "PUT":
@@ -1172,7 +1368,9 @@ class Handler(BaseHTTPRequestHandler):
             if c == "/api/presets" and m == "GET":
                 return self._json(preset_list())
             if c == "/api/presets/thumbs" and m == "GET":
-                return self._json(preset_thumbs())
+                return self._json(preset_thumbs(q.get("photo", [None])[0]))
+            if c == "/api/fx/thumbs" and m == "GET":
+                return self._json(fx_thumbs(q.get("photo", [None])[0]))
             if c == "/api/presets/save" and m == "POST":
                 return self._json(save_preset(json.loads(self._body())))
             if c == "/api/presets/import" and m == "POST":
@@ -1321,6 +1519,7 @@ def main():
             return
     # eski sürümlerden kalan ayrı tarayıcı profili artık kullanılmıyor
     shutil.rmtree(HERE / ".webprofile", ignore_errors=True)
+    migrate_session()
     prune_uploads()
     threading.Thread(target=engine.font_registry, daemon=True).start()  # yazı tipi taraması önceden
     PORT = free_port(int(os.environ.get("NV_PORT", 8765)))

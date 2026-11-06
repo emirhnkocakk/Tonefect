@@ -1,4 +1,4 @@
-import type { Adjust, AiStatus, Config, Fx, Job, PresetMeta, UpdateInfo, UpdateStatus, Watermark } from "@/types"
+import type { Adjust, AiStatus, Config, ProjectMeta, Fx, Job, PresetMeta, UpdateInfo, UpdateStatus, Watermark } from "@/types"
 
 type PresetList = { presets: PresetMeta[]; groups: string[] }
 
@@ -19,6 +19,14 @@ const json = (method: string, body: unknown, signal?: AbortSignal) => ({
 
 export const api = {
   config: () => fetch("/api/config").then((r) => j<Config>(r)),
+  projects: () => fetch("/api/projects").then((r) => j<{ projects: ProjectMeta[] }>(r)),
+  createProject: (body: { name: string; size: [number, number] | null; preset: string; blank: boolean; color?: string }) =>
+    fetch("/api/projects", json("POST", body)).then((r) => j<{ id: string }>(r)),
+  project: (id: string) => fetch("/api/projects/" + id).then((r) => j<any>(r)),
+  saveProject: (id: string, data: unknown) => fetch("/api/projects/" + id, json("PUT", data)).then((r) => j(r)),
+  renameProject: (id: string, name: string) => fetch(`/api/projects/${id}/rename`, json("POST", { name })).then((r) => j(r)),
+  deleteProject: (id: string) => fetch("/api/projects/" + id, { method: "DELETE", headers: H }).then((r) => j(r)),
+  fxThumbs: (photo?: string) => fetch("/api/fx/thumbs" + (photo ? "?photo=" + encodeURIComponent(photo) : "")).then((r) => j<{ thumbs: Record<string, string> }>(r)),
   session: () => fetch("/api/session").then((r) => j<any>(r)),
   saveSession: (data: unknown) => fetch("/api/session", json("PUT", data)).then((r) => j(r)),
   upload: (file: File) =>
@@ -28,7 +36,7 @@ export const api = {
   duplicate: (id: string) => fetch("/api/photos/" + encodeURIComponent(id) + "/duplicate", json("POST", {})).then((r) => j<{ id: string }>(r)),
   remove: (id: string) => fetch("/api/photos/" + encodeURIComponent(id), { method: "DELETE", headers: H }).then((r) => j(r)),
   presets: () => fetch("/api/presets").then((r) => j<PresetList>(r)),
-  presetThumbs: () => fetch("/api/presets/thumbs").then((r) => j<{ thumbs: Record<string, string> }>(r)),
+  presetThumbs: (photo?: string) => fetch("/api/presets/thumbs" + (photo ? "?photo=" + encodeURIComponent(photo) : "")).then((r) => j<{ thumbs: Record<string, string> }>(r)),
   importPreset: (file: File) =>
     fetch("/api/presets/import?name=" + encodeURIComponent(file.name), { method: "POST", headers: H, body: file }).then((r) =>
       j<{ imported: PresetMeta[]; warnings: string[] }>(r)
@@ -67,5 +75,6 @@ export const api = {
   quit: () => fetch("/api/quit", json("POST", {})).then((r) => j(r)),
 }
 
+export const projectThumbUrl = (id: string, v: number) => `/api/projects/${id}/thumb?v=${Math.round(v)}`
 export const thumbUrl = (id: string) => "/api/thumb/" + encodeURIComponent(id)
 export const outputUrl = (job: string, name: string) => `/api/output/${job}/${encodeURIComponent(name)}`

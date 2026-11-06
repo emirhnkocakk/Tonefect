@@ -1,4 +1,4 @@
-import { useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import {
   AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignHorizontalDistributeCenter,
   AlignStartHorizontal, AlignStartVertical, AlignVerticalDistributeCenter, ArrowDown, ArrowUp, Copy, FlipHorizontal2,
@@ -22,6 +22,7 @@ type Props = {
   sel: string[]
   setSel: (ids: string[]) => void
   canvas: [number, number]
+  intent?: { cmd: string; n: number } | null
 }
 
 const ALIGN: [AlignKind, string, typeof AlignStartVertical][] = [
@@ -49,7 +50,7 @@ function Icon({ label, onClick, disabled, children }: { label: string; onClick: 
 }
 
 /** Tasarım: fotoğrafın üstüne başka görseller (logo, ürün, ikinci fotoğraf) ekle, hizala ve dağıt. */
-export function DesignPanel({ layers, setLayers, sel, setSel, canvas: [W, H] }: Props) {
+export function DesignPanel({ layers, setLayers, sel, setSel, canvas: [W, H], intent }: Props) {
   const fileRef = useRef<HTMLInputElement>(null)
   const [busy, setBusy] = useState(false)
   const ai = useAi()
@@ -98,6 +99,10 @@ export function DesignPanel({ layers, setLayers, sel, setSel, canvas: [W, H] }: 
     setLayers(layers.filter((l) => !sel.includes(l.id)))
     setSel([])
   }
+  useEffect(() => {
+    if (intent?.cmd === "design:add") fileRef.current?.click()
+  }, [intent])
+
   const fill = () => cur && set({ x: 0.5, y: 0.5, rot: 0, w: Math.max(1, H / (W * cur.ar)) })
 
   return (
@@ -133,7 +138,7 @@ export function DesignPanel({ layers, setLayers, sel, setSel, canvas: [W, H] }: 
 
       {sel.length > 0 && (
         <div className="space-y-2">
-          <Label>Hizala {sel.length > 1 ? "(seçime göre)" : "(tuvale göre)"}</Label>
+          <Label id="sec-align">Hizala {sel.length > 1 ? "(seçime göre)" : "(tuvale göre)"}</Label>
           <div className="grid grid-cols-6 gap-1">
             {ALIGN.map(([k, label, I]) => (
               <Icon key={k} label={label} onClick={() => setLayers(align(layers, sel, k, W, H))}>

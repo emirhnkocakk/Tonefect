@@ -5,6 +5,7 @@ import { Label } from "@/components/ui/label"
 import { Slider } from "@/components/ui/slider"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { ASPECTS, MAX_SIDE, SIZE_PRESETS, naturalSize, photoSize, ratioOf } from "@/lib/geo"
+import { PLATFORMS, platformGroups, platformOf, ratioText } from "@/lib/platforms"
 import { cn } from "@/lib/utils"
 import type { CanvasExt, Geo, Item } from "@/types"
 
@@ -57,7 +58,7 @@ export function GeoPanel({ item, geo, setGeo, applyAll, perspEdit, setPerspEdit 
   return (
     <div className="space-y-6">
       <div className="space-y-2">
-        <Label>Oran</Label>
+        <Label id="sec-ratio">Oran</Label>
         <div className="grid grid-cols-4 gap-1.5">
           {ASPECTS.map(([value, label, sub]) => (
             <button
@@ -98,7 +99,7 @@ export function GeoPanel({ item, geo, setGeo, applyAll, perspEdit, setPerspEdit 
       </div>
 
       <div className="space-y-2">
-        <Label>Döndür ve çevir</Label>
+        <Label id="sec-rotate">Döndür ve çevir</Label>
         <div className="grid grid-cols-4 gap-1.5">
           <IconBtn label="Sola döndür" onClick={() => setGeo({ rotate: (geo.rotate + 270) % 360, crop: null })}>
             <RotateCcw className="h-4 w-4" />
@@ -117,7 +118,7 @@ export function GeoPanel({ item, geo, setGeo, applyAll, perspEdit, setPerspEdit 
 
       <div className="space-y-2">
         <div className="flex items-center justify-between">
-          <Label>Perspektif kırpma</Label>
+          <Label id="sec-persp">Perspektif kırpma</Label>
           {geo.persp && (
             <button className="text-xs text-muted-foreground hover:text-primary" onClick={() => setGeo({ persp: null, crop: null })}>
               sıfırla
@@ -136,7 +137,7 @@ export function GeoPanel({ item, geo, setGeo, applyAll, perspEdit, setPerspEdit 
 
       <div className="space-y-3">
         <div className="flex items-center justify-between">
-          <Label>Düzelt (eğim)</Label>
+          <Label id="sec-straighten">Düzelt (eğim)</Label>
           <div className="flex items-center gap-2">
             <span className="text-xs text-muted-foreground">{geo.straighten > 0 ? "+" : ""}{geo.straighten.toFixed(1)}°</span>
             {geo.straighten !== 0 && (
@@ -151,7 +152,25 @@ export function GeoPanel({ item, geo, setGeo, applyAll, perspEdit, setPerspEdit 
       </div>
 
       <div className="space-y-2">
-        <Label>Çıktı boyutu</Label>
+        <Label id="sec-size">Çıktı boyutu</Label>
+        <select
+          aria-label="Platforma göre boyut"
+          value=""
+          onChange={(e) => {
+            const pl = platformOf(e.target.value)
+            if (pl) setGeo({ aspect: ratioText(pl.w, pl.h), crop: null, fit: geo.fit ?? null, outW: pl.w, outH: pl.h, lock: true })
+          }}
+          className="h-8 w-full rounded-md border bg-background px-2 text-xs text-muted-foreground"
+        >
+          <option value="">Platforma göre seç (Instagram, YouTube, baskı…)</option>
+          {platformGroups().map((g) => (
+            <optgroup key={g} label={g}>
+              {PLATFORMS.filter((p) => p.group === g).map((p) => (
+                <option key={p.id} value={p.id}>{p.label} · {p.w}×{p.h}</option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
         <div className="grid grid-cols-4 gap-1.5">
           {SIZE_PRESETS.map(([label, n]) => (
             <button
@@ -243,7 +262,7 @@ function CanvasSection({ photo, canvas, set }: { photo: [number, number]; canvas
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
-        <Label>Tuval boyutu</Label>
+        <Label id="sec-canvas">Tuval boyutu</Label>
         {canvas && (
           <button className="text-xs text-muted-foreground hover:text-primary" onClick={() => set(null)}>
             kaldır

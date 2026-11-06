@@ -39,7 +39,7 @@ export function buildLayers(item: Item, presets: PresetMeta[], wm: Watermark | n
   if (tex.bloom) out.push({ key: "bloom", kind: "bloom", label: "Işıma", sub: pct(tex.bloom), tool: "fx", hideable: true, removable: true })
   if (tex.dust) out.push({ key: "dust", kind: "dust", label: "Toz ve çizik", sub: pct(tex.dust), tool: "fx", hideable: true, removable: true })
   if (fx.vignette) out.push({ key: "vignette", kind: "vignette", label: "Vinyet", sub: pct(fx.vignette), tool: "fx", hideable: true, removable: true })
-  if (fx.grain) out.push({ key: "grain", kind: "grain", label: "Parazit", sub: pct(fx.grain), tool: "fx", hideable: true, removable: true })
+  if (fx.grain) out.push({ key: "grain", kind: "grain", label: "Film greni", sub: pct(fx.grain), tool: "fx", hideable: true, removable: true })
   ;(fx.masks ?? []).forEach((m, i) =>
     out.push({ key: `mask:${m.id}`, kind: "mask", label: `${m.type === "linear" ? "Degrade" : m.type === "select" ? "Seçim" : "Daire"} ${i + 1}`, sub: m.fill ? "alan taşındı · dolduruldu" : m.invert ? "yerel · ters" : "yerel düzenleme", tool: "local", maskId: m.id, hideable: true, removable: true })
   )

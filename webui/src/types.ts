@@ -128,6 +128,8 @@ export type Config = {
   watermark: Watermark
 }
 
+export type ProjectMeta = { id: string; name: string; updated: number; count: number; size: [number, number] | null; preset: string | null }
+
 export type Box = { idx: number; box: [number, number, number, number] }
 
 export type PreviewData = {

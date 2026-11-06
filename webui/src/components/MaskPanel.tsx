@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Brush, Circle, Copy, Eraser, Loader2, Move, Image as ImageIcon, RotateCcw, SquareSplitVertical, Trash2, Undo2, User, Wand2 } from "lucide-react"
 import { AiSetup, useAi } from "@/components/AiSetup"
 import { Button } from "@/components/ui/button"
@@ -19,6 +19,7 @@ type Props = {
   tool: SelectTool
   setTool: (t: SelectTool) => void
   toLayer: (cut: boolean) => Promise<void>
+  intent?: { cmd: string; n: number } | null
 }
 
 const KEYS: [keyof MaskAdjust, string][] = [
@@ -45,7 +46,7 @@ const MODE_HINT: Record<SelectTool["mode"], string> = {
   erase: "Seçimden çıkarmak için boya.",
 }
 
-export function MaskPanel({ item, selected, select, setMasks, show, setShow, tool, setTool, toLayer }: Props) {
+export function MaskPanel({ item, selected, select, setMasks, show, setShow, tool, setTool, toLayer, intent }: Props) {
   const [moving, setMoving] = useState(false)
   const runLayer = (cut: boolean) => {
     setMoving(true)
@@ -72,10 +73,21 @@ export function MaskPanel({ item, selected, select, setMasks, show, setShow, too
     select(id)
   }
 
+  // üst menüden: Seçim → Akıllı seçim / Konuyu seç / Degrade / Daire
+  useEffect(() => {
+    if (!intent || masks.length >= MAX_MASKS) return
+    if (intent.cmd === "mask:select") add("select")
+    else if (intent.cmd === "mask:linear") add("linear")
+    else if (intent.cmd === "mask:radial") add("radial")
+    else if (intent.cmd === "mask:subject" && ai.ready) add("select", [subject(false)])
+    else if (intent.cmd === "mask:background" && ai.ready) add("select", [subject(true)])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [intent])
+
   return (
     <div className="space-y-5">
       <div className="space-y-2">
-        <Label>Yerel düzenlemeler</Label>
+        <Label id="sec-select">Yerel düzenlemeler</Label>
         <p className="text-[11px] text-muted-foreground">
           Yalnızca bir bölgeyi değiştir. Akıllı seçim ile tıklayarak ya da boyayarak seç; degrade gökyüzü için, daire bir yüzü öne çıkarmak için.
         </p>

@@ -42,18 +42,19 @@ export function ColorPanel({ item, presets, groups, setFx, onPresetsChange, onCo
   const amount = item?.fx.amount ?? 1
   const ver = presets.map((p) => p.id).join(",")
 
-  // Kütüphane her zaman aynı stok görsel üzerinde gösterilir (fotoğraf eklemeden de görünür).
+  // Kütüphane seçili fotoğrafın kare kopyası üzerinde gösterilir (fotoğraf yoksa ya da boş tuvalse stok görsel).
+  const photo = item?.id
   useEffect(() => {
     if (!presets.length) return
     let alive = true
     api
-      .presetThumbs()
+      .presetThumbs(photo)
       .then((r) => alive && setThumbs(r.thumbs))
       .catch(() => {})
     return () => {
       alive = false
     }
-  }, [ver])
+  }, [ver, photo])
 
   // Vinyet ve parazit kullanıcıya ait: hazır ayar seçmek onları değiştirmez.
   // Kendi kaydedilen ayarlar (tarif) değerlerini fotoğrafa kopyalar.
@@ -142,7 +143,7 @@ export function ColorPanel({ item, presets, groups, setFx, onPresetsChange, onCo
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
-        <Label>Renk kütüphanesi</Label>
+        <Label id="sec-library">Renk kütüphanesi</Label>
         <div className="flex items-center">
           <Button variant="ghost" size="sm" className="h-7 gap-1.5 px-2 text-xs" disabled={!item} onClick={() => setSaveOpen(true)} title="Bu fotoğrafın renk ayarlarını hazır ayar olarak kaydet">
             <BookmarkPlus className="!size-3.5" /> Kaydet
@@ -165,12 +166,12 @@ export function ColorPanel({ item, presets, groups, setFx, onPresetsChange, onCo
                   <button onClick={() => choose(p)} className="block w-full text-left" title={p.name}>
                     <div
                       className={cn(
-                        "aspect-[4/5] w-full overflow-hidden rounded-md bg-muted ring-offset-2 ring-offset-background transition",
+                        "aspect-square w-full overflow-hidden rounded-lg bg-muted ring-offset-2 ring-offset-background transition",
                         isOn(p) ? "ring-2 ring-primary" : "hover:ring-1 hover:ring-primary/50"
                       )}
                     >
                       {thumbs[p.id] ? (
-                        <img src={thumbs[p.id]} alt="" className="h-full w-full object-cover" draggable={false} />
+                        <img src={thumbs[p.id]} alt="" className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105" draggable={false} />
                       ) : (
                         <div className="h-full w-full animate-pulse bg-muted" />
                       )}
@@ -212,7 +213,7 @@ export function ColorPanel({ item, presets, groups, setFx, onPresetsChange, onCo
       <Button variant="secondary" className="w-full gap-2" onClick={autoEnhance} disabled={autoBusy} title="Işık, ton ve canlılığı fotoğrafa göre otomatik ayarlar">
         {autoBusy ? <Loader2 className="!size-4 animate-spin" /> : <Wand2 className="!size-4" />} Otomatik iyileştir
       </Button>
-      <AdjustPanel adjust={adjust} setAdjust={(a) => setFx({ adjust: a })} />
+      <div id="sec-adjust"><AdjustPanel adjust={adjust} setAdjust={(a) => setFx({ adjust: a })} /></div>
 
       <div className="space-y-2">
         <div className="grid grid-cols-2 gap-2">

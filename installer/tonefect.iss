@@ -53,6 +53,7 @@ Type: files; Name: "{autodesktop}\Grainline.lnk"
 Type: filesandordirs; Name: "{app}\.webprofile"
 Type: filesandordirs; Name: "{app}\uploads"
 Type: filesandordirs; Name: "{app}\models"
+Type: filesandordirs; Name: "{app}\projects"
 
 [Code]
 procedure EndApp(const ExeName: String);

@@ -179,3 +179,7 @@
 [data-theme="pixel"] .bg-primary, [data-theme="pixel"] .bg-secondary { box-shadow: 3px 3px 0 0 #000; }
 [data-theme="pixel"] .shadow-2xl { box-shadow: 6px 6px 0 0 #000 !important; }
 [data-theme="pixel"] header span { letter-spacing: 0.3em; }
+
+/* üst menüden bir bölüme atlayınca kısa vurgu */
+.menu-flash { animation: menu-flash 1.2s ease-out; border-radius: 6px; }
+@keyframes menu-flash { 0%, 30% { background: hsl(var(--primary) / 0.22); box-shadow: 0 0 0 6px hsl(var(--primary) / 0.22); } 100% { background: transparent; box-shadow: none; } }

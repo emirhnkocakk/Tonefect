@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { ArrowUpCircle, Download, Loader2, Power, Redo2, Settings as Cog, Sparkles, Undo2 } from "lucide-react"
+import { ArrowUpCircle, Layers as LayersIcon, Loader2, Redo2, Settings as Cog, Sparkles, Undo2 } from "lucide-react"
 import { Toaster, toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { TooltipProvider } from "@/components/ui/tooltip"
@@ -7,7 +7,9 @@ import { Filmstrip } from "@/components/Filmstrip"
 import { SaveMenu } from "@/components/SaveMenu"
 import { COLOR_FORMATS, saveAs } from "@/lib/save"
 import { LayersPanel } from "@/components/LayersPanel"
-import { ToolRail } from "@/components/ToolRail"
+import { MenuBar, type Menu } from "@/components/MenuBar"
+import { StartPage } from "@/components/StartPage"
+import { geoForPreset } from "@/lib/platforms"
 import { Stage } from "@/components/Stage"
 import { Panel } from "@/components/Panel"
 import { GenerateDialog } from "@/components/GenerateDialog"
@@ -15,7 +17,7 @@ import { UpdateDialog } from "@/components/UpdateDialog"
 import { SettingsDialog } from "@/components/SettingsDialog"
 import { api } from "@/lib/api"
 import { mergeStyle, naturalSort, remap, words } from "@/lib/text"
-import { legacyGeo, naturalSize, newGeo } from "@/lib/geo"
+import { legacyGeo, naturalSize } from "@/lib/geo"
 import { applyTheme, isLightTheme } from "@/lib/themes"
 import { effectiveItem, removeLayer, type Layer } from "@/lib/layers"
 import type { Config, ExportOpts, Geo, ImgLayer, Item, Job, Mask, Mode, SelectTool, PresetMeta, Settings, Style, UpdateInfo, Watermark } from "@/types"
@@ -44,7 +46,14 @@ export default function App() {
   const [bye, setBye] = useState(false)
   const [cog, setCog] = useState(false)
   const [wm, setWm] = useState<Watermark | null>(null)
-  const [tab, setTab] = useState("color")
+  const [tab, setTabRaw] = useState("") // "" = panel kapalı
+  const [project, setProject] = useState<{ id: string; name: string } | null>(null)
+  const [showLayers, setShowLayers] = useState(false)
+  const [showStrip, setShowStrip] = useState(true)
+  const [section, setSection] = useState<{ id: string; n: number } | null>(null)
+  const [intent, setIntent] = useState<{ cmd: string; n: number } | null>(null)
+  const pickAfterOpen = useRef(false)
+  const setTab = (t: string) => setTabRaw(t)
   const [clip, setClip] = useState<Item["fx"] | null>(null) // kopyalanan renk/efekt ayarları
   const [maskSel, setMaskSel] = useState<string | null>(null) // seçili yerel düzenleme
   const [maskShow, setMaskShow] = useState(false)
@@ -72,23 +81,21 @@ export default function App() {
   useEffect(() => {
     ;(async () => {
       try {
-        const [c, s] = await Promise.all([api.config(), api.session()])
+        const c = await api.config()
         setCfg(c)
-        const st = s.settings || {}
-        // eski kayıtlarda varsayılan vinyet/parazit açıktı; bir kez kapalıya çek
-        const fx = { ...DEFAULTS.fx, ...(st.fx || {}), ...((st.v ?? 1) < SETTINGS_VERSION ? { grain: 0, vignette: 0 } : {}) }
-        setSettings({ ...DEFAULTS, ...st, fx, export: { ...DEFAULT_EXPORT!, ...(st.export || {}) }, v: SETTINGS_VERSION, outDir: st.outDir || c.outDir || "output" })
+        // tema başlangıç sayfasında da son projeninki olsun
+        api.projects().then(async (r) => {
+          if (!r.projects[0]) return
+          const last = await api.project(r.projects[0].id)
+          if (last.settings?.theme) setSettings((s) => ({ ...s, theme: last.settings.theme }))
+        }).catch(() => {})
         setWm(c.watermark)
         setQuitOnClose(c.quitOnClose !== false)
-        const its: Item[] = (s.items || []).map(normItem)
-        setItems(its)
-        setCurrentId(s.currentId && its.some((i) => i.id === s.currentId) ? s.currentId : its[0]?.id ?? null)
         c.updateFailed && toast.error(`Güncelleme v${c.updateFailed.target} kurulamadı. Kurulum kaydı: ${c.updateFailed.log}`, { duration: 20000 })
         c.fontWarn?.length && toast.warning("Font bulunamadı: " + c.fontWarn.join(", "))
       } catch (e: any) {
         toast.error("Sunucuya bağlanılamadı: " + e.message)
       }
-      setLoaded(true)
       api.updateCheck().then((u) => {
         setUpd(u)
         if (u.newer) setUpdOpen(true)
@@ -112,12 +119,47 @@ export default function App() {
 
   useEffect(() => applyTheme(settings.theme), [settings.theme])
 
-  // oturumu otomatik kaydet
+  // açık projeyi otomatik kaydet
   useEffect(() => {
-    if (!loaded) return
-    const t = setTimeout(() => api.saveSession({ items, currentId, settings }).catch(() => {}), 500)
+    if (!loaded || !project) return
+    const t = setTimeout(() => api.saveProject(project.id, { items, currentId, settings }).catch(() => {}), 500)
     return () => clearTimeout(t)
-  }, [items, currentId, settings, loaded])
+  }, [items, currentId, settings, loaded, project])
+
+  /** Projeyi aç: fotoğraflar, ayarlar; paneller kapalı başlar (kullanıcı menüden seçer). */
+  const openProject = async (id: string, pickPhotos = false) => {
+    try {
+      const s = await api.project(id)
+      const st = s.settings || {}
+      // eski kayıtlarda varsayılan vinyet/parazit açıktı; bir kez kapalıya çek
+      const fx = { ...DEFAULTS.fx, ...(st.fx || {}), ...((st.v ?? 1) < SETTINGS_VERSION ? { grain: 0, vignette: 0 } : {}) }
+      setSettings({ ...DEFAULTS, ...st, fx, export: { ...DEFAULT_EXPORT!, ...(st.export || {}) }, v: SETTINGS_VERSION, outDir: st.outDir || cfg?.outDir || "output" })
+      const its: Item[] = (s.items || []).map(normItem)
+      hist.current = { past: [], future: [], prev: null, at: 0, skip: true }
+      setItems(its)
+      setCurrentId(s.currentId && its.some((i) => i.id === s.currentId) ? s.currentId : its[0]?.id ?? null)
+      setTabRaw("")
+      setShowLayers(its.length > 0 && !(its.length === 1 && its[0].name === "Tuval" && !its[0].layers?.length && !its[0].text))
+      setProject({ id, name: s.meta?.name || "Proje" })
+      setLoaded(true)
+      pickAfterOpen.current = pickPhotos
+    } catch (e: any) {
+      toast.error(e.message)
+    }
+  }
+  const closeProject = async () => {
+    if (project) await api.saveProject(project.id, { items, currentId, settings }).catch(() => {})
+    setLoaded(false)
+    setProject(null)
+    setItems([])
+    setCurrentId(null)
+  }
+  useEffect(() => {
+    if (project && pickAfterOpen.current) {
+      pickAfterOpen.current = false
+      fileRef.current?.click()
+    }
+  }, [project])
 
   // geri al / yinele geçmişi
   const hist = useRef({ past: [] as Item[][], future: [] as Item[][], prev: null as Item[] | null, at: 0, skip: false })
@@ -367,7 +409,7 @@ export default function App() {
     for (const f of list) {
       try {
         const r = await api.upload(f)
-        const geo = settings.aspect === "insta" ? legacyGeo() : newGeo()
+        const geo = geoForPreset(settings.aspect)
         const it = { ...newItem(r.id, r.name, settings.fx, settings.tone), src: [r.width, r.height] as [number, number], geo }
         setItems((a) => [...a, it])
         last = last ?? r.id
@@ -459,6 +501,111 @@ export default function App() {
   const saveRef = useRef({ save: () => {}, saveAs: (_copy: boolean) => {} })
   saveRef.current = { save: () => item && generate(item), saveAs: saveFile }
 
+  const tool = (t: string, sec?: string) => {
+    setTabRaw(t)
+    if (sec) setSection({ id: sec, n: Date.now() })
+  }
+  const command = (cmd: string) => {
+    if (cmd.startsWith("tool:")) {
+      const [, t, sec] = cmd.split(":")
+      return tool(t, sec)
+    }
+    if (cmd.startsWith("mask:")) {
+      tool("local", "select")
+      return setIntent({ cmd, n: Date.now() })
+    }
+    const run: Record<string, () => void> = {
+      projects: closeProject,
+      addPhotos: () => fileRef.current?.click(),
+      save: () => saveRef.current.save(),
+      saveAs: () => saveRef.current.saveAs(false),
+      saveCopy: () => saveRef.current.saveAs(true),
+      exportAll: () => generate(),
+      settings: () => setCog(true),
+      quit,
+      undo: () => travel("undo"),
+      redo: () => travel("redo"),
+      copyFx,
+      pasteFx: () => pasteFx(),
+      duplicate: () => currentId && duplicateItem(currentId),
+      addImage: () => {
+        tool("design")
+        setIntent({ cmd: "design:add", n: Date.now() })
+      },
+      layers: () => setShowLayers((v) => !v),
+      strip: () => setShowStrip((v) => !v),
+      guides: () => setSettings((s) => ({ ...s, guides: !s.guides })),
+      closePanel: () => setTabRaw(""),
+    }
+    run[cmd]?.()
+  }
+  const noItem = !item
+  const menus: Menu[] = [
+    { label: "Dosya", items: [
+      { label: "Yeni proje / Projeler", cmd: "projects" },
+      "sep",
+      { label: "Fotoğraf ekle…", cmd: "addPhotos" },
+      "sep",
+      { label: "Kaydet", cmd: "save", key: "Ctrl+S", disabled: noItem },
+      { label: "Farklı kaydet…", cmd: "saveAs", key: "Ctrl+Shift+S", disabled: noItem },
+      { label: "Kopya kaydet…", cmd: "saveCopy", disabled: noItem },
+      { label: "Tümünü dışa aktar", cmd: "exportAll", disabled: !items.length },
+      "sep",
+      { label: "Ayarlar…", cmd: "settings" },
+      { label: "Çıkış", cmd: "quit" },
+    ] },
+    { label: "Düzenle", items: [
+      { label: "Geri al", cmd: "undo", key: "Ctrl+Z", disabled: !histLen.past },
+      { label: "Yinele", cmd: "redo", key: "Ctrl+Y", disabled: !histLen.future },
+      "sep",
+      { label: "Renk ve efektleri kopyala", cmd: "copyFx", key: "Ctrl+C", disabled: noItem },
+      { label: "Renk ve efektleri yapıştır", cmd: "pasteFx", key: "Ctrl+V", disabled: !clip || noItem },
+      { label: "Fotoğrafı çoğalt", cmd: "duplicate", disabled: noItem },
+    ] },
+    { label: "Görüntü", items: [
+      { label: "Kırp ve oran", cmd: "tool:crop:ratio" },
+      { label: "Döndür ve çevir", cmd: "tool:crop:rotate" },
+      { label: "Perspektif kırpma", cmd: "tool:crop:persp" },
+      { label: "Eğim düzelt", cmd: "tool:crop:straighten" },
+      "sep",
+      { label: "Görüntü boyutu", cmd: "tool:crop:size" },
+      { label: "Tuval boyutu", cmd: "tool:crop:canvas" },
+      { label: "İçeriğe duyarlı ölçek", cmd: "tool:crop:ratio" },
+    ] },
+    { label: "Renk", items: [
+      { label: "Renk görünümleri", cmd: "tool:color:library" },
+      { label: "Işık ve renk ayarları", cmd: "tool:color:adjust" },
+    ] },
+    { label: "Efekt", items: [
+      { label: "Efektler (gren, vinyet, ışık…)", cmd: "tool:fx:effects" },
+      { label: "Çerçeve", cmd: "tool:fx:frame" },
+      { label: "Arka planı kaldır / değiştir", cmd: "tool:fx:background" },
+    ] },
+    { label: "Seçim", items: [
+      { label: "Akıllı seçim (değnek, fırça)", cmd: "mask:select", disabled: noItem },
+      { label: "Konuyu seç (yapay zekâ)", cmd: "mask:subject", disabled: noItem },
+      { label: "Arka planı seç (yapay zekâ)", cmd: "mask:background", disabled: noItem },
+      "sep",
+      { label: "Degrade maske", cmd: "mask:linear", disabled: noItem },
+      { label: "Daire maske", cmd: "mask:radial", disabled: noItem },
+      { label: "Tüm yerel düzenlemeler", cmd: "tool:local:select" },
+    ] },
+    { label: "Metin", items: [{ label: "Yazı ekle ve biçimlendir", cmd: "tool:text" }] },
+    { label: "Katman", items: [
+      { label: "Görsel ekle…", cmd: "addImage", disabled: noItem },
+      { label: "Katman, hizala ve dağıt", cmd: "tool:design" },
+      "sep",
+      { label: "Katmanlar paneli", cmd: "layers", checked: showLayers },
+    ] },
+    { label: "Görünüm", items: [
+      { label: "Katmanlar paneli", cmd: "layers", checked: showLayers },
+      { label: "Fotoğraf şeridi", cmd: "strip", checked: showStrip },
+      { label: "Hizalama kılavuzları", cmd: "guides", checked: settings.guides },
+      "sep",
+      { label: "Araç panelini kapat", cmd: "closePanel", disabled: !tab },
+    ] },
+  ]
+
   const quit = async () => {
     setBye(true)
     api.quit().catch(() => {})
@@ -478,6 +625,21 @@ export default function App() {
       </div>
     )
 
+  const dialogs = (
+    <>
+      <SettingsDialog open={cog} onClose={() => setCog(false)} cfg={cfg} settings={settings} setSettings={setSettings} defaults={DEFAULTS} watermark={wm} onWatermark={setWm} quitOnClose={quitOnClose} onQuitOnClose={(v) => { setQuitOnClose(v); api.setPrefs({ quitOnClose: v }).catch((e) => toast.error(e.message)) }} version={cfg.version} update={upd} onUpdate={(u) => { setUpd(u); if (u.newer) { setCog(false); setUpdOpen(true) } }} />
+      <UpdateDialog open={updOpen} onClose={() => setUpdOpen(false)} info={upd} />
+      <Toaster theme={isLightTheme(settings.theme) ? "light" : "dark"} position="bottom-center" />
+    </>
+  )
+  if (!project)
+    return (
+      <TooltipProvider delayDuration={200}>
+        <StartPage onOpen={openProject} onSettings={() => setCog(true)} onQuit={quit} version={cfg.version} />
+        {dialogs}
+      </TooltipProvider>
+    )
+
   return (
     <TooltipProvider delayDuration={200}>
       <div
@@ -488,10 +650,13 @@ export default function App() {
           if (e.dataTransfer.files.length) addFiles([...e.dataTransfer.files])
         }}
       >
-        <header className="flex h-12 shrink-0 items-center justify-between border-b px-4">
-          <div className="flex items-center gap-2.5">
-            <img src="/logo.png" alt="" className="h-7 w-7" />
-            <span className="text-sm font-semibold tracking-[0.22em] text-foreground">TONEFECT</span>
+        <header className="flex h-12 shrink-0 items-center justify-between gap-3 border-b px-3">
+          <div className="flex min-w-0 items-center gap-2">
+            <button onClick={closeProject} title="Projeler" className="flex shrink-0 items-center rounded-md p-1 hover:bg-accent">
+              <img src="/logo.png" alt="Projeler" className="h-7 w-7" />
+            </button>
+            <MenuBar menus={menus} onCommand={command} active={tab} />
+            <span className="ml-2 truncate text-xs text-muted-foreground" title="Proje adı">· {project.name}</span>
           </div>
           <div className="flex items-center gap-2">
             {upd?.newer && (
@@ -509,28 +674,27 @@ export default function App() {
             <Button onClick={() => generate()} disabled={!items.length} className="h-8 gap-1.5">
               <Sparkles className="!size-4" /> Görselleri üret
             </Button>
+            <Button variant={showLayers ? "secondary" : "ghost"} size="icon-sm" aria-label="Katmanlar paneli" title="Katmanlar paneli" onClick={() => setShowLayers((v) => !v)}>
+              <LayersIcon className="h-4 w-4" />
+            </Button>
             <Button variant="ghost" size="icon-sm" aria-label="Ayarlar" onClick={() => setCog(true)}>
               <Cog className="h-4 w-4" />
-            </Button>
-            <Button variant="ghost" size="icon-sm" aria-label="Kapat" onClick={quit}>
-              <Power className="h-4 w-4" />
             </Button>
           </div>
         </header>
         <div className="flex min-h-0 flex-1">
-          {/* sol: araç çubuğu + seçili aracın ayarları */}
-          <ToolRail tool={tab} setTool={setTab} />
-          <Panel
+          {/* sol: menüden seçilen aracın ayarları (seçilmeden kapalı) */}
+          {tab && <Panel
             item={item} items={items} cfg={cfg} selected={selected} setSelected={setSelected} setText={setText}
             patch={(p, all) => (all && p.fx ? patchAllFx() : patch(p, all))}
             presets={presets} groups={groups} onPresetsChange={loadPresets}
             tab={tab} setTab={setTab} setGeo={setGeo} applyAllGeo={applyAllGeo} perspEdit={perspEdit} setPerspEdit={setPerspEdit} setLayers={setLayers} layerSel={layerSel} setLayerSel={setLayerSel} selectionToLayer={selectionToLayer}
             onCopy={copyFx} onPaste={() => pasteFx()} canPaste={!!clip}
             maskSel={maskSel} setMaskSel={setMaskSel} setMasks={setMasks} maskShow={maskShow} setMaskShow={setMaskShow}
-            selTool={selTool} setSelTool={setSelTool}
-          />
+            selTool={selTool} setSelTool={setSelTool} section={section} intent={intent} onClose={() => setTabRaw("")}
+          />}
           {/* orta: önizleme + fotoğraf şeridi */}
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
             <Stage
               item={item ? effectiveItem(item) : undefined} cfg={cfg} mode={mode} setMode={setMode} selected={selected} setSelected={setSelected}
               update={update} applyStyle={applyStyle} resetPosition={resetPosition} pickFiles={() => fileRef.current?.click()}
@@ -539,16 +703,14 @@ export default function App() {
               designMode={tab === "design"} layerSel={layerSel} setLayerSel={setLayerSel} setLayers={setLayers}
               localMode={tab === "local"} mask={curMask} maskShow={maskShow} setMask={setMask} selTool={selTool}
             />
-            <Filmstrip items={items} currentId={currentId} select={setCurrentId} move={move} remove={removeItem} pickFiles={() => fileRef.current?.click()} uploading={uploading} pasteTo={clip ? pasteFx : undefined} exportOne={(id) => { const it = items.find((i) => i.id === id); if (it) generate(it) }} duplicate={duplicateItem} />
+            {showStrip && <Filmstrip items={items} currentId={currentId} select={setCurrentId} move={move} remove={removeItem} pickFiles={() => fileRef.current?.click()} uploading={uploading} pasteTo={clip ? pasteFx : undefined} exportOne={(id) => { const it = items.find((i) => i.id === id); if (it) generate(it) }} duplicate={duplicateItem} />}
           </div>
           {/* sağ: katmanlar ve efektler */}
-          <LayersPanel item={item} presets={presets} wm={wm} tool={tab} maskSel={maskSel} open={openLayer} toggle={toggleLayer} remove={removeLayerFx} />
+          {showLayers && <LayersPanel item={item} presets={presets} wm={wm} tool={tab} maskSel={maskSel} open={openLayer} toggle={toggleLayer} remove={removeLayerFx} />}
         </div>
         <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => { addFiles([...(e.target.files || [])]); e.target.value = "" }} />
         <GenerateDialog open={dlg} onClose={() => setDlg(false)} job={job} jobId={jobId} />
-        <SettingsDialog open={cog} onClose={() => setCog(false)} cfg={cfg} settings={settings} setSettings={setSettings} defaults={DEFAULTS} watermark={wm} onWatermark={setWm} quitOnClose={quitOnClose} onQuitOnClose={(v) => { setQuitOnClose(v); api.setPrefs({ quitOnClose: v }).catch((e) => toast.error(e.message)) }} version={cfg.version} update={upd} onUpdate={(u) => { setUpd(u); if (u.newer) { setCog(false); setUpdOpen(true) } }} />
-        <UpdateDialog open={updOpen} onClose={() => setUpdOpen(false)} info={upd} />
-        <Toaster theme={isLightTheme(settings.theme) ? "light" : "dark"} position="bottom-center" />
+        {dialogs}
       </div>
     </TooltipProvider>
   )
