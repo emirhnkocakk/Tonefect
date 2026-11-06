@@ -35,14 +35,14 @@ export function MenuBar({ menus, onCommand, active }: Props) {
               onClick={() => setOpen(open === i ? null : i)}
               onPointerEnter={() => open !== null && setOpen(i)}
               className={cn(
-                "rounded-md px-2.5 py-1 text-[13px] transition-colors",
+                "rounded px-2 py-0.5 text-[12px] transition-colors",
                 open === i ? "bg-accent text-foreground" : on ? "text-primary" : "text-muted-foreground hover:bg-accent/60 hover:text-foreground"
               )}
             >
               {m.label}
             </button>
             {open === i && (
-              <div className="absolute left-0 top-8 z-50 min-w-[230px] rounded-lg border bg-popover p-1 text-sm shadow-xl" role="menu">
+              <div className="absolute left-0 top-7 z-50 min-w-[220px] rounded-lg border bg-popover p-1 text-[12px] shadow-xl" role="menu">
                 {m.items.map((it, j) =>
                   it === "sep" ? (
                     <div key={j} className="my-1 h-px bg-border" />
@@ -55,7 +55,7 @@ export function MenuBar({ menus, onCommand, active }: Props) {
                         setOpen(null)
                         onCommand(it.cmd)
                       }}
-                      className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left hover:bg-accent disabled:pointer-events-none disabled:opacity-40"
+                      className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left hover:bg-accent disabled:pointer-events-none disabled:opacity-40"
                     >
                       <span className="w-4 shrink-0">{it.checked && <Check className="h-3.5 w-3.5 text-primary" />}</span>
                       <span className="flex-1">{it.label}</span>

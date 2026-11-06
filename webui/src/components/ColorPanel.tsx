@@ -42,19 +42,18 @@ export function ColorPanel({ item, presets, groups, setFx, onPresetsChange, onCo
   const amount = item?.fx.amount ?? 1
   const ver = presets.map((p) => p.id).join(",")
 
-  // Kütüphane seçili fotoğrafın kare kopyası üzerinde gösterilir (fotoğraf yoksa ya da boş tuvalse stok görsel).
-  const photo = item?.id
+  // Kütüphane her zaman aynı sade örnek görsel üzerinde gösterilir: görünümler kolayca karşılaştırılır.
   useEffect(() => {
     if (!presets.length) return
     let alive = true
     api
-      .presetThumbs(photo)
+      .presetThumbs()
       .then((r) => alive && setThumbs(r.thumbs))
       .catch(() => {})
     return () => {
       alive = false
     }
-  }, [ver, photo])
+  }, [ver])
 
   // Vinyet ve parazit kullanıcıya ait: hazır ayar seçmek onları değiştirmez.
   // Kendi kaydedilen ayarlar (tarif) değerlerini fotoğrafa kopyalar.

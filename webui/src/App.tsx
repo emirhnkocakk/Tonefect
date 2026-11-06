@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { ArrowUpCircle, Layers as LayersIcon, Loader2, Redo2, Settings as Cog, Sparkles, Undo2 } from "lucide-react"
+import { ArrowUpCircle, Loader2, Redo2, Settings as Cog, Sparkles, Undo2 } from "lucide-react"
 import { Toaster, toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { TooltipProvider } from "@/components/ui/tooltip"
@@ -8,6 +8,7 @@ import { SaveMenu } from "@/components/SaveMenu"
 import { COLOR_FORMATS, saveAs } from "@/lib/save"
 import { LayersPanel } from "@/components/LayersPanel"
 import { MenuBar, type Menu } from "@/components/MenuBar"
+import { ToolBox } from "@/components/ToolBox"
 import { StartPage } from "@/components/StartPage"
 import { geoForPreset } from "@/lib/platforms"
 import { Stage } from "@/components/Stage"
@@ -48,7 +49,6 @@ export default function App() {
   const [wm, setWm] = useState<Watermark | null>(null)
   const [tab, setTabRaw] = useState("") // "" = panel kapalı
   const [project, setProject] = useState<{ id: string; name: string } | null>(null)
-  const [showLayers, setShowLayers] = useState(false)
   const [showStrip, setShowStrip] = useState(true)
   const [section, setSection] = useState<{ id: string; n: number } | null>(null)
   const [intent, setIntent] = useState<{ cmd: string; n: number } | null>(null)
@@ -139,10 +139,19 @@ export default function App() {
       setItems(its)
       setCurrentId(s.currentId && its.some((i) => i.id === s.currentId) ? s.currentId : its[0]?.id ?? null)
       setTabRaw("")
-      setShowLayers(its.length > 0 && !(its.length === 1 && its[0].name === "Tuval" && !its[0].layers?.length && !its[0].text))
       setProject({ id, name: s.meta?.name || "Proje" })
       setLoaded(true)
       pickAfterOpen.current = pickPhotos
+    } catch (e: any) {
+      toast.error(e.message)
+    }
+  }
+  const renameProject = async (name: string) => {
+    const n = name.trim()
+    if (!project || !n || n === project.name) return
+    try {
+      await api.renameProject(project.id, n)
+      setProject({ ...project, name: n.slice(0, 60) })
     } catch (e: any) {
       toast.error(e.message)
     }
@@ -532,7 +541,6 @@ export default function App() {
         tool("design")
         setIntent({ cmd: "design:add", n: Date.now() })
       },
-      layers: () => setShowLayers((v) => !v),
       strip: () => setShowStrip((v) => !v),
       guides: () => setSettings((s) => ({ ...s, guides: !s.guides })),
       closePanel: () => setTabRaw(""),
@@ -578,7 +586,7 @@ export default function App() {
     ] },
     { label: "Efekt", items: [
       { label: "Efektler (gren, vinyet, ışık…)", cmd: "tool:fx:effects" },
-      { label: "Çerçeve", cmd: "tool:fx:frame" },
+      { label: "Çerçeve", cmd: "tool:frame" },
       { label: "Arka planı kaldır / değiştir", cmd: "tool:fx:background" },
     ] },
     { label: "Seçim", items: [
@@ -594,11 +602,8 @@ export default function App() {
     { label: "Katman", items: [
       { label: "Görsel ekle…", cmd: "addImage", disabled: noItem },
       { label: "Katman, hizala ve dağıt", cmd: "tool:design" },
-      "sep",
-      { label: "Katmanlar paneli", cmd: "layers", checked: showLayers },
     ] },
     { label: "Görünüm", items: [
-      { label: "Katmanlar paneli", cmd: "layers", checked: showLayers },
       { label: "Fotoğraf şeridi", cmd: "strip", checked: showStrip },
       { label: "Hizalama kılavuzları", cmd: "guides", checked: settings.guides },
       "sep",
@@ -656,7 +661,21 @@ export default function App() {
               <img src="/logo.png" alt="Projeler" className="h-7 w-7" />
             </button>
             <MenuBar menus={menus} onCommand={command} active={tab} />
-            <span className="ml-2 truncate text-xs text-muted-foreground" title="Proje adı">· {project.name}</span>
+            <input
+              key={project.id}
+              defaultValue={project.name}
+              aria-label="Proje adı"
+              title="Proje adını değiştirmek için tıkla"
+              onBlur={(e) => renameProject(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") (e.target as HTMLInputElement).blur()
+                if (e.key === "Escape") {
+                  ;(e.target as HTMLInputElement).value = project.name
+                  ;(e.target as HTMLInputElement).blur()
+                }
+              }}
+              className="ml-2 h-7 w-[200px] min-w-0 truncate rounded-md border border-transparent bg-transparent px-2 text-xs text-muted-foreground outline-none transition-colors hover:border-border focus:border-primary/60 focus:text-foreground"
+            />
           </div>
           <div className="flex items-center gap-2">
             {upd?.newer && (
@@ -674,16 +693,14 @@ export default function App() {
             <Button onClick={() => generate()} disabled={!items.length} className="h-8 gap-1.5">
               <Sparkles className="!size-4" /> Görselleri üret
             </Button>
-            <Button variant={showLayers ? "secondary" : "ghost"} size="icon-sm" aria-label="Katmanlar paneli" title="Katmanlar paneli" onClick={() => setShowLayers((v) => !v)}>
-              <LayersIcon className="h-4 w-4" />
-            </Button>
             <Button variant="ghost" size="icon-sm" aria-label="Ayarlar" onClick={() => setCog(true)}>
               <Cog className="h-4 w-4" />
             </Button>
           </div>
         </header>
         <div className="flex min-h-0 flex-1">
-          {/* sol: menüden seçilen aracın ayarları (seçilmeden kapalı) */}
+          {/* sol: araç kutusu + seçilen aracın ayarları (seçilmeden kapalı) */}
+          <ToolBox active={tab} onCommand={command} />
           {tab && <Panel
             item={item} items={items} cfg={cfg} selected={selected} setSelected={setSelected} setText={setText}
             patch={(p, all) => (all && p.fx ? patchAllFx() : patch(p, all))}
@@ -706,7 +723,7 @@ export default function App() {
             {showStrip && <Filmstrip items={items} currentId={currentId} select={setCurrentId} move={move} remove={removeItem} pickFiles={() => fileRef.current?.click()} uploading={uploading} pasteTo={clip ? pasteFx : undefined} exportOne={(id) => { const it = items.find((i) => i.id === id); if (it) generate(it) }} duplicate={duplicateItem} />}
           </div>
           {/* sağ: katmanlar ve efektler */}
-          {showLayers && <LayersPanel item={item} presets={presets} wm={wm} tool={tab} maskSel={maskSel} open={openLayer} toggle={toggleLayer} remove={removeLayerFx} />}
+          <LayersPanel item={item} presets={presets} wm={wm} tool={tab} maskSel={maskSel} open={openLayer} toggle={toggleLayer} remove={removeLayerFx} />
         </div>
         <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => { addFiles([...(e.target.files || [])]); e.target.value = "" }} />
         <GenerateDialog open={dlg} onClose={() => setDlg(false)} job={job} jobId={jobId} />

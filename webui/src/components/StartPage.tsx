@@ -37,7 +37,10 @@ export function StartPage({ onOpen, onSettings, onQuit, version }: Props) {
   const [projects, setProjects] = useState<ProjectMeta[] | null>(null)
   const [name, setName] = useState("")
   const [preset, setPreset] = useState("ig-portrait")
-  const [custom, setCustom] = useState<[number, number]>([1080, 1080])
+  const [custom, setCustom] = useState<[number, number]>([1080, 1080]) // her zaman piksel
+  const [unit, setUnit] = useState<"px" | "in">("px")
+  const [dpi, setDpi] = useState(300)
+  const [inch, setInch] = useState<[string, string]>(["8.5", "11"]) // inç kutuları yazılırken bozulmasın diye metin
   const [color, setColor] = useState("#FFFFFF")
   const [group, setGroup] = useState("Instagram")
   const [busy, setBusy] = useState(false)
@@ -48,6 +51,13 @@ export function StartPage({ onOpen, onSettings, onQuit, version }: Props) {
     load()
   }, [])
 
+  const clampPx = (v: number) => Math.max(16, Math.min(12000, Math.round(v) || 16))
+  const setFromInch = (v: [string, string], d: number) => {
+    setInch(v)
+    const w = parseFloat(v[0].replace(",", "."))
+    const h = parseFloat(v[1].replace(",", "."))
+    if (w > 0 && h > 0) setCustom([clampPx(w * d), clampPx(h * d)])
+  }
   const groups = useMemo(() => [...platformGroups(), "Özel"], [])
   const size: [number, number] | null =
     preset === "custom" ? custom : preset === "original" ? null : (() => { const p = PLATFORMS.find((x) => x.id === preset)!; return [p.w, p.h] as [number, number] })()
@@ -55,7 +65,7 @@ export function StartPage({ onOpen, onSettings, onQuit, version }: Props) {
   const create = async (blank: boolean) => {
     setBusy(true)
     try {
-      const { id } = await api.createProject({ name: name.trim() || "Yeni proje", size, preset, blank: blank && !!size, color })
+      const { id } = await api.createProject({ name: name.trim() || "Yeni proje", size, preset, blank: blank && !!size, color, dpi: preset === "custom" && unit === "in" ? dpi : undefined })
       onOpen(id, !blank)
     } catch (e: any) {
       toast.error(e.message)
@@ -118,12 +128,53 @@ export function StartPage({ onOpen, onSettings, onQuit, version }: Props) {
           <div className="min-h-0 flex-1 overflow-y-auto px-6">
             {group === "Özel" ? (
               <div className="space-y-4 pt-1">
-                <div className="flex items-center gap-2">
-                  <Input type="number" aria-label="Genişlik" value={custom[0]} onChange={(e) => setCustom([Math.max(16, Math.min(12000, Number(e.target.value) || 16)), custom[1]])} className="h-9 text-center" />
-                  <span className="text-muted-foreground">×</span>
-                  <Input type="number" aria-label="Yükseklik" value={custom[1]} onChange={(e) => setCustom([custom[0], Math.max(16, Math.min(12000, Number(e.target.value) || 16))])} className="h-9 text-center" />
-                  <span className="text-xs text-muted-foreground">px</span>
+                <div className="inline-flex rounded-lg border p-0.5 text-xs">
+                  {([["px", "Piksel"], ["in", "İnç"]] as const).map(([u, l]) => (
+                    <button
+                      key={u}
+                      onClick={() => {
+                        setUnit(u)
+                        if (u === "in") setFromInch(inch, dpi)
+                      }}
+                      className={cn("rounded-md px-3 py-1 transition-colors", unit === u ? "bg-primary/20 text-foreground" : "text-muted-foreground hover:text-foreground")}
+                    >
+                      {l}
+                    </button>
+                  ))}
                 </div>
+                {unit === "px" ? (
+                  <div className="flex items-center gap-2">
+                    <Input type="number" aria-label="Genişlik (piksel)" value={custom[0]} onChange={(e) => setCustom([clampPx(Number(e.target.value)), custom[1]])} className="h-9 text-center" />
+                    <span className="text-muted-foreground">×</span>
+                    <Input type="number" aria-label="Yükseklik (piksel)" value={custom[1]} onChange={(e) => setCustom([custom[0], clampPx(Number(e.target.value))])} className="h-9 text-center" />
+                    <span className="w-6 text-xs text-muted-foreground">px</span>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Input type="number" step="0.1" aria-label="Genişlik (inç)" value={inch[0]} onChange={(e) => setFromInch([e.target.value, inch[1]], dpi)} className="h-9 text-center" />
+                      <span className="text-muted-foreground">×</span>
+                      <Input type="number" step="0.1" aria-label="Yükseklik (inç)" value={inch[1]} onChange={(e) => setFromInch([inch[0], e.target.value], dpi)} className="h-9 text-center" />
+                      <span className="w-6 text-xs text-muted-foreground">inç</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground">Çözünürlük</span>
+                      {[72, 150, 300].map((d) => (
+                        <button
+                          key={d}
+                          onClick={() => {
+                            setDpi(d)
+                            setFromInch(inch, d)
+                          }}
+                          className={cn("rounded-md border px-2.5 py-1 text-xs transition-colors hover:border-primary/60", dpi === d ? "border-primary/70 bg-primary/15" : "text-muted-foreground")}
+                        >
+                          {d} DPI
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">= {custom[0]} × {custom[1]} piksel · baskı için 300 DPI önerilir</p>
+                  </div>
+                )}
                 <button
                   onClick={() => setPreset(preset === "original" ? "custom" : "original")}
                   className={cn(

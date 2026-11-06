@@ -1,20 +1,19 @@
 ## What's new / Yenilikler
 
-Tonefect now opens like a design app: projects, a top menu bar and visual effect tiles.
-/ Tonefect artık bir tasarım uygulaması gibi açılıyor: projeler, üst menü çubuğu ve görsel efekt kutucukları.
+A faster start and a Photoshop-style toolbox. / Daha hızlı açılış ve Photoshop tarzı araç kutusu.
 
-- 🗂️ **Projects & start page** – open a recent project or start a new one. Your previous work is kept as "Önceki çalışmam".
-  / **Projeler ve açılış sayfası** – son projelerinden birini aç ya da yenisini başlat. Önceki çalışman "Önceki çalışmam" olarak korunur.
-- 📐 **Sizes for every platform** – Instagram post/story, TikTok, YouTube, Facebook, X, LinkedIn, Pinterest, WhatsApp, print (A4, A5, business card, poster), Full HD and 4K, or a custom size.
-  / **Her platforma uygun boyut** – Instagram gönderi/hikâye, TikTok, YouTube, Facebook, X, LinkedIn, Pinterest, WhatsApp, baskı (A4, A5, kartvizit, poster), Full HD ve 4K ya da özel boyut.
-- ⬜ **Blank canvas** – start from an empty canvas in any colour, then add photos, images and text.
-  / **Boş tuval** – istediğin renkte boş bir tuvalle başla; üstüne fotoğraf, görsel ve yazı ekle.
-- 🧭 **Top menu bar** – File, Edit, Image, Color, Effect, Select, Text, Layer and View menus like Photoshop; panels open only when you pick a tool.
-  / **Üst menü çubuğu** – Photoshop'taki gibi Dosya, Düzenle, Görüntü, Renk, Efekt, Seçim, Metin, Katman ve Görünüm menüleri; paneller yalnızca bir araç seçince açılır.
-- 🖼️ **Effects you can see** – effects, frames and colour looks are shown as square previews of your own photo.
-  / **Görerek seç** – efektler, çerçeveler ve renk görünümleri kendi fotoğrafının kare önizlemeleriyle gösterilir.
-- 🛠️ **Fix** – images added with the Design tool are no longer removed when the app restarts.
-  / **Düzeltme** – Tasarım aracıyla eklenen görseller uygulama yeniden açılınca artık silinmiyor.
+- ⚡ **Opens much faster** – the app no longer waits up to 12 seconds while starting.
+  / **Çok daha hızlı açılır** – uygulama açılırken artık 12 saniyeye kadar beklemiyor.
+- 🧰 **Toolbox on the left** – small icons for move, selection, crop, colour, effects, frame, text and images; grouped tools open on hover, one or two columns, shortcuts V / W / C / T.
+  / **Solda araç kutusu** – taşı, seçim, kırp, renk, efekt, çerçeve, metin ve görsel için küçük simgeler; gruplu araçlar üzerine gelince açılır, tek ya da iki sütun, V / W / C / T kısayolları.
+- 🖼️ **Effects and Frames are separate tabs** with crisp previews on a clean sample image.
+  / **Efekt ve Çerçeve ayrı sekmeler**, net ve sade bir örnek görselde önizlemeli.
+- 🗂️ **Layers panel always visible**; rename your project right in the top bar.
+  / **Katmanlar paneli hep açık**; proje adını üst çubukta değiştir.
+- 📏 **Custom size in pixels or inches** (72 / 150 / 300 DPI) for new projects.
+  / **Yeni projede piksel ya da inç** ile özel boyut (72 / 150 / 300 DPI).
+- 🔤 Smaller, tidier top menu.
+  / Daha küçük ve sade üst menü.
 
-Your existing photos and settings are kept and look the same until you change them.
-/ Mevcut fotoğrafların ve ayarların korunur; sen değiştirene kadar aynı görünür.
+Your existing projects and settings are kept.
+/ Mevcut projelerin ve ayarların korunur.

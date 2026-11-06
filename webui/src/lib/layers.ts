@@ -32,7 +32,7 @@ export function buildLayers(item: Item, presets: PresetMeta[], wm: Watermark | n
   ;[...(item.layers ?? [])].reverse().forEach((l) =>
     out.push({ key: `img:${l.id}`, kind: "image", label: l.name.replace(/\.[^.]+$/, ""), sub: `görsel${l.cutout ? " · kesilmiş" : ""}${l.opacity < 1 ? ` · ${pct(l.opacity)}` : ""}`, tool: "design", layerId: l.id, hideable: true, removable: true })
   )
-  if (fx.frame) out.push({ key: "frame", kind: "frame", label: "Çerçeve", sub: { solid: "Düz", polaroid: "Polaroid", film: "Film şeridi", line: "İnce çizgi" }[fx.frame.style], tool: "fx", hideable: true, removable: true })
+  if (fx.frame) out.push({ key: "frame", kind: "frame", label: "Çerçeve", sub: { solid: "Düz", polaroid: "Polaroid", film: "Film şeridi", line: "İnce çizgi" }[fx.frame.style], tool: "frame", hideable: true, removable: true })
   if (fx.background?.mode)
     out.push({ key: "background", kind: "background", label: "Arka plan", sub: { remove: "kaldırıldı · şeffaf", color: `renk · ${fx.background.color ?? "#FFFFFF"}`, blur: "bulanık" }[fx.background.mode], tool: "fx", hideable: true, removable: true })
   if (tex.leak) out.push({ key: "leak", kind: "leak", label: "Işık sızıntısı", sub: pct(tex.leak), tool: "fx", hideable: true, removable: true })
@@ -49,8 +49,6 @@ export function buildLayers(item: Item, presets: PresetMeta[], wm: Watermark | n
   if (fx.preset !== "b:original")
     out.push({ key: "look", kind: "look", label: preset?.name ?? "Renk görünümü", sub: `renk görünümü · ${pct(fx.amount ?? 1)}${fx.bw ? " · S/B" : ""}`, tool: "color", hideable: true, removable: true })
   else if (fx.bw) out.push({ key: "look", kind: "look", label: "Siyah-beyaz", sub: "renk görünümü", tool: "fx", hideable: true, removable: true })
-  const g = item.geo
-  out.push({ key: "geo", kind: "geo", label: "Kırp ve boyut", sub: g ? (g.aspect === "original" ? "orijinal oran" : g.aspect === "free" ? "serbest" : g.aspect) : "4:5 · 1080×1350", tool: "crop", hideable: false, removable: false })
   out.push({ key: "photo", kind: "photo", label: "Fotoğraf", sub: item.name, tool: "crop", hideable: false, removable: false })
   return out
 }

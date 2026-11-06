@@ -4,6 +4,7 @@
 Arayuz (web/ klasoru, React + shadcn/ui) bu sunucuyla konusur; gorsel uretim render.py motorunu kullanir.
 Calistir:  python server.py
 """
+import atexit
 import base64
 import io
 import json
@@ -659,57 +660,40 @@ def preset_list():
     return {"presets": [looks.meta(p) for p in PRESETS.values()], "groups": looks.GROUPS}
 
 
-SAMPLE = WEB / "sample.jpg"  # kütüphanedeki önizlemelerin stok görseli
+SAMPLE = WEB / "preview.png"  # önizleme kutucuklarının sade, net örnek görseli
 SAMPLE_THUMBS = {}
-PHOTO_THUMBS = {}  # fotoğraf -> {önizleme anahtarı: data url}
-THUMB_W = 200
+THUMB_W = 240  # kutucuk ~100 px; yüksek DPI ekranda da keskin
 
 
 def sample_image():
-    tw, th = THUMB_W, THUMB_W  # kare: panelde düzgün ızgara
     try:
-        return engine.cover_crop(Image.open(SAMPLE), (tw, th))
+        return Image.open(SAMPLE).convert("RGB").resize((THUMB_W, THUMB_W), Image.LANCZOS)
     except Exception:  # görsel yoksa yumuşak bir gökyüzü/zemin geçişi
-        y = np.linspace(0, 1, th, dtype=np.float32)[:, None, None]
+        y = np.linspace(0, 1, THUMB_W, dtype=np.float32)[:, None, None]
         sky = np.array([0.45, 0.62, 0.85], np.float32) * (1 - y) + np.array([0.9, 0.7, 0.5], np.float32) * y
-        a = np.where(y > 0.62, np.array([0.3, 0.42, 0.22], np.float32), sky) * np.ones((1, tw, 1), np.float32)
+        a = np.where(y > 0.62, np.array([0.3, 0.42, 0.22], np.float32), sky) * np.ones((1, THUMB_W, 1), np.float32)
         return Image.fromarray((a * 255).astype(np.uint8), "RGB")
-
-
-def thumb_source(photo):
-    """Önizleme kutucuklarının kare görseli: kullanıcının fotoğrafı (düz renkli boş tuvalse stok görsel)."""
-    if photo:
-        try:
-            with LOCK:
-                src = get_src(photo_path(photo))["proxy"]
-            img = engine.cover_crop(src, (THUMB_W, THUMB_W))
-            if float(np.asarray(img.convert("L"), np.float32).std()) > 4:  # düz renk değil
-                return img, photo
-        except Exception:
-            pass
-    return sample_image(), ""
 
 
 def _data_url(img):
     buf = io.BytesIO()
-    img.convert("RGB").save(buf, "JPEG", quality=82)
+    img.convert("RGB").save(buf, "JPEG", quality=92, subsampling=0)
     return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
 
 
-def preset_thumbs(photo=None):
-    """Her hazır ayarın kare önizlemesi (Instagram filtreleri gibi kendi fotoğrafının üzerinde); bir kez hesaplanır.
+def preset_thumbs():
+    """Her hazır ayarın aynı örnek görsel üzerindeki kare önizlemesi; bir kez hesaplanıp saklanır.
     Vinyet ve parazit kullanıcıya ait olduğundan önizlemelerde yok."""
-    img, key = thumb_source(photo)
-    cache = _lru(PHOTO_THUMBS, key, dict, 6)
-    for p in list(PRESETS.values()):
-        if p["id"] in cache:
-            continue
-        fx = {"bw": p["bw"], "grain": 0.0, "vignette": 0.0, "look": p["look"], "amount": 1.0}
-        if p.get("recipe"):
-            r = clean_fx({**p["recipe"], "preset": p["recipe"].get("base"), "grain": 0, "vignette": 0})
-            fx = {**r, "grain": 0.0, "vignette": 0.0}
-        cache[p["id"]] = _data_url(engine.grade(img, CFG, 0, fx, engine.canvas_scale(*img.size)))
-    return {"thumbs": {k: cache[k] for k in PRESETS if k in cache}}
+    todo = [p for p in list(PRESETS.values()) if p["id"] not in SAMPLE_THUMBS]
+    if todo:
+        img = sample_image()
+        for p in todo:
+            fx = {"bw": p["bw"], "grain": 0.0, "vignette": 0.0, "look": p["look"], "amount": 1.0}
+            if p.get("recipe"):
+                r = clean_fx({**p["recipe"], "preset": p["recipe"].get("base"), "grain": 0, "vignette": 0})
+                fx = {**r, "grain": 0.0, "vignette": 0.0}
+            SAMPLE_THUMBS[p["id"]] = _data_url(engine.grade(img, CFG, 0, fx, engine.canvas_scale(*img.size)))
+    return {"thumbs": {k: SAMPLE_THUMBS[k] for k in PRESETS if k in SAMPLE_THUMBS}}
 
 
 FX_SAMPLES = {
@@ -717,17 +701,17 @@ FX_SAMPLES = {
     "leak": {"texture": {"leak": 0.8, "variant": 0}}, "bloom": {"texture": {"bloom": 0.8}}, "dust": {"texture": {"dust": 0.9}},
     **{f"frame:{s}": {"frame": {"style": s, "size": 0.45}} for s in engine.FRAME_STYLES},
 }
+FX_THUMBS = {}
 
 
-def fx_thumbs(photo=None):
-    """Efekt kutucukları: her efekt kendi fotoğrafının kare kopyası üzerinde."""
-    img, key = thumb_source(photo)
-    cache = _lru(PHOTO_THUMBS, "fx:" + key, dict, 6)
-    for k, extra in FX_SAMPLES.items():
-        if k not in cache:
+def fx_thumbs():
+    """Efekt ve çerçeve kutucukları: her biri aynı örnek görselde."""
+    if not FX_THUMBS:
+        img = sample_image()
+        for k, extra in FX_SAMPLES.items():
             fx = clean_fx({"preset": "b:original", "bw": False, "grain": 0, "vignette": 0, **extra})
-            cache[k] = _data_url(engine.grade(img, CFG, 7, fx, engine.canvas_scale(*img.size) * 2.5))
-    return {"thumbs": dict(cache)}
+            FX_THUMBS[k] = _data_url(engine.grade(img, CFG, 7, fx, engine.canvas_scale(*img.size) * 2.5))
+    return {"thumbs": FX_THUMBS}
 
 
 def import_presets(name, data):
@@ -913,6 +897,8 @@ def create_project(d):
             settings = {}
     preset = str(d.get("preset") or "original")[:40]
     settings = {**settings, "aspect": preset}
+    if d.get("dpi"):  # inçle oluşturulan proje: dışa aktarma o DPI'yi dosyaya yazar
+        settings["export"] = {**(settings.get("export") or {}), "dpi": int(num(d["dpi"], 1, 2400, 300))}
     items, cur = [], None
     if size and d.get("blank", True):
         info = blank_canvas(*size, d.get("color") or "#FFFFFF")
@@ -1368,9 +1354,9 @@ class Handler(BaseHTTPRequestHandler):
             if c == "/api/presets" and m == "GET":
                 return self._json(preset_list())
             if c == "/api/presets/thumbs" and m == "GET":
-                return self._json(preset_thumbs(q.get("photo", [None])[0]))
+                return self._json(preset_thumbs())
             if c == "/api/fx/thumbs" and m == "GET":
-                return self._json(fx_thumbs(q.get("photo", [None])[0]))
+                return self._json(fx_thumbs())
             if c == "/api/presets/save" and m == "POST":
                 return self._json(save_preset(json.loads(self._body())))
             if c == "/api/presets/import" and m == "POST":
@@ -1498,16 +1484,39 @@ def watchdog():
             os._exit(0)
 
 
+INSTANCE = Path(tempfile.gettempdir()) / "tonefect_instance.json"  # çalışan kopyanın portu
+
+
 def running_instance():
-    """Zaten çalışan bir Tonefect varsa adresini döndürür."""
-    for p in range(8765, 8795):
-        try:
-            with urllib.request.urlopen(f"http://127.0.0.1:{p}/api/ping", timeout=0.4) as r:
-                if json.loads(r.read().decode("utf-8")).get("app") == "grainline":
-                    return f"http://127.0.0.1:{p}/"
-        except Exception:
-            continue
+    """Zaten çalışan bir Tonefect varsa adresini döndürür.
+    Portlar tek tek yoklanmaz (Windows'ta kapalı her port ~0.4 sn bekletir, açılışı 12 sn uzatıyordu);
+    çalışan kopya portunu bir dosyaya yazar, yalnızca o denenir."""
+    try:
+        p = int(json.loads(INSTANCE.read_text(encoding="utf-8"))["port"])
+    except Exception:
+        return None
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{p}/api/ping", timeout=0.5) as r:
+            if json.loads(r.read().decode("utf-8")).get("app") == "grainline":
+                return f"http://127.0.0.1:{p}/"
+    except Exception:
+        pass
     return None
+
+
+def mark_instance(port):
+    try:
+        INSTANCE.write_text(json.dumps({"port": port, "pid": os.getpid()}), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def clear_instance():
+    try:
+        if json.loads(INSTANCE.read_text(encoding="utf-8")).get("pid") == os.getpid():
+            INSTANCE.unlink()
+    except Exception:
+        pass
 
 
 def main():
@@ -1517,8 +1526,8 @@ def main():
         if url:  # ikinci kopya açma, mevcut olana pencere aç
             open_window(url)
             return
-    # eski sürümlerden kalan ayrı tarayıcı profili artık kullanılmıyor
-    shutil.rmtree(HERE / ".webprofile", ignore_errors=True)
+    # eski sürümlerden kalan ayrı tarayıcı profili artık kullanılmıyor; temizlik pencereyi bekletmesin
+    threading.Thread(target=shutil.rmtree, args=(HERE / ".webprofile",), kwargs={"ignore_errors": True}, daemon=True).start()
     migrate_session()
     prune_uploads()
     threading.Thread(target=engine.font_registry, daemon=True).start()  # yazı tipi taraması önceden
@@ -1529,7 +1538,9 @@ def main():
     print(f"Tonefect çalışıyor: {url}")
     print("Kapatmak için uygulamadaki güç düğmesine bas ya da bu pencereyi kapat.")
     if "--no-window" not in sys.argv:
-        threading.Timer(0.6, open_window, args=(url,)).start()
+        mark_instance(PORT)
+        atexit.register(clear_instance)
+        threading.Thread(target=open_window, args=(url,), daemon=True).start()  # sunucu zaten dinliyor
     threading.Thread(target=watchdog, daemon=True).start()
     try:
         srv.serve_forever()

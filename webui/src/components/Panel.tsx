@@ -14,6 +14,7 @@ import { words } from "@/lib/text"
 import { cn } from "@/lib/utils"
 import { ColorPanel } from "@/components/ColorPanel"
 import { FxPanel } from "@/components/FxPanel"
+import { FramePanel } from "@/components/FramePanel"
 import { MaskPanel } from "@/components/MaskPanel"
 import { TextStylePanel } from "@/components/TextStylePanel"
 import { GeoPanel } from "@/components/GeoPanel"
@@ -198,6 +199,10 @@ export function Panel({ item, items, cfg, selected, setSelected, setText, patch,
           ) : (
             <DesignPanel intent={intent} layers={item.layers ?? []} setLayers={setLayers} sel={layerSel} setSel={setLayerSel} canvas={canvasSize(item.geo, item.src) ?? [1080, 1350]} />
           )}
+        </TabsContent>
+
+        <TabsContent value="frame" className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 pt-1">
+          {!item ? <p className="pt-6 text-sm text-muted-foreground">Önce bir fotoğraf ekle.</p> : <FramePanel item={item} setFx={setFx} />}
         </TabsContent>
 
         <TabsContent value="fx" className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 pt-1">
