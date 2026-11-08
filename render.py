@@ -2651,12 +2651,15 @@ def _adjust_layer(img, ly, under):
     return Image.fromarray((np.clip(a, 0, 1) * 255 + 0.5).astype(np.uint8), "RGBA")
 
 
-def place_layers(base, layers, loader):
-    """Fotografin ustune (yazinin altina) baska gorselleri yerlestirir. loader(layer) -> RGBA."""
+def place_layers(base, layers, loader, source=None):
+    """Fotografin ustune (yazinin altina) baska gorselleri yerlestirir. loader(layer) -> RGBA.
+    id'si "base" olan katman fotografin kendisidir: tuval once bosalir, islenmis fotograf o katman gibi yerlesir.
+    "base" isaretli kopyalar da islenmis fotografi kullanir (source verilmezse base)."""
     if not layers:
         return base
     W, H = base.size
-    img = base.convert("RGBA")
+    photo = (source or base).convert("RGBA")
+    img = Image.new("RGBA", (W, H), (0, 0, 0, 0)) if any(ly.get("id") == "base" for ly in layers) else base.convert("RGBA")
     under = None  # kirpma maskesi: alttaki normal katmanin alfasi
     for ly in layers:
         kind = ly.get("kind")
@@ -2667,7 +2670,7 @@ def place_layers(base, layers, loader):
             gw = min(max(1, round(float(ly["w"]) * W)), 8192)
             src = layerfx.make(ly, gw, min(max(1, round(gw * float(ly["ar"]))), 8192), _layer_font)
         else:
-            src = loader(ly)
+            src = photo if ly.get("base") else loader(ly)
         fancy = bool(ly.get("styles")) or float(ly.get("fill", 1.0)) < 1 or ly.get("mode", "normal") != "normal"
         sy = float(ly.get("sy", 1.0))
         w = max(1, round(float(ly["w"]) * W))

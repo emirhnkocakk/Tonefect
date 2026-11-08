@@ -748,11 +748,15 @@ def clean_layers(ls, hidden=None):
     hidden = set(hidden) if isinstance(hidden, list) else set()
     out = []
     for ly in (ls if isinstance(ls, list) else [])[:40]:
-        if not isinstance(ly, dict) or f"img:{ly.get('id')}" in hidden:
+        if not isinstance(ly, dict):
+            continue
+        from_photo = bool(ly.get("base"))  # Arka Plan katmanı ya da kopyası: işlenmiş fotoğrafı kullanır
+        primary = from_photo and ly.get("id") == BASE_LAYER
+        if f"img:{ly.get('id')}" in hidden and not primary:  # gizli Arka Plan opaklık 0 ile gelir, tuval boş kalır
             continue
         kind = ly.get("kind") if ly.get("kind") in layerfx.GENERATED + ("adjust",) else None
         pid = Path(str(ly.get("photo") or "")).name
-        if not kind and (not pid or not (UPLOADS / pid).is_file()):
+        if not kind and not from_photo and (not pid or not (UPLOADS / pid).is_file()):
             continue
         c = {"id": str(ly.get("id") or ""), "photo": pid, "x": num(ly.get("x"), -2.0, 3.0, 0.5), "y": num(ly.get("y"), -2.0, 3.0, 0.5),
              "w": num(ly.get("w"), 0.01, 5.0, 0.4), "rot": num(ly.get("rot"), -360.0, 360.0, 0.0),
@@ -761,8 +765,23 @@ def clean_layers(ls, hidden=None):
              "clip": bool(ly.get("clip")), "defringe": round(num(ly.get("defringe"), 0.0, 1.0), 3)}
         c.update(clean_deform(ly))
         c.update(clean_layer_extra(ly, kind))
+        if from_photo:
+            c["base"] = True
+            if primary and _base_untouched(c):
+                continue  # değişmemiş Arka Plan çizime girmez: sonuç birebir aynı kalır
         out.append(c)
     return out
+
+
+BASE_LAYER = "base"
+_LAYER_CORE = {"id", "photo", "x", "y", "w", "rot", "opacity", "flipH", "cutout", "sy", "blend", "clip", "defringe", "base"}
+
+
+def _base_untouched(c):
+    """Arka Plan katmanı tuvali tam dolduruyor ve hiçbir katman özelliği açık değil mi?"""
+    near = lambda a, b: abs(a - b) < 1e-4
+    return not (set(c) - _LAYER_CORE) and near(c["x"], 0.5) and near(c["y"], 0.5) and near(c["w"], 1.0) and near(c["sy"], 1.0) \
+        and near(c["rot"], 0.0) and near(c["opacity"], 1.0) and not (c["flipH"] or c["blend"] or c["clip"] or c["defringe"])
 
 
 def clean_layer_extra(ly, kind):
@@ -883,24 +902,39 @@ def layers_merge(d):
     cw, ch = _item_canvas(item, photo_path(raw["id"]))
     f = min(1.0, 4096 / max(cw, ch))
     size = (max(1, round(cw * f)), max(1, round(ch * f)))
-    out = engine.place_layers(Image.new("RGBA", size, (0, 0, 0, 0)), chosen, layer_loader(True))
+    source = None
+    if any(ly.get("base") for ly in chosen):
+        attach_matte(item["fx"], photo_path(raw["id"]), item["geo"])
+        source = engine.make_base(CFG, photo_path(raw["id"]), item["fx"], item["geo"])
+    out = engine.place_layers(Image.new("RGBA", size, (0, 0, 0, 0)), chosen, layer_loader(True), source)
     buf = io.BytesIO()
     out.save(buf, "PNG")
     return save_photo("birlesik.png", buf.getvalue())
 
 
 def layers_flatten(d):
-    """Görüntüyü düzleştir: fotoğraf, efektler, katmanlar ve yazı tek görsel olur (filigran hariç)."""
+    """Görüntüyü düzleştir: fotoğraf, efektler, katmanlar ve yazı tek görsel olur (filigran hariç).
+    ids verilirse yalnızca o katmanlar Arka Plan'la birleşir; yazı ayrı kalır."""
     raw = d.get("item") or {}
     item = clean_item(raw)
     path = photo_path(raw["id"])
     attach_matte(item["fx"], path, item["geo"])
+    ids = set(str(i) for i in d.get("ids") or [])
+    if ids:
+        item["layers"] = [ly for ly in item["layers"] if ly["id"] in ids]
+        item["text"] = ""
     tmp = UPLOADS / f".flat_{uuid.uuid4().hex[:8]}.png"
     try:
         engine.render_one(CFG, path, item["text"], item["tone"], item["accent"], tmp, styles=item["styles"], fx=item["fx"], block=item["block"],
                           offsets=item["offsets"], geo=item["geo"], wm=None, font=item["font"], textfx=item["textfx"], fmt="png", quality=95,
                           keep_exif=False, color="rgb", dpi=None, layers=item["layers"], loader=layer_loader(True))
-        return save_photo("duzlestirilmis.png", tmp.read_bytes())
+        with Image.open(tmp) as im:  # sonuç yeni fotoğraf olur: şeffaf yerler (Photoshop'taki gibi) beyaz
+            rgba = im.convert("RGBA")
+        flat = Image.new("RGB", rgba.size, (255, 255, 255))
+        flat.paste(rgba, mask=rgba.getchannel("A"))
+        buf = io.BytesIO()
+        flat.save(buf, "PNG")
+        return save_photo("duzlestirilmis.png", buf.getvalue())
     finally:
         tmp.unlink(missing_ok=True)
 
@@ -1167,7 +1201,7 @@ def layers_auto_align(d):
     raw = d.get("item") or {}
     item = clean_item(raw)
     ids = [str(i) for i in d.get("ids") or []]
-    sel = [ly for ly in item["layers"] if ly["id"] in ids and ly.get("photo")]
+    sel = [ly for ly in item["layers"] if ly["id"] in ids and ly.get("photo") and not ly.get("base")]
     if not sel:
         raise ValueError("Önce hizalanacak katmanı seç.")
     path = photo_path(raw["id"])

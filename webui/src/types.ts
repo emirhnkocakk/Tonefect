@@ -153,6 +153,7 @@ export type ImgLayer = {
   opacity: number
   flipH: boolean
   cutout: boolean // yapay zekâ ile konuyu kes
+  base?: boolean // ana fotoğrafın kendisi ya da kopyası: renk ve efektler uygulanmış haliyle çizilir
   // dönüşüm (kutuya göre 0..1): sy dikey ölçek, corners köşe kaymaları, warp 4x4, pwarp 3x2 düğüm, pins kukla pimleri
   sy?: number
   corners?: [number, number][]

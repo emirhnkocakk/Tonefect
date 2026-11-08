@@ -177,7 +177,7 @@ export function LayerPropsPanel({ item, items, layers, sel, setLayers, patchItem
             </section>
           )}
 
-          {!cur.kind && (
+          {!cur.kind && !cur.base && (
             <section className="space-y-2.5">
               <div className="flex items-center justify-between">
                 <div>

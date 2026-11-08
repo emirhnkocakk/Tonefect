@@ -70,7 +70,7 @@ export function ErasePanel({ item, setFx, setMasks, maskSel, layers, setLayers, 
   }
   const needLayer = () => {
     if (cur) return false
-    toast(layers.length ? "Önce aşağıdan bir katman seç" : "Maske için önce Taşıma ve Dönüştürme'den görsel ekle")
+    toast("Önce aşağıdan bir katman seç")
     return true
   }
   const mask = (m: Mode) => {
@@ -160,10 +160,7 @@ export function ErasePanel({ item, setFx, setMasks, maskSel, layers, setLayers, 
 
       <section id="sec-masks" className="space-y-3">
         <Label>Katman Maskeleri</Label>
-        {layers.length === 0 ? (
-          <p className="text-[11px] text-muted-foreground">Maskeler görsel katmanlarına uygulanır. Taşıma ve Dönüştürme'den görsel ekle.</p>
-        ) : (
-          <>
+        <>
             <div className="space-y-1">
               {[...layers].reverse().map((l) => (
                 <button key={l.id} onClick={() => setSel([l.id])} className={cn("flex w-full items-center gap-2 rounded-lg border px-2 py-1 text-left text-xs transition-colors hover:border-primary/60", l.id === cur?.id ? "border-primary/70 bg-primary/15" : "text-muted-foreground")}>
@@ -227,8 +224,7 @@ export function ErasePanel({ item, setFx, setMasks, maskSel, layers, setLayers, 
               )}
               {cur?.vector && <button className="flex items-center gap-1 text-xs text-muted-foreground hover:text-primary" onClick={() => put({ vector: undefined })}><RotateCcw className="h-3 w-3" /> kaldır</button>}
             </div>
-          </>
-        )}
+        </>
       </section>
     </div>
   )

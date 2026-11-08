@@ -293,7 +293,7 @@ export function Panel({ item, items, cfg, selected, setSelected, setText, patch,
           {!item ? (
             <p className="pt-6 text-sm text-muted-foreground">Önce bir fotoğraf ekle.</p>
           ) : (
-            <DesignPanel intent={intent} item={item} mode={xform} setMode={setXform} delta={xformDelta} layers={item.layers ?? []} setLayers={setLayers} sel={layerSel} setSel={setLayerSel} canvas={canvasSize(item.geo, item.src) ?? [1080, 1350]} />
+            <DesignPanel setFx={(p) => setFx(p)} intent={intent} item={item} mode={xform} setMode={setXform} delta={xformDelta} layers={item.layers ?? []} setLayers={setLayers} sel={layerSel} setSel={setLayerSel} canvas={canvasSize(item.geo, item.src) ?? [1080, 1350]} />
           )}
         </TabsContent>
 

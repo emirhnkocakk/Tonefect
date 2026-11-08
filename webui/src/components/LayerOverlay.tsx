@@ -227,8 +227,10 @@ export function LayerOverlay({ layers, sel, setSel, onChange, w, h, mode, onDone
               {single && showRotate && (() => {
                 const [tx, ty] = pt(ly, 0.5, 0)
                 const a = ((ly.rot - 90) * Math.PI) / 180
-                const rx = tx + Math.cos(a) * 26
-                const ry = ty + Math.sin(a) * 26
+                // tuvali dolduran katmanda tutamaç görünür alanın dışına taşmasın: içeri alınır
+                const reach = ty + Math.sin(a) * 26 < 10 ? -26 : 26
+                const rx = tx + Math.cos(a) * reach
+                const ry = ty + Math.sin(a) * reach
                 return (
                   <>
                     <line x1={tx} y1={ty} x2={rx} y2={ry} stroke="hsl(var(--primary))" className="pointer-events-none" />

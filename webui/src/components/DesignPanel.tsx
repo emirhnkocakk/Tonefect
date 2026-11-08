@@ -15,7 +15,8 @@ import { api, thumbUrl } from "@/lib/api"
 import { useIntent } from "@/lib/hooks"
 import { align, distribute, type AlignKind } from "@/lib/design"
 import { cn } from "@/lib/utils"
-import type { ImgLayer, Item, XformMode } from "@/types"
+import type { Fx, ImgLayer, Item, XformMode } from "@/types"
+import { BASE_ID } from "@/lib/layers"
 import { XFORM_MODES, applyDelta, type XformDelta } from "@/lib/transform"
 
 type Props = {
@@ -26,6 +27,7 @@ type Props = {
   canvas: [number, number]
   intent?: { cmd: string; n: number } | null
   item: Item
+  setFx: (p: Partial<Fx>) => void
   mode: XformMode
   setMode: (m: XformMode) => void
   delta: XformDelta | null
@@ -55,8 +57,8 @@ function Icon({ label, onClick, disabled, children }: { label: string; onClick: 
   )
 }
 
-/** Tasarım: fotoğrafın üstüne başka görseller (logo, ürün, ikinci fotoğraf) ekle, hizala ve dağıt. */
-export function DesignPanel({ layers, setLayers, sel, setSel, canvas: [W, H], intent, item, mode, setMode, delta }: Props) {
+/** Taşıma ve Dönüştürme: fotoğrafın kendisi ya da eklenen katmanlar seçilir, dönüştürülür ve hizalanır. */
+export function DesignPanel({ layers, setLayers, sel, setSel, canvas: [W, H], intent, item, setFx, mode, setMode, delta }: Props) {
   const [aligning, setAligning] = useState(false)
   const selected = layers.filter((l) => sel.includes(l.id))
   const again = () => {
@@ -112,25 +114,28 @@ export function DesignPanel({ layers, setLayers, sel, setSel, canvas: [W, H], in
       setSel(added.map((l) => l.id))
     }
   }
+  const lowest = layers[0]?.id === BASE_ID ? 1 : 0 // Arka Plan hep en altta
+  const isBase = cur?.id === BASE_ID
   const order = (dir: 1 | -1) => {
-    if (!cur) return
+    if (!cur || isBase) return
     const i = layers.indexOf(cur)
     const j = i + dir
-    if (j < 0 || j >= layers.length) return
+    if (j < lowest || j >= layers.length) return
     const a = [...layers]
     ;[a[i], a[j]] = [a[j], a[i]]
     setLayers(a)
   }
   const duplicate = () => {
     if (!cur) return
-    const c = { ...cur, id: newId(), x: cur.x + 0.03, y: cur.y + 0.03 }
+    const c = { ...cur, id: newId(), name: isBase ? `${cur.name} kopya` : cur.name, x: cur.x + 0.03, y: cur.y + 0.03 }
     setLayers([...layers, c])
     setSel([c.id])
   }
   const remove = () => {
-    setLayers(layers.filter((l) => !sel.includes(l.id)))
+    setLayers(layers.filter((l) => l.id === BASE_ID || !sel.includes(l.id)))
     setSel([])
   }
+  const bg = item.fx.background ?? {}
   useIntent(intent, "design:", (cmd) => {
     if (cmd === "design:add") fileRef.current?.click()
     else if (cmd === "design:again") again()
@@ -142,16 +147,6 @@ export function DesignPanel({ layers, setLayers, sel, setSel, canvas: [W, H], in
 
   return (
     <div className="space-y-5">
-      <div className="space-y-2">
-        <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp" multiple hidden onChange={(e) => add(e.target.files)} />
-        <Button className="w-full" onClick={() => fileRef.current?.click()} disabled={busy}>
-          {busy ? <Loader2 className="!size-4 animate-spin" /> : <ImagePlus className="!size-4" />} Görsel Ekle
-        </Button>
-        <p className="text-[11px] text-muted-foreground">
-          Logo, ürün, ikinci bir fotoğraf ya da çıkartma ekle. Şeffaf PNG'ler şeffaf kalır. Önizlemede sürükle, köşeden büyüt, üstteki noktayla döndür.
-        </p>
-      </div>
-
       <section id="sec-xform" className="space-y-2">
         <Label>Araçlar</Label>
         <div className="grid grid-cols-5 gap-1">
@@ -240,12 +235,12 @@ export function DesignPanel({ layers, setLayers, sel, setSel, canvas: [W, H], in
       {cur && (
         <div className="space-y-4 rounded-lg border p-3">
           <div className="grid grid-cols-6 gap-1">
-            <Icon label="Öne getir" onClick={() => order(1)} disabled={layers.indexOf(cur) === layers.length - 1}><ArrowUp className="h-4 w-4" /></Icon>
-            <Icon label="Arkaya gönder" onClick={() => order(-1)} disabled={layers.indexOf(cur) === 0}><ArrowDown className="h-4 w-4" /></Icon>
+            <Icon label="Öne getir" onClick={() => order(1)} disabled={isBase || layers.indexOf(cur) === layers.length - 1}><ArrowUp className="h-4 w-4" /></Icon>
+            <Icon label="Arkaya gönder" onClick={() => order(-1)} disabled={isBase || layers.indexOf(cur) <= lowest}><ArrowDown className="h-4 w-4" /></Icon>
             <Icon label="Yatay çevir" onClick={() => set({ flipH: !cur.flipH })}><FlipHorizontal2 className="h-4 w-4" /></Icon>
             <Icon label="Tuvali doldur" onClick={fill}><Maximize className="h-4 w-4" /></Icon>
             <Icon label="Çoğalt" onClick={duplicate}><Copy className="h-4 w-4" /></Icon>
-            <Icon label="Sil" onClick={remove}><Trash2 className="h-4 w-4" /></Icon>
+            <Icon label="Sil" onClick={remove} disabled={isBase}><Trash2 className="h-4 w-4" /></Icon>
           </div>
           <div className="space-y-1.5">
             <div className="flex justify-between text-xs"><span className="text-muted-foreground">Opaklık</span><span>{Math.round(cur.opacity * 100)}%</span></div>
@@ -258,20 +253,34 @@ export function DesignPanel({ layers, setLayers, sel, setSel, canvas: [W, H], in
             </div>
             <Slider min={-180} max={180} step={1} value={[cur.rot]} onValueChange={([v]) => set({ rot: v })} />
           </div>
-          <div className="flex items-center justify-between">
-            <div>
-              <Label>Konuyu kes</Label>
-              <p className="text-[11px] text-muted-foreground">{ai.ready ? "Yapay zekâ arka planını siler" : "Önce Efekt → Arka plan'dan yapay zekâyı kur"}</p>
+          {(isBase || !cur.base) && (
+            <div className="flex items-center justify-between">
+              <div>
+                <Label>Konuyu kes</Label>
+                <p className="text-[11px] text-muted-foreground">{ai.ready ? "Yapay zekâ arka planını siler" : "Önce Silme → Arka Planı Kaldır'dan yapay zekâyı kur"}</p>
+              </div>
+              {isBase ? (
+                <Switch checked={bg.mode === "remove"} disabled={!ai.ready && bg.mode !== "remove"} onCheckedChange={(v) => setFx({ background: { color: "#FFFFFF", blur: 0.5, ...bg, mode: v ? "remove" : undefined } })} />
+              ) : (
+                <Switch checked={cur.cutout} disabled={!ai.ready && !cur.cutout} onCheckedChange={(v) => set({ cutout: v })} />
+              )}
             </div>
-            <Switch checked={cur.cutout} disabled={!ai.ready && !cur.cutout} onCheckedChange={(v) => set({ cutout: v })} />
-          </div>
+          )}
         </div>
       )}
       {sel.length > 1 && (
         <Button variant="ghost" size="sm" className="w-full text-xs text-destructive" onClick={remove}>
-          <Trash2 className="!size-3.5" /> Seçili {sel.length} katmanı sil
+          <Trash2 className="!size-3.5" /> Seçili katmanları sil
         </Button>
       )}
+
+      <div className="space-y-2 border-t pt-4">
+        <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp" multiple hidden onChange={(e) => add(e.target.files)} />
+        <Button variant="secondary" size="sm" className="w-full text-xs" onClick={() => fileRef.current?.click()} disabled={busy}>
+          {busy ? <Loader2 className="!size-3.5 animate-spin" /> : <ImagePlus className="!size-3.5" />} Üstüne Başka Görsel Ekle
+        </Button>
+        <p className="text-[11px] text-muted-foreground">İsteğe bağlı: logo, ürün ya da ikinci bir fotoğraf. Şeffaf PNG'ler şeffaf kalır.</p>
+      </div>
     </div>
   )
 }

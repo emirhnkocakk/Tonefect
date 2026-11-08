@@ -11,7 +11,7 @@ import { Switch } from "@/components/ui/switch"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { api } from "@/lib/api"
 import { TONE_INFO } from "@/lib/constants"
-import { THEMES } from "@/lib/themes"
+import { THEMES, themeId } from "@/lib/themes"
 import { cn } from "@/lib/utils"
 import type { ColorMode, Config, ExportOpts, Settings, UpdateInfo, Watermark } from "@/types"
 
@@ -114,14 +114,14 @@ export function SettingsDialog({ open, onClose, cfg, settings, setSettings, defa
 
         <section className="space-y-3">
           <h3 className="text-xs font-semibold tracking-wider text-muted-foreground">GÖRÜNÜM</h3>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 gap-2">
             {THEMES.map((t) => (
               <button
                 key={t.id}
                 onClick={() => setSettings({ ...settings, theme: t.id })}
                 className={cn(
                   "rounded-lg border p-2 text-left transition-colors hover:border-primary/60",
-                  (settings.theme ?? "tonefect") === t.id && "border-primary ring-1 ring-primary"
+                  themeId(settings.theme) === t.id && "border-primary ring-1 ring-primary"
                 )}
               >
                 <div className="flex h-6 overflow-hidden rounded-md">

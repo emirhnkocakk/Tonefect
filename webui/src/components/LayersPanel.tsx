@@ -38,7 +38,7 @@ function passes(l: Layer, kind: string, q: string) {
   if (q && !l.label.toLocaleLowerCase("tr-TR").includes(q.toLocaleLowerCase("tr-TR"))) return false
   if (kind === "all") return true
   const t = l.layer?.kind
-  if (kind === "pixel") return l.kind === "image" && (!t || t === "blank" || t === "fill")
+  if (kind === "pixel") return l.kind === "photo" || (l.kind === "image" && (!t || t === "blank" || t === "fill"))
   if (kind === "text") return l.kind === "text" || t === "text"
   if (kind === "shape") return t === "shape"
   if (kind === "adjust") return t === "adjust" || l.kind === "adjust" || l.kind === "colorfx"
@@ -59,7 +59,6 @@ export function LayersPanel({ item, presets, wm, tool, maskSel, sel, open, toggl
   const filtering = filterOpen && (kind !== "all" || !!q)
   const rows = filtering ? all.filter((l) => passes(l, kind, q)) : all
   const cur = sel.length === 1 ? item?.layers?.find((l) => l.id === sel[0]) ?? null : null
-  const noSel = !sel.length
   const picked_ = (item?.layers ?? []).filter((l) => sel.includes(l.id))
   const allLocked = picked_.length > 0 && picked_.every((l) => l.locked)
   const anyLinked = picked_.some((l) => l.link)
@@ -192,13 +191,13 @@ export function LayersPanel({ item, presets, wm, tool, maskSel, sel, open, toggl
           </div>
           <div className="relative flex items-center justify-between border-t px-2 py-1">
             {tb(anyLinked ? "Bağı Kaldır" : "Katmanları Bağla", "layer:link", Link2, sel.length < 2 && !anyLinked, anyLinked)}
-            {tb("Katman Stilleri", "layer:styles", Sparkles, noSel)}
-            {tb("Katman Maskesi", "erase:layermask", SquareDashed, noSel)}
+            {tb("Katman Stilleri", "layer:styles", Sparkles)}
+            {tb("Katman Maskesi", "erase:layermask", SquareDashed)}
             {tb("Ayar Katmanı", "layer:new:adjust", Contrast)}
-            {tb("Grupla", "layer:group", FolderPlus, noSel)}
-            {tb(allLocked ? "Kilidi Aç" : "Kilitle", allLocked ? "layer:unlock" : "layer:lock", Lock, noSel, allLocked)}
+            {tb("Grupla", "layer:group", FolderPlus)}
+            {tb(allLocked ? "Kilidi Aç" : "Kilitle", allLocked ? "layer:unlock" : "layer:lock", Lock, false, allLocked)}
             <button aria-label="Yeni Katman" title="Yeni Katman" onClick={() => setMenu(!menu)} className="grid h-7 w-7 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"><Plus className="h-3.5 w-3.5" /></button>
-            {tb("Katmanı Sil", "layer:del", Trash2, noSel)}
+            {tb("Katmanı Sil", "layer:del", Trash2)}
             {menu && (
               <div className="absolute bottom-full right-2 z-40 mb-1 w-36 rounded-lg border bg-popover p-1 text-xs shadow-xl" role="menu">
                 {NEW.map(([k, l, I]) => (

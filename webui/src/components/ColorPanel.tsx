@@ -170,7 +170,7 @@ export function ColorPanel({ item, presets, groups, setFx, onPresetsChange, onCo
     try {
       await api.deletePreset(p.id)
       await onPresetsChange()
-      if (current === p.id) setFx({ preset: "", amount: 1, bw: true })
+      if (current === p.id) setFx({ preset: "b:original", amount: 1, bw: false })
     } catch (e: any) {
       toast.error(e.message)
     }

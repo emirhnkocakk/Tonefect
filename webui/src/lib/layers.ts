@@ -1,6 +1,7 @@
 import { RETOUCH_STROKES } from "@/lib/retouch"
 import { colorSummary } from "@/lib/color"
 import { filterLabel } from "@/lib/filters"
+import { canvasSize } from "@/lib/geo"
 import type { Adjust, ImgLayer, Item, PresetMeta, Watermark } from "@/types"
 
 // Fotoğrafa uygulanan her şeyi Photoshop'taki gibi katman listesi olarak gösterir.
@@ -24,6 +25,19 @@ export type Layer = {
   open?: boolean
 }
 
+export const BASE_ID = "base"
+
+/** Ana fotoğraf her zaman en altta bir katmandır: tüm katman araçları ona da çalışır. */
+export function withBase(item: Item): Item {
+  const [W, H] = canvasSize(item.geo, item.src) ?? [1080, 1350]
+  const ar = H / W
+  const all = item.layers ?? []
+  const cur = all.find((l) => l.id === BASE_ID)
+  if (cur && cur.photo === item.id && Math.abs(cur.ar - ar) < 1e-6) return item
+  if (cur) return { ...item, layers: all.map((l) => (l === cur ? { ...l, photo: item.id, ar } : l)) }
+  return { ...item, layers: [{ id: BASE_ID, base: true, photo: item.id, name: "Arka Plan", x: 0.5, y: 0.5, w: 1, ar, rot: 0, opacity: 1, flipH: false, cutout: false }, ...all] }
+}
+
 const DETAIL_KEYS = ["sharpen", "clarity", "denoise"] as const
 const pct = (v: number) => `${Math.round(v * 100)}%`
 const hasKeys = (a: Adjust, keys: readonly string[], include: boolean) =>
@@ -42,7 +56,7 @@ export function buildLayers(item: Item, presets: PresetMeta[], wm: Watermark | n
   }
   const seen = new Set<string>()
   const TYPE: Record<string, string> = { blank: "boş katman", text: "metin", shape: "şekil", fill: "dolgu", adjust: "ayar" }
-  ;[...(item.layers ?? [])].reverse().forEach((l: ImgLayer) => {
+  ;[...(item.layers ?? [])].filter((l) => l.id !== BASE_ID).reverse().forEach((l: ImgLayer) => {
     const g = l.group ? item.groups?.find((x) => x.id === l.group) : undefined
     if (g && !seen.has(g.id)) {
       seen.add(g.id)
@@ -75,7 +89,8 @@ export function buildLayers(item: Item, presets: PresetMeta[], wm: Watermark | n
   if (fx.preset !== "b:original")
     out.push({ key: "look", kind: "look", label: preset?.name ?? "Renk görünümü", sub: `renk görünümü · ${pct(fx.amount ?? 1)}${fx.bw ? " · S/B" : ""}`, tool: "color", hideable: true, removable: true })
   else if (fx.bw) out.push({ key: "look", kind: "look", label: "Siyah-beyaz", sub: "renk görünümü", tool: "fx", hideable: true, removable: true })
-  out.push({ key: "photo", kind: "photo", label: "Arka Plan", sub: item.name, tool: "crop", hideable: false, removable: false })
+  const base = item.layers?.find((l) => l.id === BASE_ID)
+  out.push({ key: `img:${BASE_ID}`, kind: "photo", label: base?.name ?? "Arka Plan", sub: item.name, tool: "design", layerId: base ? BASE_ID : undefined, layer: base, hideable: true, removable: false })
   return out
 }
 
@@ -93,7 +108,9 @@ export function effectiveItem(item: Item): Item {
   if (h.has("vignette")) fx.vignette = 0
   if (h.has("grain")) fx.grain = 0
   fx.masks = (fx.masks ?? []).filter((m) => !h.has(`mask:${m.id}`))
-  const layers = (item.layers ?? []).filter((l) => !h.has(`img:${l.id}`) && !(l.group && h.has(`group:${l.group}`)))
+  const layers = (item.layers ?? [])
+    .filter((l) => l.id === BASE_ID || (!h.has(`img:${l.id}`) && !(l.group && h.has(`group:${l.group}`))))
+    .map((l) => (l.id === BASE_ID && h.has(`img:${l.id}`) ? { ...l, opacity: 0 } : l))
   const a = fx.adjust as Record<string, unknown>
   if (h.has("detail")) for (const k of DETAIL_KEYS) delete a[k]
   if (h.has("adjust")) for (const k of Object.keys(a)) if (!(DETAIL_KEYS as readonly string[]).includes(k)) delete a[k]

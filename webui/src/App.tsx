@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { ArrowUpCircle, Loader2, Redo2, Settings as Cog, Sparkles, Undo2 } from "lucide-react"
 import { Toaster, toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -30,14 +30,14 @@ import { api } from "@/lib/api"
 import { mergeStyle, naturalSort, remap, words } from "@/lib/text"
 import { legacyGeo, naturalSize, canvasSize } from "@/lib/geo"
 import { applyTheme, isLightTheme } from "@/lib/themes"
-import { effectiveItem, removeLayer, type Layer } from "@/lib/layers"
+import { BASE_ID, effectiveItem, removeLayer, withBase, type Layer } from "@/lib/layers"
 import type { BrushSettings, BrushTool, CloneSource, FilterItem, MaskPaintTool, Stroke, Config, ExportOpts, Geo, ImgLayer, Item, Job, Mask, Mode, SelectTool, PresetMeta, Settings, Slice, Style, XformMode, UpdateInfo, Watermark } from "@/types"
 
-// Vinyet ve parazit yeni fotoğraflarda kapalı başlar; kullanıcı isterse açar.
-const DEFAULT_FX: Item["fx"] = { bw: true, grain: 0, vignette: 0, preset: "", amount: 1, adjust: {} }
-const SETTINGS_VERSION = 2
+// Yeni fotoğraflar olduğu gibi açılır; görünüm ve efektleri kullanıcı kendisi seçer.
+const DEFAULT_FX: Item["fx"] = { bw: false, grain: 0, vignette: 0, preset: "b:original", amount: 1, adjust: {} }
+const SETTINGS_VERSION = 3
 const DEFAULT_EXPORT: Settings["export"] = { format: "jpg", quality: 95, naming: "number", exif: false }
-const DEFAULTS: Settings = { outDir: "output", tone: "quiet", fx: DEFAULT_FX, guides: true, export: DEFAULT_EXPORT, aspect: "original", theme: "tonefect", v: SETTINGS_VERSION }
+const DEFAULTS: Settings = { outDir: "output", tone: "quiet", fx: DEFAULT_FX, guides: true, export: DEFAULT_EXPORT, aspect: "original", theme: "dark", v: SETTINGS_VERSION }
 const IMG = /\.(jpe?g|png|webp)$/i
 const HISTORY_MAX = 100
 const HISTORY_GROUP_MS = 600 // art arda gelen değişiklikler (sürükleme, yazma) tek adım sayılır
@@ -144,7 +144,12 @@ export default function App() {
       const s = await api.project(id)
       const st = s.settings || {}
       // eski kayıtlarda varsayılan vinyet/parazit açıktı; bir kez kapalıya çek
-      const fx = { ...DEFAULTS.fx, ...(st.fx || {}), ...((st.v ?? 1) < SETTINGS_VERSION ? { grain: 0, vignette: 0 } : {}) }
+      // eski kayıtlarda yeni fotoğraflar siyah-beyaz başlıyordu; bu varsayılan da kalkar (eklenmiş fotoğraflara dokunulmaz)
+      const fx = {
+        ...DEFAULTS.fx, ...(st.fx || {}),
+        ...((st.v ?? 1) < 2 ? { grain: 0, vignette: 0 } : {}),
+        ...((st.v ?? 1) < 3 && st.fx?.bw !== false && !st.fx?.preset ? { bw: false, preset: "b:original" } : {}),
+      }
       setSettings({ ...DEFAULTS, ...st, fx, export: { ...DEFAULT_EXPORT!, ...(st.export || {}) }, v: SETTINGS_VERSION, outDir: st.outDir || cfg?.outDir || "output" })
       const its: Item[] = (s.items || []).map(normItem)
       hist.current = { past: [], future: [], prev: null, at: 0, skip: true }
@@ -244,14 +249,17 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey)
   }, [travel])
 
-  const item = items.find((i) => i.id === currentId)
+  const item = useMemo(() => {
+    const it = items.find((i) => i.id === currentId)
+    return it && withBase(it)
+  }, [items, currentId])
   useEffect(() => setSelected([]), [currentId])
   // metin kısalınca artık olmayan kelimeler seçili kalmasın
   const wordCount = item ? words(item.text).length : 0
   useEffect(() => setSelected((s) => (s.some((i) => i >= wordCount) ? s.filter((i) => i < wordCount) : s)), [wordCount])
 
   const update = useCallback(
-    (fn: (it: Item) => Item) => setItems((a) => a.map((i) => (i.id === currentId ? fn(i) : i))),
+    (fn: (it: Item) => Item) => setItems((a) => a.map((i) => (i.id === currentId ? fn(withBase(i)) : i))),
     [currentId]
   )
 
@@ -342,10 +350,16 @@ export default function App() {
   const [sliceSel, setSliceSel] = useState<string | null>(null)
   const setSlices = (slices: Slice[]) => update((it) => ({ ...it, slices }))
   const setLayers = (layers: ImgLayer[]) => update((it) => ({ ...it, layers }))
+  // önizlemedeki liste gizli katmanları içermez: yalnızca gelenler güncellenir, gizliler kaybolmaz
+  const changeLayers = (next: ImgLayer[]) => update((it) => ({ ...it, layers: (it.layers ?? []).map((l) => next.find((n) => n.id === l.id) ?? l) }))
   useEffect(() => {
     setLayerSel([])
     setSliceSel(null)
   }, [currentId])
+  // katman araçları açılınca boşa düşmesin: bir şey seçili değilse fotoğrafın kendisi seçilir
+  useEffect(() => {
+    if (tab === "design" || tab === "layers" || tab === "erase") setLayerSel((s) => (s.length ? s : [BASE_ID]))
+  }, [tab, currentId])
   // Yerel → seçimi katmana kopyala / taşı: seçili alan şeffaf PNG katman olur, Tasarım aracında taşınır
   const selectionToLayer = async (cut: boolean, maskId = maskSel) => {
     if (!item || !maskId) return
@@ -390,19 +404,28 @@ export default function App() {
   const putLayerSafe = (id: string, p: Partial<ImgLayer>) => update((it) => ({ ...it, layers: (it.layers ?? []).map((l) => (l.id === id ? { ...l, ...p } : l)) }))
   const toggleGroup = (id: string) => update((it) => ({ ...it, groups: (it.groups ?? []).map((g) => (g.id === id ? { ...g, open: !g.open } : g)) }))
   const renameGroup = (id: string, name: string) => update((it) => ({ ...it, groups: (it.groups ?? []).map((g) => (g.id === id ? { ...g, name } : g)) }))
+  /** Fotoğrafı (ids verilirse yalnızca o katmanlarla) tek görsele çizer ve yeni Arka Plan yapar; renk, efekt ve rötuş artık onun üstünde çalışır. */
+  const bakeIntoPhoto = async (ids?: string[]) => {
+    if (!item) return
+    const was = item.id
+    const r = await api.layersFlatten({ item: effectiveItem(item), ids })
+    const keep = ids ? (item.layers ?? []).filter((l) => l.id !== BASE_ID && !ids.includes(l.id)) : []
+    setItems((a) => a.map((i) => i.id !== was ? i : {
+      ...i, id: r.id, src: [r.width, r.height], geo: geoForPreset("original"), fx: { ...DEFAULT_FX }, paint: undefined, layers: keep,
+      groups: ids ? i.groups : [], text: ids ? i.text : "", styles: ids ? i.styles : [], offsets: ids ? i.offsets : {},
+      hidden: ids ? (i.hidden ?? []).filter((k) => keep.some((l) => k === `img:${l.id}`)) : [],
+    }))
+    setCurrentId(r.id)
+  }
   const layerCommand = async (cmd: string) => {
     if (!item) return
     const all = item.layers ?? []
-    const chosen = all.filter((l) => layerSel.includes(l.id))
-    const free = chosen.filter((l) => !l.locked)
-    const need = () => {
-      if (chosen.length) return false
-      toast("Önce sağdan bir katman seç")
-      return true
-    }
+    const picked = layerSel.length ? layerSel : [BASE_ID] // seçim yoksa işlem fotoğrafın kendisine
+    const chosen = all.filter((l) => picked.includes(l.id))
+    const free = chosen.filter((l) => !l.locked && l.id !== BASE_ID)
     const [, op, arg] = cmd.split(":")
     const [W, H] = canvasSize(item.geo, item.src) ?? [1080, 1350]
-    const map = (fn: (l: ImgLayer) => ImgLayer) => setLayers(all.map((l) => (layerSel.includes(l.id) ? fn(l) : l)))
+    const map = (fn: (l: ImgLayer) => ImgLayer) => setLayers(all.map((l) => (picked.includes(l.id) ? fn(l) : l)))
     if (op === "new") {
       if (all.length >= 40) return void toast("En fazla 40 katman eklenebilir")
       const ly = createLayer(arg as "blank", W, H, all.length + 1)
@@ -433,16 +456,21 @@ export default function App() {
     if (op === "mergevis" || op === "merge" || op === "flatten") {
       try {
         if (op === "flatten") {
-          const r = await api.layersFlatten({ item: effectiveItem(item) })
-          const ly: ImgLayer = { id: newId(), photo: r.id, name: "Düzleştirilmiş", x: 0.5, y: 0.5, w: 1, ar: H / W, rot: 0, opacity: 1, flipH: false, cutout: false }
-          update((it) => ({ ...it, layers: [ly], groups: [], text: "", styles: [], offsets: {}, paint: undefined, hidden: [], fx: { bw: false, grain: 0, vignette: 0, preset: "b:original", amount: 1, adjust: {} } }))
-          setLayerSel([ly.id])
+          await bakeIntoPhoto()
           return void toast.success("Görüntü düzleştirildi; Geri Al ile dönebilirsin")
         }
-        const visible = effectiveItem(item).layers ?? []
-        const ids = op === "merge" ? layerSel : visible.filter((l) => l.kind !== "adjust").map((l) => l.id)
+        const eff = effectiveItem(item)
+        const off = new Set(eff.hidden ?? [])
+        const visible = (eff.layers ?? []).filter((l) => !off.has(`img:${l.id}`))
+        const baseShown = visible.some((l) => l.id === BASE_ID)
+        // ayar katmanları yalnızca fotoğrafın üstünde anlamlı: fotoğraf birleşmiyorsa dışarıda kalır
+        const ids = op === "merge" ? picked : visible.filter((l) => baseShown || l.kind !== "adjust").map((l) => l.id)
         if (ids.length < 2) return void toast(op === "merge" ? "Birleştirmek için en az iki katman seç" : "Birleştirilecek görünür katman yok")
-        const r = await api.layersMerge({ item: effectiveItem(item), ids })
+        if (ids.includes(BASE_ID)) {
+          await bakeIntoPhoto(ids)
+          return void toast.success("Katmanlar Arka Plan ile birleştirildi")
+        }
+        const r = await api.layersMerge({ item: eff, ids })
         const ly: ImgLayer = { id: newId(), photo: r.id, name: "Birleşik Katman", x: 0.5, y: 0.5, w: 1, ar: H / W, rot: 0, opacity: 1, flipH: false, cutout: false }
         const top = Math.max(...ids.map((i) => all.findIndex((l) => l.id === i)))
         setLayers(all.flatMap((l, i) => (i === top ? [ly] : ids.includes(l.id) ? [] : [l])))
@@ -453,7 +481,7 @@ export default function App() {
       }
       return
     }
-    if (need()) return
+    if (!layerSel.length) setLayerSel(picked)
     switch (op) {
       case "dup": {
         const copies = chosen.map((l) => ({ ...structuredClone(l), id: newId(), name: `${l.name} kopya`, x: l.x + 0.03, y: l.y + 0.03, locked: false, link: undefined }))
@@ -461,16 +489,18 @@ export default function App() {
         return setLayerSel(copies.map((l) => l.id))
       }
       case "del":
-        if (!free.length) return void toast("Kilitli katman silinemez")
+        if (!free.length) return void toast(chosen.some((l) => l.id === BASE_ID) ? "Arka Plan silinemez; göz simgesiyle gizleyebilirsin" : "Kilitli katman silinemez")
         setLayers(all.filter((l) => !free.some((x) => x.id === l.id)))
         return setLayerSel([])
       case "rename": return setRenaming(chosen[0].id)
       case "group": {
+        const inGroup = chosen.filter((l) => l.id !== BASE_ID) // Arka Plan her zaman en altta kalır
+        if (!inGroup.length) return void toast("Arka Plan gruba alınamaz; önce başka bir katman seç")
         const id = newId()
         const n = (item.groups?.length ?? 0) + 1
-        const top = Math.max(...chosen.map((l) => all.indexOf(l)))
-        const members = all.filter((l) => layerSel.includes(l.id)).map((l) => ({ ...l, group: id }))
-        const rest = all.flatMap((l, i) => (i === top ? members : layerSel.includes(l.id) ? [] : [l]))
+        const top = Math.max(...inGroup.map((l) => all.indexOf(l)))
+        const members = inGroup.map((l) => ({ ...l, group: id }))
+        const rest = all.flatMap((l, i) => (i === top ? members : inGroup.includes(l) ? [] : [l]))
         return update((it) => ({ ...it, layers: rest, groups: [...(it.groups ?? []), { id, name: `Grup ${n}`, open: true }] }))
       }
       case "ungroup": {
@@ -492,7 +522,7 @@ export default function App() {
         })
       case "clip": return map((l) => ({ ...l, clip: !l.clip }))
       case "smart":
-        map((l) => (l.kind ? l : { ...l, smart: true }))
+        map((l) => (l.kind || l.base ? l : { ...l, smart: true }))
         setTabRaw("layers")
         return
     }
@@ -725,7 +755,7 @@ export default function App() {
     }
     if (cmd.startsWith("layer:")) return void layerCommand(cmd)
     if (cmd === "filter:vanish") {
-      toast("Görseli ekle, köşelerini duvarın ya da düzlemin dört köşesine oturt")
+      toast("Katmanın köşelerini duvarın ya da düzlemin dört köşesine oturt")
       return command("xf:distort")
     }
     if (cmd.startsWith("filter:") || cmd.startsWith("fx:")) {
@@ -1008,7 +1038,7 @@ export default function App() {
               filterEdit={curFilter ? { filter: curFilter, set: setCurFilter, liquify } : null} pick={tab === "color" || tab === "layers" ? colorPick?.fn ?? null : null} onPreview={setPreviewImg} patchMode={patchMode} source={cloneSource} setSource={setCloneSource} armed={armedSource} setArmed={setArmedSource} onNeedSource={() => toast("Önce Alt+tıkla ile kaynak seç")}
               xform={xform} onXformDone={(a, b) => setLastXform(xformDelta(a, b))}
               sliceMode={tab === "slice"} sliceTool={sliceTool} sliceSel={sliceSel} setSliceSel={setSliceSel} setSlices={setSlices}
-              designMode={tab === "design"} layerSel={layerSel} setLayerSel={setLayerSel} setLayers={setLayers}
+              designMode={tab === "design"} layerSel={layerSel} setLayerSel={setLayerSel} setLayers={changeLayers}
               localMode={tab === "local" || tab === "select" || tab === "slice" || tab === "brush" || tab === "retouch" || (tab === "erase" && !!eraseMode)} mask={curMask} maskShow={maskShow} setMask={setMask} selTool={selTool}
             />
             {showStrip && <Filmstrip items={items} currentId={currentId} select={setCurrentId} move={move} remove={removeItem} pickFiles={() => fileRef.current?.click()} uploading={uploading} pasteTo={clip ? pasteFx : undefined} exportOne={(id) => { const it = items.find((i) => i.id === id); if (it) generate(it) }} duplicate={duplicateItem} />}
