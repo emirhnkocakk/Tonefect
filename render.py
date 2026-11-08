@@ -1264,13 +1264,13 @@ def layout_text(cfg, tone_name, specs, W, H, k=1.0, family=None, tracking_add=0.
             "accent_line": t["accent_line"], "boxes": [], "k": k}
 
 
-def draw_layout(cfg, layout, W, H, block=(0, 0), offsets=None, outline=0.0, outline_color=None):
+def draw_layout(cfg, layout, W, H, block=(0, 0), offsets=None, outline=0.0, outline_color=None, text_color=None):
     """Yerlesimi cizer. block: tum metnin kaymasi, offsets: kelime bazli kayma
     (1080x1350 tuval pikseli cinsinden; buyuk tuvalde k ile olceklenir)."""
     k = layout.get("k", 1.0)
     offsets = {i: (v[0] * k, v[1] * k) for i, v in (offsets or {}).items()}
     block = (block[0] * k, block[1] * k) if block else (0, 0)
-    text_rgb = hex_to_rgb(cfg["colors"]["text"])
+    text_rgb = hex_to_rgb(text_color or cfg["colors"]["text"])
     accent_rgb = hex_to_rgb(cfg["colors"]["accent"])
     layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(layer)
@@ -2771,7 +2771,7 @@ def compose(cfg, base, text, tone, accent_word="", styles=None, block=(0, 0), of
         specs = build_specs(text, accent_word, styles, cfg["tones"][tone]["uppercase"])
         tfx = textfx or {}
         layout = layout_text(cfg, tone, specs, W, H, k, font, float(tfx.get("tracking") or 0), float(tfx.get("leading") or 1.0))
-        layer = draw_layout(cfg, layout, W, H, block, offsets, float(tfx.get("outline") or 0), tfx.get("outlineColor"))
+        layer = draw_layout(cfg, layout, W, H, block, offsets, float(tfx.get("outline") or 0), tfx.get("outlineColor"), tfx.get("color"))
         shadow = float(tfx["shadow"]) if "shadow" in tfx else 0.65
         img = Image.alpha_composite(img.convert("RGBA"), add_shadow(layer, radius=14 * k, strength=shadow) if shadow > 0 else layer)
     if above:

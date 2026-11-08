@@ -352,6 +352,11 @@ export default function App() {
       return { ...it, styles }
     })
 
+  // Yazı rengi: kelime seçiliyse yalnızca onlara, değilse tüm yazıya (sonradan yazılanlar dahil)
+  const setTextColor = (color: string | undefined) => {
+    if (selected.length) return applyStyle({ color })
+    update((it) => ({ ...it, textFx: { ...it.textFx, color }, styles: it.styles.map(({ color: _drop, ...rest }) => rest) }))
+  }
   const resetPosition = () => update((it) => ({ ...it, block: [0, 0], offsets: {} }))
 
   // Tasarım: görsel katmanları
@@ -385,6 +390,18 @@ export default function App() {
     if (!fxLayer) return
     const id = fxLayer.id
     update((it) => ({ ...it, layers: (it.layers ?? []).map((l) => (l.id === id ? { ...l, fx: { ...l.fx, ...p } } : l)) }))
+  }
+  // Ayarlamalar beyazı renklendiremez: nesneye doğrudan renk verir
+  const colorObject = (hex: string) => {
+    if (!fxLayer) return
+    const id = fxLayer.id
+    update((it) => ({ ...it, layers: (it.layers ?? []).map((l) => {
+      if (l.id !== id) return l
+      if (l.shapeDef) return { ...l, shapeDef: { ...l.shapeDef, color: hex } }
+      if (l.textDef) return { ...l, textDef: { ...l.textDef, color: hex } }
+      if (l.fillDef) return { ...l, fillDef: { ...l.fillDef, color: hex } }
+      return { ...l, styles: { ...l.styles, color: { ...l.styles?.color, on: true, color: hex, opacity: 100 } } }
+    }) }))
   }
   const curFilter = tab === "fx" && !fxLayer ? item?.fx.filters?.find((f) => f.id === filterSel && !f.off) : undefined
   const setCurFilter = (p: Partial<FilterItem>) => update((it) => ({ ...it, fx: { ...it.fx, filters: (it.fx.filters ?? []).map((f) => (f.id === filterSel ? { ...f, ...p } : f)) } }))
@@ -1462,7 +1479,7 @@ export default function App() {
           <OptionsBar
             tab={tab} item={item} run={command} brushTool={brushTool} brush={brush} setBrush={setBrush} retouchTool={retouchTool} retouchBrush={retouchBrush} setRetouchBrush={setRetouchBrush}
             cloneSource={cloneSource} armSource={armSource} selTool={selTool} setSelTool={setSelTool} xform={xform} setXform={setXform} layerSel={layerSel} putLayer={putLayer} setGeo={setGeo}
-            sliceTool={sliceTool} mode={mode} setMode={setMode} eraseMode={eraseMode} maskTool={maskTool} setMaskTool={setMaskTool} penTool={penTool} setPenTool={setPenTool}
+            sliceTool={sliceTool} mode={mode} setMode={setMode} eraseMode={eraseMode} maskTool={maskTool} setMaskTool={setMaskTool} penTool={penTool} setPenTool={setPenTool} textColor={selected.length ? item?.styles[selected[0]]?.color ?? item?.textFx?.color ?? "#FFFFFF" : item?.textFx?.color ?? "#FFFFFF"} setTextColor={setTextColor}
           />
         )}
         <div className="flex min-h-0 flex-1">
@@ -1509,7 +1526,7 @@ export default function App() {
                 setLayers={setLayers} layerSel={layerSel} setLayerSel={setLayerSel} selectionToLayer={selectionToLayer}
                 onCopy={copyFx} onPaste={() => pasteFx()} canPaste={!!clip}
                 maskSel={maskSel} setMaskSel={setMaskSel} setMasks={setMasks} maskShow={maskShow} setMaskShow={setMaskShow}
-                selTool={selTool} setSelTool={setSelTool} section={section} intent={intent} onClose={() => setTabRaw("")} history={history} fxLayer={fxLayer} setLayerFx={setLayerFx} pathsPanel={{ setPaths, sel: pathSel, setSel: setPathSel, tool: penTool, setTool: setPenTool, run: command }} actionsPanel={{ actions, setActions, recording, startRecord, stopRecord, play: runAction, busy: playing, count: items.length, hasItem: !!item }}
+                selTool={selTool} setSelTool={setSelTool} section={section} intent={intent} onClose={() => setTabRaw("")} history={history} fxLayer={fxLayer} setLayerFx={setLayerFx} colorObject={colorObject} setTextColor={setTextColor} pathsPanel={{ setPaths, sel: pathSel, setSel: setPathSel, tool: penTool, setTool: setPenTool, run: command }} actionsPanel={{ actions, setActions, recording, startRecord, stopRecord, play: runAction, busy: playing, count: items.length, hasItem: !!item }}
               />}
               {showLayers && (
                 <>

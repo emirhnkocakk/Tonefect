@@ -139,7 +139,7 @@ export type Geo = {
 // w/h: son tuval (px), anchor: fotoğrafın yeri (0..1), color: "#RRGGBB" ya da "transparent"
 export type CanvasExt = { w: number; h: number; anchor: [number, number]; color: string }
 // shadow: 0..1 (varsayılan 0.65), outline: 0..1, tracking: em eklentisi, leading: satır aralığı çarpanı
-export type TextFx = { shadow?: number; outline?: number; outlineColor?: string; tracking?: number; leading?: number }
+export type TextFx = { color?: string; shadow?: number; outline?: number; outlineColor?: string; tracking?: number; leading?: number }
 export type Watermark = { enabled: boolean; text: string; position: string; opacity: number; size: number }
 
 // Görsel katmanı (birleştirme): x, y merkez (0..1 tuval), w: genişlik (tuvalin oranı), ar: yükseklik/genişlik

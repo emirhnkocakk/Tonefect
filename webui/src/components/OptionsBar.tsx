@@ -34,6 +34,8 @@ type Props = {
   eraseMode: "" | "layermask" | "vector"
   maskTool: MaskPaintTool
   setMaskTool: (t: MaskPaintTool) => void
+  textColor: string
+  setTextColor: (c: string | undefined) => void
   penTool: PenTool
   setPenTool: (t: PenTool) => void
 }
@@ -158,6 +160,12 @@ export function OptionsBar(p: Props) {
     body = (
       <>
         <Name>Yazı</Name>
+        <Sep />
+        <label className="flex items-center gap-1 text-[11px] text-muted-foreground" title="Kelime seçiliyse yalnızca onlara, değilse tüm yazıya">Renk
+          <span className="relative h-5 w-5 overflow-hidden rounded-sm border" style={{ background: p.textColor }}>
+            <input aria-label="Yazı rengi" type="color" value={p.textColor.toLowerCase()} onChange={(e) => p.setTextColor(e.target.value.toUpperCase())} className="absolute inset-0 cursor-pointer opacity-0" />
+          </span>
+        </label>
         <Sep />
         <Chip on={p.mode === "block"} onClick={() => p.setMode("block")}><span className="flex items-center gap-1"><Move className="h-3 w-3" /> Tüm Metin</span></Chip>
         <Chip on={p.mode === "word"} onClick={() => p.setMode("word")}><span className="flex items-center gap-1"><Type className="h-3 w-3" /> Tek Kelime</span></Chip>

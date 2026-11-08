@@ -1051,6 +1051,8 @@ def clean_textfx(t):
         out["outline"] = round(num(t["outline"], 0.0, 1.0), 3)
         c = t.get("outlineColor")
         out["outlineColor"] = c if isinstance(c, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", c) else "#000000"
+    if isinstance(t.get("color"), str) and re.fullmatch(r"#[0-9a-fA-F]{6}", t["color"]):
+        out["color"] = t["color"]
     if t.get("tracking"):
         out["tracking"] = round(num(t["tracking"], -0.1, 0.5), 3)
     if t.get("leading"):

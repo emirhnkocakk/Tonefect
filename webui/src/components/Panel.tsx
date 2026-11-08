@@ -9,7 +9,7 @@ import { useEffect } from "react"
 import { TOOLS } from "@/lib/tools"
 import { Textarea } from "@/components/ui/textarea"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { TONE_INFO } from "@/lib/constants"
+import { PALETTE, TONE_INFO } from "@/lib/constants"
 import { words } from "@/lib/text"
 import { cn } from "@/lib/utils"
 import { ColorPanel } from "@/components/ColorPanel"
@@ -110,13 +110,15 @@ type Props = {
   history: { rows: string[]; at: number; go: (i: number) => void }
   fxLayer?: ImgLayer
   setLayerFx: (p: Partial<Fx>) => void
+  colorObject: (hex: string) => void
+  setTextColor: (c: string | undefined) => void
   actionsPanel: React.ComponentProps<typeof ActionsPanel>
   pathsPanel: Omit<React.ComponentProps<typeof PathsPanel>, "paths" | "setPaths"> & { setPaths: (p: NonNullable<Item["paths"]>) => void }
   intent: { cmd: string; n: number } | null // menüden gelen işlem (örn. yeni seçim, görsel ekle)
   onClose: () => void
 }
 
-export function Panel({ item, items, cfg, selected, setSelected, setText, patch, presets, groups, onPresetsChange, tab, setTab, setGeo, applyAllGeo, onCopy, onPaste, canPaste, maskSel, setMaskSel, setMasks, maskShow, setMaskShow, selTool, setSelTool, perspEdit, setPerspEdit, setLayers, layerSel, setLayerSel, selectionToLayer, lineMode, setLineMode, sliceTool, setSliceTool, sliceSel, setSliceSel, setSlices, exportSlices, eraseMode, setEraseMode, maskTool, setMaskTool, addSpecial, command, brushTool, setBrushTool, filterSel, setFilterSel, liquify, setLiquify, previewImg, setPick, retouchTool, setRetouchTool, retouchBrush, setRetouchBrush, cloneSource, armSource, patchMode, setPatchMode, brush, setBrush, smoothing, setSmoothing, settings, setSettings, xform, setXform, xformDelta, section, intent, onClose, history, actionsPanel, pathsPanel, fxLayer, setLayerFx }: Props) {
+export function Panel({ item, items, cfg, selected, setSelected, setText, patch, presets, groups, onPresetsChange, tab, setTab, setGeo, applyAllGeo, onCopy, onPaste, canPaste, maskSel, setMaskSel, setMasks, maskShow, setMaskShow, selTool, setSelTool, perspEdit, setPerspEdit, setLayers, layerSel, setLayerSel, selectionToLayer, lineMode, setLineMode, sliceTool, setSliceTool, sliceSel, setSliceSel, setSlices, exportSlices, eraseMode, setEraseMode, maskTool, setMaskTool, addSpecial, command, brushTool, setBrushTool, filterSel, setFilterSel, liquify, setLiquify, previewImg, setPick, retouchTool, setRetouchTool, retouchBrush, setRetouchBrush, cloneSource, armSource, patchMode, setPatchMode, brush, setBrush, smoothing, setSmoothing, settings, setSettings, xform, setXform, xformDelta, section, intent, onClose, history, actionsPanel, pathsPanel, fxLayer, setLayerFx, colorObject, setTextColor }: Props) {
   const ws = item ? words(item.text) : []
   const max = cfg.limits.max_words
   const setFx = (p: Partial<Fx>, all = false) => (fxLayer ? setLayerFx(p) : item && patch({ fx: { ...item.fx, ...p } }, all))
@@ -154,6 +156,10 @@ export function Panel({ item, items, cfg, selected, setSelected, setText, patch,
         {fxLayer && (
           <div className="mx-4 mb-2 flex items-center gap-2 rounded-sm border border-primary/40 bg-primary/10 px-2 py-1 text-[11px]">
             <span className="min-w-0 flex-1 truncate">Düzenlenen nesne: <b>{fxLayer.name}</b></span>
+            <label className="relative h-5 shrink-0 cursor-pointer rounded-sm border px-1.5 leading-[18px] hover:border-primary/60" title="Nesneyi seçtiğin renge boyar. Ayarlamalar beyazı renklendiremez.">
+              Renk Ver
+              <input aria-label="Nesneye renk ver" type="color" defaultValue="#E01010" className="absolute inset-0 cursor-pointer opacity-0" onChange={(e) => colorObject(e.target.value.toUpperCase())} />
+            </label>
             <button className="shrink-0 text-muted-foreground underline hover:text-foreground" onClick={() => setLayerSel([BASE_ID])}>Arka Plana Geç</button>
           </div>
         )}
@@ -196,6 +202,20 @@ export function Panel({ item, items, cfg, selected, setSelected, setText, patch,
                   placeholder="Vizyon cümleni yaz…"
                   className="min-h-[104px] resize-none text-sm"
                 />
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label>Yazı Rengi</Label>
+                  <button className="text-xs text-muted-foreground hover:text-primary" onClick={() => setTextColor(undefined)}>varsayılan</button>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  {PALETTE.map(([name, hex]) => <button key={hex} aria-label={name} title={name} onClick={() => setTextColor(hex)} className="h-6 w-6 rounded-full border border-black/40 transition-transform hover:scale-110" style={{ background: hex }} />)}
+                  <label className="relative h-6 w-6 cursor-pointer overflow-hidden rounded-full border border-dashed border-muted-foreground/70" title="Özel renk">
+                    <input aria-label="Özel yazı rengi" type="color" className="absolute inset-0 cursor-pointer opacity-0" onChange={(e) => setTextColor(e.target.value.toUpperCase())} />
+                  </label>
+                </div>
+                <p className="text-[11px] text-muted-foreground">{selected.length ? `${selected.length} seçili kelimeye uygulanır.` : "Tüm yazıya uygulanır. Tek kelime için aşağıdan kelimeyi seç."}</p>
               </div>
 
               <div className="space-y-2">
