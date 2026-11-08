@@ -4,20 +4,19 @@ import { cn } from "@/lib/utils"
 
 // Photoshop'taki gibi üstte kategorili menüler. Her öğe bir komut (App yürütür):
 // "tool:<sekme>[:<bölüm>]" ilgili paneli açar ve o bölüme kaydırır; diğerleri doğrudan işlem.
-type Leaf = { label: string; cmd: string; key?: string; disabled?: boolean; checked?: boolean }
-export type MenuItem = Leaf | { label: string; children: Leaf[] } | "sep"
+type Leaf = { label: string; cmd: string; key?: string; title?: string; disabled?: boolean; checked?: boolean }
+export type MenuItem = Leaf | { label: string; children: (Leaf | "sep")[] } | "sep"
 export type Menu = { label: string; items: MenuItem[] }
 
-type Props = { menus: Menu[]; onCommand: (cmd: string) => void; active?: string }
+type Props = { menus: Menu[]; onCommand: (cmd: string) => void }
 
-export function MenuBar({ menus, onCommand, active }: Props) {
+export function MenuBar({ menus, onCommand }: Props) {
   const [open, setOpenRaw] = useState<number | null>(null)
-  const [child, setChild] = useState<{ label: string; items: Leaf[]; x: number; y: number } | null>(null)
+  const [child, setChild] = useState<{ label: string; items: (Leaf | "sep")[]; x: number; y: number } | null>(null)
   const setOpen = (v: number | null) => {
     setChild(null)
     setOpenRaw(v)
   }
-  const leaves = (m: Menu) => m.items.flatMap((it) => (it === "sep" ? [] : "children" in it ? it.children : [it]))
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (open === null) return
@@ -34,7 +33,6 @@ export function MenuBar({ menus, onCommand, active }: Props) {
   return (
     <div ref={ref} className="flex items-center" role="menubar">
       {menus.map((m, i) => {
-        const on = leaves(m).some((it) => active && (it.cmd.startsWith(`tool:${active}`) || (active === "select" && it.cmd.startsWith("sel:")) || it.cmd.startsWith(`${active}:`)))
         return (
           <div key={m.label} className="relative">
             <button
@@ -43,7 +41,7 @@ export function MenuBar({ menus, onCommand, active }: Props) {
               onPointerEnter={() => open !== null && setOpen(i)}
               className={cn(
                 "rounded px-2 py-0.5 text-[12px] transition-colors",
-                open === i ? "bg-accent text-foreground" : on ? "text-primary" : "text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+                open === i ? "bg-accent text-foreground" : "text-foreground/85 hover:bg-accent/60"
               )}
             >
               {m.label}
@@ -73,6 +71,7 @@ export function MenuBar({ menus, onCommand, active }: Props) {
                       key={it.cmd + j}
                       role="menuitem"
                       disabled={it.disabled}
+                      title={it.title}
                       onPointerEnter={() => setChild(null)}
                       onClick={() => {
                         setOpen(null)
@@ -81,7 +80,7 @@ export function MenuBar({ menus, onCommand, active }: Props) {
                       className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left hover:bg-accent disabled:pointer-events-none disabled:opacity-40"
                     >
                       <span className="w-4 shrink-0">{it.checked && <Check className="h-3.5 w-3.5 text-primary" />}</span>
-                      <span className="flex-1">{it.label}</span>
+                      <span className="flex-1 whitespace-nowrap">{it.label}</span>
                       {it.key && <span className="text-[10px] text-muted-foreground">{it.key}</span>}
                     </button>
                   )
@@ -90,9 +89,10 @@ export function MenuBar({ menus, onCommand, active }: Props) {
             )}
             {open === i && child && (
               <div className="fixed z-[60] max-h-[calc(100vh-16px)] min-w-[220px] overflow-y-auto rounded-lg border bg-popover p-1 text-[12px] shadow-xl" style={{ left: child.x, top: Math.max(8, child.y) }} role="menu">
-                {child.items.map((it) => (
-                  <button key={it.cmd} role="menuitem" disabled={it.disabled} title={it.key} onClick={() => { setOpen(null); onCommand(it.cmd) }} className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left hover:bg-accent disabled:pointer-events-none disabled:opacity-40">
-                    <span className="flex-1">{it.label}</span>
+                {child.items.map((it, k) => it === "sep" ? <div key={k} className="my-1 h-px bg-border" /> : (
+                  <button key={it.cmd + k} role="menuitem" disabled={it.disabled} title={it.title} onClick={() => { setOpen(null); onCommand(it.cmd) }} className="flex w-full items-center gap-4 rounded-sm px-2 py-1 text-left hover:bg-accent disabled:pointer-events-none disabled:opacity-40">
+                    <span className="flex-1 whitespace-nowrap">{it.label}</span>
+                    {it.key && <span className="text-[10px] text-muted-foreground">{it.key}</span>}
                   </button>
                 ))}
               </div>

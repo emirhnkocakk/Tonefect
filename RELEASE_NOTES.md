@@ -1,15 +1,18 @@
 ## What's new / Yenilikler
 
-- 🖼️ **Your photo is a real layer** – move, transform, distort, masks, blend modes, layer styles and locks now work directly on the photo you open, as the "Background" layer. Adding a second image is no longer needed.
-  / **Fotoğrafın artık gerçek bir katman** – taşıma, dönüştürme, bozma, maskeler, karışım kipleri, katman stilleri ve kilitler açtığın fotoğrafa "Arka Plan" katmanı olarak doğrudan uygulanır. İkinci bir görsel eklemen gerekmez.
-- 🎨 **Photos open as they are** – new photos no longer start in black and white. You apply black and white only if you want it.
-  / **Fotoğraflar olduğu gibi açılır** – yeni fotoğraflar artık siyah-beyaz başlamaz. Siyah-beyazı yalnızca istersen uygularsın.
-- 🌓 **Clean light and dark themes** – the decorative themes are gone. The interface now uses neutral colors with a single accent.
-  / **Sade açık ve koyu tema** – süslü temalar kaldırıldı. Arayüz artık nötr renkler ve tek vurgu rengi kullanır.
-- 🧱 **Better flatten and merge** – flattening, or merging with the Background, creates a new photo, so color tools and effects keep working afterwards. Empty areas become white.
-  / **Daha iyi düzleştirme ve birleştirme** – düzleştirme ya da Arka Plan ile birleştirme yeni bir fotoğraf oluşturur, renk araçları ve efektler sonrasında da çalışır. Boş alanlar beyaz olur.
-- 🐞 **Fix** – dragging a layer in the preview no longer deletes hidden layers.
-  / **Düzeltme** – önizlemede katman sürüklemek artık gizli katmanları silmez.
+- 🖥️ **Familiar professional layout** – standard menus (File, Edit, Image, Layer, Type, Select, Filter, View, Window, Help), a single-column toolbar with letter shortcuts, a tool options bar, a right-hand panel dock, document tabs and a status bar. Press F1 for the shortcut list.
+  / **Tanıdık profesyonel düzen** – standart menüler (Dosya, Düzenle, Görüntü, Katman, Yazı, Seçim, Filtre, Görünüm, Pencere, Yardım), harf kısayollu tek sıra araç kutusu, araç seçenekleri çubuğu, sağda panel yuvası, belge sekmeleri ve durum çubuğu. Kısayol listesi için F1.
+- 📂 **PSD files** – open and save layered Photoshop documents with layer names, groups, blend modes, opacity, hidden layers and clipping masks.
+  / **PSD dosyaları** – katmanlı Photoshop belgelerini katman adları, gruplar, karışım kipleri, opaklık, gizli katmanlar ve kırpma maskeleriyle aç ve kaydet.
+- ▶️ **Actions and batch** – record your edits and replay them on one photo or all open photos, with optional export afterwards.
+  / **Eylemler ve toplu işlem** – düzenlemelerini kaydet; tek fotoğrafa ya da açık fotoğrafların hepsine uygula, istersen ardından dışa aktar.
+- ✒️ **Pen and Paths** – draw Bezier paths and turn them into selections, vector masks, fills or brush strokes.
+  / **Kalem ve Yollar** – Bezier yollar çiz; seçime, vektör maskeye, dolguya ya da fırça konturuna çevir.
+- 🕘 **History panel and new tools** – jump back to any step; eyedropper, hand and zoom tools, grid, select all, deselect, layer ordering and merge down.
+  / **Geçmiş paneli ve yeni araçlar** – istediğin adıma dön; damlalık, el ve yakınlaştırma araçları, ızgara, tümünü seç, seçimi kaldır, katman sıralama ve aşağı birleştir.
 
-Your existing projects and settings are kept. Photos already in a project keep the look they have; a saved theme that no longer exists switches to light or dark.
-/ Mevcut projelerin ve ayarların korunur. Projede zaten bulunan fotoğraflar mevcut görünümünü korur; artık olmayan bir temayla kaydedilmiş projeler açık ya da koyu temaya geçer.
+Good to know: Photoshop adjustment layers and layer styles are not imported from PSD files; a warning tells you how many were skipped. PSB, Lab and Indexed files cannot be opened, and Photoshop `.atn` action files are not supported. The photo strip is now off by default; turn it on from the Window menu.
+/ Bilmende fayda var: PSD dosyalarındaki Photoshop ayar katmanları ve katman stilleri aktarılmaz; kaç tanesinin atlandığını uyarı söyler. PSB, Lab ve Indexed dosyalar açılmaz, Photoshop `.atn` eylem dosyaları desteklenmez. Fotoğraf şeridi artık varsayılan olarak kapalı; Pencere menüsünden açabilirsin.
+
+Your existing projects and settings are kept.
+/ Mevcut projelerin ve ayarların korunur.

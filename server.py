@@ -38,6 +38,7 @@ from PIL import Image, ImageOps
 import ai
 import adjustments
 import filters
+import psdfile
 import layerfx
 import looks
 import render as engine
@@ -51,6 +52,7 @@ SESSION = HERE / "oturum_web.json"  # eski tek oturum; ilk açılışta projeye 
 PROJECTS = HERE / "projects"
 PROJECT_LOCK = threading.Lock()
 PREFS = HERE / "ayarlar.json"
+ACTIONS = HERE / "eylemler.json"
 PENDING = Path(tempfile.gettempdir()) / "grainline_update_pending.json"
 DEFAULT_OUT = HERE / "output"
 
@@ -628,7 +630,7 @@ def clean_item(d):
         "fx": fx, "block": (float(block[0]), float(block[1])), "offsets": offsets,
         "geo": clean_geo(d.get("geo")),
         "font": clean_font(d.get("font")), "textfx": clean_textfx(d.get("textfx")),
-        "layers": clean_layers(d.get("layers"), d.get("hidden")),
+        "layers": name_groups(clean_layers(d.get("layers"), d.get("hidden")), d.get("groups")),
         "slices": clean_slices(d.get("slices")),
     }
 
@@ -747,7 +749,7 @@ def clean_layers(ls, hidden=None):
     """Görsel katmanları (birleştirme). Gizlenenler ve dosyası olmayanlar atlanır."""
     hidden = set(hidden) if isinstance(hidden, list) else set()
     out = []
-    for ly in (ls if isinstance(ls, list) else [])[:40]:
+    for ly in (ls if isinstance(ls, list) else [])[:MAX_LAYERS]:
         if not isinstance(ly, dict):
             continue
         from_photo = bool(ly.get("base"))  # Arka Plan katmanı ya da kopyası: işlenmiş fotoğrafı kullanır
@@ -762,7 +764,12 @@ def clean_layers(ls, hidden=None):
              "w": num(ly.get("w"), 0.01, 5.0, 0.4), "rot": num(ly.get("rot"), -360.0, 360.0, 0.0),
              "opacity": num(ly.get("opacity"), 0.0, 1.0, 1.0), "flipH": bool(ly.get("flipH")),
              "cutout": bool(ly.get("cutout")), "sy": num(ly.get("sy"), 0.02, 20.0, 1.0), "blend": bool(ly.get("blend")),
-             "clip": bool(ly.get("clip")), "defringe": round(num(ly.get("defringe"), 0.0, 1.0), 3)}
+             "clip": bool(ly.get("clip")), "defringe": round(num(ly.get("defringe"), 0.0, 1.0), 3),
+             "name": str(ly.get("name") or "")[:120]}
+        if ly.get("group"):
+            c["group"] = str(ly["group"])
+        if ly.get("off"):  # yalnızca PSD: gizli katman dosyaya gizli olarak yazılır
+            c["off"] = True
         c.update(clean_deform(ly))
         c.update(clean_layer_extra(ly, kind))
         if from_photo:
@@ -774,7 +781,8 @@ def clean_layers(ls, hidden=None):
 
 
 BASE_LAYER = "base"
-_LAYER_CORE = {"id", "photo", "x", "y", "w", "rot", "opacity", "flipH", "cutout", "sy", "blend", "clip", "defringe", "base"}
+MAX_LAYERS = 200
+_LAYER_CORE = {"id", "photo", "x", "y", "w", "rot", "opacity", "flipH", "cutout", "sy", "blend", "clip", "defringe", "base", "name", "group"}
 
 
 def _base_untouched(c):
@@ -782,6 +790,15 @@ def _base_untouched(c):
     near = lambda a, b: abs(a - b) < 1e-4
     return not (set(c) - _LAYER_CORE) and near(c["x"], 0.5) and near(c["y"], 0.5) and near(c["w"], 1.0) and near(c["sy"], 1.0) \
         and near(c["rot"], 0.0) and near(c["opacity"], 1.0) and not (c["flipH"] or c["blend"] or c["clip"] or c["defringe"])
+
+
+def name_groups(layers, groups):
+    """PSD'ye yazılacak grup adları."""
+    names = {str(g.get("id")): str(g.get("name") or "Grup")[:120] for g in (groups if isinstance(groups, list) else []) if isinstance(g, dict)}
+    for ly in layers:
+        if ly.get("group") in names:
+            ly["groupName"] = names[ly["group"]]
+    return layers
 
 
 def clean_layer_extra(ly, kind):
@@ -805,7 +822,8 @@ def clean_layer_extra(ly, kind):
                               "align": t.get("align") if t.get("align") in ("left", "center", "right") else "center", "bold": bool(t.get("bold"))}
         elif kind == "shape":
             t = ly.get("shapeDef") if isinstance(ly.get("shapeDef"), dict) else {}
-            out["shapeDef"] = {"type": t.get("type") if t.get("type") in ("rect", "ellipse", "triangle", "star", "hexagon") else "rect", "color": hx(t.get("color"), "#E0314A"),
+            out["shapeDef"] = {"type": t.get("type") if t.get("type") in ("rect", "ellipse", "triangle", "star", "hexagon", "path") else "rect",
+                               "pts": [[round(num(q[0], -1.0, 2.0), 5), round(num(q[1], -1.0, 2.0), 5)] for q in (t.get("pts") if isinstance(t.get("pts"), list) else [])[:4000] if isinstance(q, list) and len(q) >= 2], "color": hx(t.get("color"), "#E0314A"),
                                "stroke": hx(t.get("stroke"), "#FFFFFF"), "strokeW": round(num(t.get("strokeW"), 0.0, 0.5), 3), "radius": round(num(t.get("radius"), 0.0, 1.0), 3)}
         elif kind == "fill":
             t = ly.get("fillDef") if isinstance(ly.get("fillDef"), dict) else {}
@@ -880,7 +898,7 @@ def layer_loader(full=False):
                 a = np.minimum(np.asarray(img.getchannel("A")), np.asarray(m))
                 img.putalpha(Image.fromarray(a))
             return img
-        return _lru(LAYER_IMG, key, make, 8)
+        return _lru(LAYER_IMG, key, make, 32)
     return load
 
 
@@ -1403,6 +1421,75 @@ def save_photo(name, data):
     return {"id": pid, "name": name, "width": width, "height": height}
 
 
+def _png(img):
+    buf = io.BytesIO()
+    img.save(buf, "PNG", compress_level=1)
+    return buf.getvalue()
+
+
+def import_psd(name, data):
+    """PSD'yi Tonefect belgesine çevirir: Arka Plan ana fotoğraf, diğerleri katman olur."""
+    doc = psdfile.read(data)
+    W, H = doc["width"], doc["height"]
+    layers = doc["layers"]
+    warnings = list(doc["warnings"])
+    if len(layers) > MAX_LAYERS:
+        warnings.append(f"Yalnızca üstteki {MAX_LAYERS} katman açıldı.")
+        layers = layers[-MAX_LAYERS:]
+    stem = Path(safe_name(name)).stem or "belge"
+    first = layers[0] if layers else None
+    is_bg = bool(first) and first["left"] == 0 and first["top"] == 0 and first["right"] == W and first["bottom"] == H and first["opaque"] \
+        and first["mode"] == "normal" and first["opacity"] > 0.999 and not first["hidden"] and "group" not in first
+    hide_base = False
+    if not layers:
+        base_img = doc["composite"]
+    elif is_bg:
+        base_img, layers = first["image"].convert("RGB"), layers[1:]
+    else:  # Arka Plan'sız belge: tuval şeffaf başlar
+        base_img, hide_base = Image.new("RGB", (W, H), (255, 255, 255)), True
+    photo = save_photo(f"{stem}.png", _png(base_img))
+    out, hidden, ids = [], ["img:base"] if hide_base else [], {}
+    for i, ly in enumerate(layers):
+        rec = save_photo(f"{stem}_katman{i + 1}.png", _png(ly["image"]))
+        lid = uuid.uuid4().hex[:7]
+        w, h = ly["right"] - ly["left"], ly["bottom"] - ly["top"]
+        c = {"id": lid, "photo": rec["id"], "name": ly["name"][:120] or f"Katman {i + 1}", "x": (ly["left"] + w / 2) / W, "y": (ly["top"] + h / 2) / H, "w": w / W, "ar": h / w,
+             "rot": 0, "opacity": round(ly["opacity"], 3), "flipH": False, "cutout": False, "clip": ly["clip"]}
+        if ly["mode"] != "normal":
+            c["mode"] = ly["mode"]
+        if "group" in ly:
+            c["group"] = ly["group"]
+        if ly["hidden"]:
+            hidden.append(f"img:{lid}")
+        out.append(c)
+    used = {c["group"] for c in out if "group" in c}
+    groups = [{"id": g["id"], "name": g["name"], "open": True} for g in doc["groups"] if g["id"] in used]
+    hidden += [f"group:{g['id']}" for g in doc["groups"] if g["hidden"] and g["id"] in used]
+    return {**photo, "name": name, "layers": out, "groups": groups, "hidden": hidden, "warnings": warnings}
+
+
+def load_actions():
+    try:
+        d = json.loads(ACTIONS.read_text(encoding="utf-8"))
+        return {"actions": d if isinstance(d, list) else []}
+    except (OSError, ValueError):
+        return {"actions": []}
+
+
+def save_actions(d):
+    """Eylemler projelerden bağımsızdır; tüm projelerde kullanılır."""
+    items = d.get("actions") if isinstance(d, dict) else None
+    if not isinstance(items, list) or len(items) > 500:
+        raise ValueError("Eylem listesi geçersiz.")
+    text = json.dumps(items, ensure_ascii=False)
+    if len(text) > 30_000_000:
+        raise ValueError("Eylemler çok büyük; uzun fırça kayıtlarını silmeyi dene.")
+    tmp = ACTIONS.with_suffix(".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(ACTIONS)
+    return {"ok": True}
+
+
 def duplicate_photo(pid):
     """Fotoğrafın kopyası (ayrı düzenlenebilsin diye ayrı dosya); küçük resim ve konu maskesi de kopyalanır."""
     src = photo_path(pid)
@@ -1603,8 +1690,12 @@ def prune_uploads():
         return  # bir proje okunamıyorsa hiçbir şeye dokunma
     if not UPLOADS.is_dir():
         return
+    try:  # eylemlerin kullandığı görseller (katman, fırça ucu) projelerden bağımsız kalır
+        used_by_actions = ACTIONS.read_text(encoding="utf-8") if ACTIONS.is_file() else ""
+    except OSError:
+        return
     for p in UPLOADS.iterdir():
-        if p.is_file() and p.name not in keep:
+        if p.is_file() and p.name not in keep and p.name not in used_by_actions:
             try:
                 delete_photo(p.name)
             except OSError:
@@ -1759,7 +1850,7 @@ def clean_export(e):
             "exif": bool(e.get("exif")), "color": color, "dpi": int(num(e.get("dpi"), 0, 2400, 0)) or None}
 
 
-MIME = {"jpg": "image/jpeg", "png": "image/png", "webp": "image/webp", "tiff": "image/tiff"}
+MIME = {"jpg": "image/jpeg", "png": "image/png", "webp": "image/webp", "tiff": "image/tiff", "psd": "image/vnd.adobe.photoshop"}
 
 
 def render_file(d):
@@ -1944,6 +2035,10 @@ class Handler(BaseHTTPRequestHandler):
                 STATE["quit_on_close"] = bool(json.loads(self._body()).get("quitOnClose", True))
                 write_prefs(quitOnClose=STATE["quit_on_close"])
                 return self._json({"ok": True})
+            if c == "/api/actions" and m == "GET":
+                return self._json(load_actions())
+            if c == "/api/actions" and m == "PUT":
+                return self._json(save_actions(json.loads(self._body())))
             if c == "/api/watermark" and m == "PUT":
                 return self._json(save_watermark(json.loads(self._body())))
             if c == "/api/ai/status" and m == "GET":
@@ -2003,6 +2098,8 @@ class Handler(BaseHTTPRequestHandler):
             if c == "/api/session" and m == "PUT":
                 save_session(self._body())
                 return self._json({"ok": True})
+            if c == "/api/photos/psd" and m == "POST":
+                return self._json(import_psd(q.get("name", ["belge.psd"])[0], self._body()))
             if c == "/api/photos" and m == "POST":
                 return self._json(save_photo(q.get("name", ["foto.jpg"])[0], self._body()))
             if c.startswith("/api/photos/") and c.endswith("/duplicate") and m == "POST":

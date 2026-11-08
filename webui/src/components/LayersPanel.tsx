@@ -70,8 +70,8 @@ export function LayersPanel({ item, presets, wm, tool, maskSel, sel, open, toggl
   )
 
   return (
-    <aside className="flex h-full w-[260px] shrink-0 flex-col border-l bg-card/40">
-      <div className="flex items-center gap-2 px-4 pb-2 pt-4">
+    <aside className="flex h-full min-h-0 w-full flex-col">
+      <div className="flex items-center gap-2 px-3 pb-1.5 pt-2">
         <Layers className="h-4 w-4 text-muted-foreground" />
         <span className="flex-1 text-xs font-semibold tracking-wider text-muted-foreground">KATMANLAR</span>
         <button aria-label="Katmanları süz" title="Katman Filtreleme (Layer Filtering)" onClick={() => setFilterOpen(!filterOpen)} className={cn("rounded p-0.5 hover:text-foreground", filterOpen ? "text-primary" : "text-muted-foreground")}><Search className="h-3.5 w-3.5" /></button>

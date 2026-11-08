@@ -35,7 +35,7 @@ export const LAYER_TOOLS: LayerEntry[] = [
   { cmd: "layer:new:adjust", label: "Ayar Katmanı", en: "Adjustment Layer", section: TY },
   { cmd: "layer:new:fill", label: "Dolgu Katmanı", en: "Fill Layer", section: TY },
   { cmd: "layer:smart", label: "Akıllı Nesne", en: "Smart Object", section: TY },
-  { cmd: "tool:crop", label: "Arka Plan Katmanı", en: "Background Layer", section: TY },
+  { cmd: "layer:base", label: "Arka Plan Katmanı", en: "Background Layer", section: TY },
   { cmd: "layer:none:video", label: "Video Katmanı (Desteklenmiyor)", en: "Video Layer", section: TY, off: true },
   { cmd: "layer:none:3d", label: "3B Katman (Desteklenmiyor)", en: "3D Layer", section: TY, off: true },
 

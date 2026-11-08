@@ -19,6 +19,9 @@ Tonefect (formerly Grainline) is a small desktop photo editor: one-click colour 
 - **Text (optional)** – per-word colour/weight/italic/size, any installed font, shadow, outline, letter and line spacing; drag with smart guides.
 - **Watermark (optional)** – any corner, centre or tiled, with opacity and size.
 - **Copy / paste settings**, undo/redo, light and dark themes.
+- **PSD files**: open and save layered Photoshop documents.
+- **Pen and Paths**: draw Bezier paths and turn them into selections, vector masks, fills or brush strokes.
+- **Actions and batch**: record your edits and replay them on one photo or all of them.
 - **Export** – JPEG, PNG or WebP with quality, numbered or original names, optional EXIF (location always removed), all photos or just one.
 
 ## Download (Windows)
@@ -66,6 +69,9 @@ Tonefect (eski adıyla Grainline) küçük bir masaüstü fotoğraf düzenleyici
 - **Yazı (isteğe bağlı)** – kelime bazında renk/kalınlık/italik/boyut, bilgisayardaki her yazı tipi, gölge, kontur, harf ve satır aralığı; akıllı kılavuzlarla sürükle.
 - **Filigran (isteğe bağlı)** – köşeler, orta ya da döşeme; opaklık ve boyut.
 - **Ayarları kopyala/yapıştır**, geri al/yinele, açık ve koyu tema.
+- **PSD dosyaları**: katmanlı Photoshop belgelerini aç ve kaydet.
+- **Kalem ve Yollar**: Bezier yollar çiz; seçime, vektör maskeye, dolguya ya da fırça konturuna çevir.
+- **Eylemler ve toplu işlem**: düzenlemelerini kaydet, tek fotoğrafa ya da hepsine uygula.
 - **Dışa aktarma** – JPEG, PNG ya da WebP, kalite, numaralı ya da orijinal ad, isteğe bağlı EXIF (konum her zaman silinir), tüm fotoğraflar ya da tek fotoğraf.
 
 ## İndir (Windows)

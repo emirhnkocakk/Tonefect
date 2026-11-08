@@ -36,10 +36,11 @@ const FORMATS: [ExportOpts["format"], string, string][] = [
   ["png", "PNG", "kayıpsız, büyük"],
   ["webp", "WebP", "küçük, web için"],
   ["tiff", "TIFF", "baskı, arşiv"],
+  ["psd", "PSD", "katmanlı, Photoshop"],
 ]
 // render.COLOR_MODES ile aynı: renk modu -> kaydedebilen biçimler
 const COLORS: [ColorMode, string, string, ExportOpts["format"][]][] = [
-  ["rgb", "RGB", "ekran, sosyal medya", ["jpg", "png", "webp", "tiff"]],
+  ["rgb", "RGB", "ekran, sosyal medya", ["jpg", "png", "webp", "tiff", "psd"]],
   ["gray", "Gri tonlama", "tek kanal", ["jpg", "png", "tiff"]],
   ["cmyk", "CMYK", "matbaa baskısı", ["jpg", "tiff"]],
   ["bitmap", "Bitmap", "yalnızca siyah ve beyaz", ["png", "tiff"]],

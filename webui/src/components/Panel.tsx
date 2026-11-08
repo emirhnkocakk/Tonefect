@@ -25,6 +25,9 @@ import { LayerPropsPanel } from "@/components/LayerPropsPanel"
 import type { ColorPick } from "@/components/ColorTools"
 import type { LiquifyTool } from "@/lib/filters"
 import { TextStylePanel } from "@/components/TextStylePanel"
+import { HistoryPanel } from "@/components/HistoryPanel"
+import { ActionsPanel } from "@/components/ActionsPanel"
+import { PathsPanel } from "@/components/PathsPanel"
 import { GeoPanel } from "@/components/GeoPanel"
 import { canvasSize, legacyGeo } from "@/lib/geo"
 import { DesignPanel } from "@/components/DesignPanel"
@@ -102,11 +105,14 @@ type Props = {
   setXform: (m: XformMode) => void
   xformDelta: XformDelta | null
   section: { id: string; n: number } | null // menüden gelinen bölüm: oraya kaydırılır
+  history: { rows: string[]; at: number; go: (i: number) => void }
+  actionsPanel: React.ComponentProps<typeof ActionsPanel>
+  pathsPanel: Omit<React.ComponentProps<typeof PathsPanel>, "paths" | "setPaths"> & { setPaths: (p: NonNullable<Item["paths"]>) => void }
   intent: { cmd: string; n: number } | null // menüden gelen işlem (örn. yeni seçim, görsel ekle)
   onClose: () => void
 }
 
-export function Panel({ item, items, cfg, selected, setSelected, setText, patch, presets, groups, onPresetsChange, tab, setTab, setGeo, applyAllGeo, onCopy, onPaste, canPaste, maskSel, setMaskSel, setMasks, maskShow, setMaskShow, selTool, setSelTool, perspEdit, setPerspEdit, setLayers, layerSel, setLayerSel, selectionToLayer, lineMode, setLineMode, sliceTool, setSliceTool, sliceSel, setSliceSel, setSlices, exportSlices, eraseMode, setEraseMode, maskTool, setMaskTool, addSpecial, command, brushTool, setBrushTool, filterSel, setFilterSel, liquify, setLiquify, previewImg, setPick, retouchTool, setRetouchTool, retouchBrush, setRetouchBrush, cloneSource, armSource, patchMode, setPatchMode, brush, setBrush, smoothing, setSmoothing, settings, setSettings, xform, setXform, xformDelta, section, intent, onClose }: Props) {
+export function Panel({ item, items, cfg, selected, setSelected, setText, patch, presets, groups, onPresetsChange, tab, setTab, setGeo, applyAllGeo, onCopy, onPaste, canPaste, maskSel, setMaskSel, setMasks, maskShow, setMaskShow, selTool, setSelTool, perspEdit, setPerspEdit, setLayers, layerSel, setLayerSel, selectionToLayer, lineMode, setLineMode, sliceTool, setSliceTool, sliceSel, setSliceSel, setSlices, exportSlices, eraseMode, setEraseMode, maskTool, setMaskTool, addSpecial, command, brushTool, setBrushTool, filterSel, setFilterSel, liquify, setLiquify, previewImg, setPick, retouchTool, setRetouchTool, retouchBrush, setRetouchBrush, cloneSource, armSource, patchMode, setPatchMode, brush, setBrush, smoothing, setSmoothing, settings, setSettings, xform, setXform, xformDelta, section, intent, onClose, history, actionsPanel, pathsPanel }: Props) {
   const ws = item ? words(item.text) : []
   const max = cfg.limits.max_words
   const setFx = (p: Partial<Fx>, all = false) => item && patch({ fx: { ...item.fx, ...p } }, all)
@@ -123,7 +129,7 @@ export function Panel({ item, items, cfg, selected, setSelected, setText, patch,
   }, [section])
 
   return (
-    <aside className="flex h-full w-[320px] shrink-0 flex-col border-r bg-card/40">
+    <aside className="flex min-h-0 w-full flex-1 flex-col">
       <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
         {(() => {
           const t = TOOLS.find(([id]) => id === tab)
@@ -139,6 +145,18 @@ export function Panel({ item, items, cfg, selected, setSelected, setText, patch,
             </div>
           ) : null
         })()}
+
+        <TabsContent value="paths" className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 pt-1">
+          {!item ? <p className="pt-6 text-sm text-muted-foreground">Önce bir fotoğraf ekle.</p> : <PathsPanel paths={item.paths ?? []} {...pathsPanel} />}
+        </TabsContent>
+
+        <TabsContent value="actions" className="min-h-0 flex-1 overflow-hidden px-3 pb-2 pt-1">
+          <ActionsPanel {...actionsPanel} />
+        </TabsContent>
+
+        <TabsContent value="history" className="min-h-0 flex-1 overflow-y-auto px-3 pb-3 pt-1">
+          <HistoryPanel {...history} />
+        </TabsContent>
 
         <TabsContent value="crop" className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 pt-1">
           {!item ? (

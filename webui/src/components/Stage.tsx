@@ -1,7 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
-import { Columns2, Eye, ImagePlus, Loader2, Move, RotateCcw, Type, ZoomIn, ZoomOut } from "lucide-react"
-import { Button } from "@/components/ui/button"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import { Columns2, Eye, ImagePlus, Loader2, RotateCcw, ZoomIn, ZoomOut } from "lucide-react"
 import { StyleBar } from "@/components/StyleBar"
 import { CropEditor } from "@/components/CropEditor"
 import { LayerOverlay } from "@/components/LayerOverlay"
@@ -13,9 +11,10 @@ import type { LiquifyTool } from "@/lib/filters"
 import { LayerMaskOverlay } from "@/components/LayerMaskOverlay"
 import { FULL_QUAD, PerspEditor, type Quad } from "@/components/PerspEditor"
 import { MaskOverlay } from "@/components/MaskOverlay"
+import { PenOverlay } from "@/components/PenOverlay"
 import { SelectOverlay } from "@/components/SelectOverlay"
 import { canvasScale, canvasSize, cropOf, innerSize, legacyGeo, lockRatio, photoRect } from "@/lib/geo"
-import { useFit, usePreview } from "@/lib/hooks"
+import { useFit, useIntent, usePreview } from "@/lib/hooks"
 import { commonStyle } from "@/lib/text"
 import { cn } from "@/lib/utils"
 import type { BrushSettings, BrushTool, CloneSource, FilterItem, MaskPaintTool, Stroke, Config, Geo, ImgLayer, Item, Mask, Mode, SelectTool, Slice, Style, Watermark, XformMode } from "@/types"
@@ -24,7 +23,11 @@ type Props = {
   item?: Item
   cfg: Config
   mode: Mode
-  setMode: (m: Mode) => void
+  intent?: { cmd: string; n: number } | null // görünüm menüsü
+  nav?: "hand" | "zoom" | ""
+  pen?: { sel: string | null; setSel: (id: string | null) => void; onChange: (p: NonNullable<Item["paths"]>) => void; tool: import("@/types").PenTool } | null
+  layerName?: string
+  textTab?: boolean
   selected: number[]
   setSelected: (s: number[]) => void
   update: (fn: (it: Item) => Item) => void
@@ -122,7 +125,7 @@ function PickOverlay({ image, onPick }: { image: string; onPick: (rgb: [number, 
   return <div className="absolute inset-0 z-40 cursor-crosshair rounded-xl" onPointerDown={click} />
 }
 
-export function Stage({ item, cfg, mode, setMode, selected, setSelected, update, applyStyle, resetPosition, pickFiles, guides: guidesOn, wm, cropping, geoSrc, setGeo, perspEdit, lineMode, endLine, eraseMode, maskTool, putLayer, brushMode, brushTool, patchMode, filterEdit, pick, onPreview, source, setSource, armed, setArmed, onNeedSource, brush, setBrush, smoothing, onStroke, xform, onXformDone, sliceMode, sliceTool, sliceSel, setSliceSel, setSlices, designMode, layerSel, setLayerSel, setLayers, localMode, mask, maskShow, setMask, selTool }: Props) {
+export function Stage({ item, cfg, mode, intent, nav, pen, layerName, textTab, selected, setSelected, update, applyStyle, resetPosition, pickFiles, guides: guidesOn, wm, cropping, geoSrc, setGeo, perspEdit, lineMode, endLine, eraseMode, maskTool, putLayer, brushMode, brushTool, patchMode, filterEdit, pick, onPreview, source, setSource, armed, setArmed, onNeedSource, brush, setBrush, smoothing, onStroke, xform, onXformDone, sliceMode, sliceTool, sliceSel, setSliceSel, setSlices, designMode, layerSel, setLayerSel, setLayers, localMode, mask, maskShow, setMask, selTool }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const stageRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef<Drag | null>(null)
@@ -150,7 +153,9 @@ export function Stage({ item, cfg, mode, setMode, selected, setSelected, update,
   const [splitX, setSplitX] = useState(0.5)
   const showOrig = !cropping && (holdOrig || compare)
   const orig = usePreview(showOrig ? item : undefined, pw, null, true)
-  const [space, setSpace] = useState(false)
+  const [spaceKey, setSpace] = useState(false)
+  const space = spaceKey || nav === "hand"
+  const [grid, setGrid] = useState(false)
   const panRef = useRef<{ x: number; y: number; sl: number; st: number } | null>(null)
   const anchor = useRef<{ fx: number; fy: number; mx: number; my: number } | null>(null)
 
@@ -180,6 +185,14 @@ export function Stage({ item, cfg, mode, setMode, selected, setSelected, update,
   }, [zoom])
   useEffect(() => setZoom(1), [item?.id, cropping])
 
+  useIntent(intent, "view:", (cmd) => {
+    if (cmd === "view:in") zoomTo(zoom * 1.5)
+    else if (cmd === "view:out") zoomTo(zoom / 1.5)
+    else if (cmd === "view:fit") zoomTo(1)
+    else if (cmd === "view:100") zoomTo(zoom100)
+    else if (cmd === "view:compare") setCompare((c) => !c)
+    else if (cmd === "view:grid") setGrid((g) => !g)
+  })
   const zoomRef = useRef(zoomTo)
   zoomRef.current = zoomTo
   const zoomNow = useRef(zoom)
@@ -337,6 +350,7 @@ export function Stage({ item, cfg, mode, setMode, selected, setSelected, update,
       e.preventDefault()
       return
     }
+    if (nav === "zoom" && e.button === 0) return zoomTo(zoom * (e.altKey ? 1 / 1.5 : 1.5), { x: e.clientX, y: e.clientY })
     if (e.button !== 0 || !item || localMode) return
     stageRef.current?.focus()
     const rect = stageRef.current!.getBoundingClientRect()
@@ -474,78 +488,6 @@ export function Stage({ item, cfg, mode, setMode, selected, setSelected, update,
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
-      {cropping && item ? (
-        <div className="flex h-[52px] items-center justify-between gap-3 px-5 pb-1 pt-4">
-          <span className="text-xs font-semibold tracking-wider text-muted-foreground">KIRP</span>
-          <span className="truncate text-xs text-muted-foreground">
-            Çerçeveyi sürükle · Köşelerden boyutlandır · Çift tık: sıfırla · Bitince başka bir sekmeye geç
-          </span>
-        </div>
-      ) : (
-      <div className="flex items-center justify-between gap-3 px-5 pb-1 pt-4">
-        <div className="flex items-center gap-3">
-          <span className="text-xs font-semibold tracking-wider text-muted-foreground">ÖNİZLEME</span>
-          <ToggleGroup
-            type="single"
-            size="sm"
-            value={mode}
-            onValueChange={(v) => v && setMode(v as Mode)}
-            className="rounded-lg bg-muted p-0.5"
-          >
-            <ToggleGroupItem value="block" className="h-7 gap-1.5 whitespace-nowrap text-xs">
-              <Move className="h-3.5 w-3.5" /> Tüm metin
-            </ToggleGroupItem>
-            <ToggleGroupItem value="word" className="h-7 gap-1.5 whitespace-nowrap text-xs">
-              <Type className="h-3.5 w-3.5" /> Tek kelime
-            </ToggleGroupItem>
-          </ToggleGroup>
-        </div>
-        <div className="flex items-center gap-3">
-          <div className="flex items-center rounded-lg bg-muted p-0.5">
-            <Button variant="ghost" size="icon-sm" className="h-7 w-7" aria-label="Uzaklaştır" title="Uzaklaştır (Ctrl −)" disabled={!item || zoom <= 1} onClick={() => zoomTo(zoom / 1.5)}>
-              <ZoomOut className="h-3.5 w-3.5" />
-            </Button>
-            <button
-              className="min-w-[52px] px-1 text-xs tabular-nums text-muted-foreground hover:text-foreground disabled:opacity-50"
-              title="Sığdır / %100 (Ctrl+0 / Ctrl+1) · Ctrl+tekerlek: yakınlaştır · Boşluk+sürükle: gez"
-              disabled={!item}
-              onClick={() => zoomTo(zoom > 1 ? 1 : zoom100)}
-            >
-              {zoom === 1 ? "Sığdır" : `${Math.round((zoom * fit.w * 100) / W)}%`}
-            </button>
-            <Button variant="ghost" size="icon-sm" className="h-7 w-7" aria-label="Yakınlaştır" title="Yakınlaştır (Ctrl +)" disabled={!item || zoom >= maxZoom} onClick={() => zoomTo(zoom * 1.5)}>
-              <ZoomIn className="h-3.5 w-3.5" />
-            </Button>
-          </div>
-          <Button
-            variant={compare ? "secondary" : "ghost"}
-            size="sm"
-            disabled={!item}
-            onClick={() => setCompare((c) => !c)}
-            className={cn("h-8 text-xs", compare && "text-primary")}
-            title="Önce/sonra: ortadaki çizgiyi sürükle"
-          >
-            <Columns2 className="!size-3.5" /> Karşılaştır
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={!item}
-            className="h-8 select-none text-xs"
-            title="Basılı tut: düzenlenmemiş hali (klavyede Ö ya da \)"
-            onPointerDown={() => setHoldOrig(true)}
-            onPointerUp={() => setHoldOrig(false)}
-            onPointerLeave={() => setHoldOrig(false)}
-          >
-            <Eye className="!size-3.5" /> Önce
-          </Button>
-          <Button variant="ghost" size="icon-sm" onClick={resetPosition} disabled={!item} aria-label="Konumu sıfırla" title="Yazının konumunu sıfırla">
-            <RotateCcw className="!size-3.5" />
-          </Button>
-        </div>
-      </div>
-      )}
-
       <div ref={wrapRef} className="relative flex min-h-0 flex-1 overflow-auto">
         {!item ? (
           <button
@@ -621,7 +563,7 @@ export function Stage({ item, cfg, mode, setMode, selected, setSelected, update,
               onPointerMove={onPointerMove}
               onPointerUp={onPointerUp}
               onPointerLeave={() => !dragRef.current && setHover(null)}
-              style={{ cursor: panRef.current ? "grabbing" : space ? "grab" : dragging ? "grabbing" : hover != null ? "grab" : "default" }}
+              style={{ cursor: nav === "zoom" ? "zoom-in" : panRef.current ? "grabbing" : space ? "grab" : dragging ? "grabbing" : hover != null ? "grab" : "default" }}
             >
               {boxes.map((b) => {
                 const sel = selected.includes(b.idx)
@@ -664,6 +606,7 @@ export function Stage({ item, cfg, mode, setMode, selected, setSelected, update,
               ))}
             </div>
 
+            {grid && <div className="pointer-events-none absolute inset-0" style={{ backgroundImage: "linear-gradient(to right, rgba(255,255,255,.28) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,.28) 1px, transparent 1px)", backgroundSize: `${size.w / 12}px ${size.w / 12}px` }} />}
             {eraseMode && !holdOrig && maskTool && putLayer && (() => {
               const ly = (item.layers ?? []).find((l) => l.id === layerSel?.[0])
               return ly ? <LayerMaskOverlay layer={ly} mode={eraseMode} tool={maskTool} onChange={(p) => putLayer(ly.id, p)} w={size.w} h={size.h} /> : null
@@ -675,6 +618,7 @@ export function Stage({ item, cfg, mode, setMode, selected, setSelected, update,
             ) : (
               <BrushOverlay w={size.w} h={size.h} tool={brushTool ?? "brush"} brush={brush} smoothing={smoothing ?? 0} setBrush={setBrush} onStroke={onStroke} preview={preview?.image ?? null} source={source} setSource={setSource} armed={armed} setArmed={setArmed} onNeedSource={onNeedSource} />
             ))}
+            {pen && !holdOrig && <PenOverlay paths={item.paths ?? []} {...pen} w={size.w} h={size.h} />}
             {sliceMode && !holdOrig && setSlices && setSliceSel && (
               <SliceOverlay slices={item.slices ?? []} tool={sliceTool ?? "draw"} sel={sliceSel ?? null} setSel={setSliceSel} onChange={setSlices} w={size.w} h={size.h} />
             )}
@@ -714,18 +658,27 @@ export function Stage({ item, cfg, mode, setMode, selected, setSelected, update,
                 )}
               </>
             )}
-            {(busy || (showOrig && orig.busy)) && !compare && !holdOrig && (
-              <div className="pointer-events-none absolute right-2 top-2 flex items-center gap-1.5 rounded-full bg-background/80 px-2.5 py-1 text-[11px] text-muted-foreground backdrop-blur">
-                <Loader2 className="h-3 w-3 animate-spin" /> güncelleniyor
-              </div>
-            )}
-
             {common && barStyle && !dragging && (
               <StyleBar common={common} count={selected.length} apply={applyStyle} onClose={() => setSelected([])} style={barStyle} />
             )}
 
           </div>
         )}
+      </div>
+
+      <div className="flex h-6 shrink-0 items-center gap-3 border-t bg-card px-2 text-[11px] text-muted-foreground">
+        <div className="flex items-center">
+          <button aria-label="Uzaklaştır" title="Uzaklaştır (Ctrl −)" disabled={!item || zoom <= 1} onClick={() => zoomTo(zoom / 1.5)} className="p-0.5 hover:text-foreground disabled:opacity-40"><ZoomOut className="h-3 w-3" /></button>
+          <button className="min-w-[46px] tabular-nums hover:text-foreground disabled:opacity-50" title="Sığdır / %100 (Ctrl+0 / Ctrl+1) · Ctrl+tekerlek: yakınlaştır · Boşluk+sürükle: gez" disabled={!item} onClick={() => zoomTo(zoom > 1 ? 1 : zoom100)}>{Math.round((zoom * fit.w * 100) / W)}%</button>
+          <button aria-label="Yakınlaştır" title="Yakınlaştır (Ctrl +)" disabled={!item || zoom >= maxZoom} onClick={() => zoomTo(zoom * 1.5)} className="p-0.5 hover:text-foreground disabled:opacity-40"><ZoomIn className="h-3 w-3" /></button>
+        </div>
+        {item && <span className="tabular-nums">{W} × {H} px</span>}
+        {layerName && <span className="truncate">Katman: {layerName}</span>}
+        <span className="flex-1" />
+        {(busy || (showOrig && orig.busy)) && <span className="flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> güncelleniyor</span>}
+        {textTab && <button disabled={!item} onClick={resetPosition} title="Yazının konumunu sıfırla" className="flex items-center gap-1 hover:text-foreground"><RotateCcw className="h-3 w-3" /> Yazıyı Ortala</button>}
+        <button disabled={!item} onClick={() => setCompare((c) => !c)} title="Önce/sonra: ortadaki çizgiyi sürükle" className={cn("flex items-center gap-1 hover:text-foreground disabled:opacity-50", compare && "text-primary")}><Columns2 className="h-3 w-3" /> Karşılaştır</button>
+        <button disabled={!item} className="flex select-none items-center gap-1 hover:text-foreground disabled:opacity-50" title="Basılı tut: düzenlenmemiş hali (klavyede Ö)" onPointerDown={() => setHoldOrig(true)} onPointerUp={() => setHoldOrig(false)} onPointerLeave={() => setHoldOrig(false)}><Eye className="h-3 w-3" /> Önce</button>
       </div>
     </div>
   )

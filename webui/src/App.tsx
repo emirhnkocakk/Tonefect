@@ -1,10 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { ArrowUpCircle, Loader2, Redo2, Settings as Cog, Sparkles, Undo2 } from "lucide-react"
+import { ArrowUpCircle, Download, Loader2, Redo2, Settings as Cog, Undo2 } from "lucide-react"
 import { Toaster, toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { Filmstrip } from "@/components/Filmstrip"
 import { SaveMenu } from "@/components/SaveMenu"
+import { OptionsBar } from "@/components/OptionsBar"
+import { DocTabs } from "@/components/DocTabs"
+import { KeysDialog } from "@/components/KeysDialog"
+import { comboOf, keyOf, SHORTCUTS, TYPING } from "@/lib/shortcuts"
+import { stepName } from "@/lib/history"
+import { capPoints, flatten, newPathId, nodesFromBox } from "@/lib/paths"
+import { MAX_MASKS } from "@/components/MaskPanel"
+import { addStep, diffItem, newActionId, playAction, type Action, type Op } from "@/lib/actions"
 import { COLOR_FORMATS, saveAs } from "@/lib/save"
 import { LayersPanel } from "@/components/LayersPanel"
 import { MenuBar, type Menu } from "@/components/MenuBar"
@@ -20,7 +28,7 @@ import { createLayer, LAYER_SECTIONS, LAYER_TOOLS, newId } from "@/lib/layerops"
 import { layerUV } from "@/lib/design"
 import { FILTER_SECTIONS, FILTER_TOOLS, type LiquifyTool } from "@/lib/filters"
 import { BRUSH_SECTIONS, BRUSH_TOOLS, DEFAULT_BRUSH } from "@/lib/brushes"
-import { XFORM_SECTIONS, XFORM_TOOLS, xformDelta, type XformDelta } from "@/lib/transform"
+import { XFORM_TOOLS, xformDelta, type XformDelta } from "@/lib/transform"
 import { Stage } from "@/components/Stage"
 import { Panel } from "@/components/Panel"
 import { GenerateDialog } from "@/components/GenerateDialog"
@@ -28,17 +36,17 @@ import { UpdateDialog } from "@/components/UpdateDialog"
 import { SettingsDialog } from "@/components/SettingsDialog"
 import { api } from "@/lib/api"
 import { mergeStyle, naturalSort, remap, words } from "@/lib/text"
-import { legacyGeo, naturalSize, canvasSize } from "@/lib/geo"
+import { legacyGeo, naturalSize, canvasSize, photoRect } from "@/lib/geo"
 import { applyTheme, isLightTheme } from "@/lib/themes"
-import { BASE_ID, effectiveItem, removeLayer, withBase, type Layer } from "@/lib/layers"
-import type { BrushSettings, BrushTool, CloneSource, FilterItem, MaskPaintTool, Stroke, Config, ExportOpts, Geo, ImgLayer, Item, Job, Mask, Mode, SelectTool, PresetMeta, Settings, Slice, Style, XformMode, UpdateInfo, Watermark } from "@/types"
+import { BASE_ID, effectiveItem, psdItem, removeLayer, withBase, type Layer } from "@/lib/layers"
+import type { PenTool, VPath, BrushSettings, BrushTool, CloneSource, FilterItem, MaskPaintTool, Stroke, Config, ExportOpts, Geo, ImgLayer, Item, Job, Mask, Mode, SelectTool, PresetMeta, Settings, Slice, Style, XformMode, UpdateInfo, Watermark } from "@/types"
 
 // Yeni fotoğraflar olduğu gibi açılır; görünüm ve efektleri kullanıcı kendisi seçer.
 const DEFAULT_FX: Item["fx"] = { bw: false, grain: 0, vignette: 0, preset: "b:original", amount: 1, adjust: {} }
 const SETTINGS_VERSION = 3
 const DEFAULT_EXPORT: Settings["export"] = { format: "jpg", quality: 95, naming: "number", exif: false }
 const DEFAULTS: Settings = { outDir: "output", tone: "quiet", fx: DEFAULT_FX, guides: true, export: DEFAULT_EXPORT, aspect: "original", theme: "dark", v: SETTINGS_VERSION }
-const IMG = /\.(jpe?g|png|webp)$/i
+const IMG = /\.(jpe?g|png|webp|psd)$/i
 const HISTORY_MAX = 100
 const HISTORY_GROUP_MS = 600 // art arda gelen değişiklikler (sürükleme, yazma) tek adım sayılır
 
@@ -61,7 +69,19 @@ export default function App() {
   const [wm, setWm] = useState<Watermark | null>(null)
   const [tab, setTabRaw] = useState("") // "" = panel kapalı
   const [project, setProject] = useState<{ id: string; name: string } | null>(null)
-  const [showStrip, setShowStrip] = useState(true)
+  const [showStrip, setShowStrip] = useState(false)
+  const [showTools, setShowTools] = useState(true)
+  const [showOptions, setShowOptions] = useState(true)
+  const [showLayers, setShowLayers] = useState(true)
+  const [bare, setBare] = useState(false) // Tab: tüm paneller gizli
+  const [keysOpen, setKeysOpen] = useState(false)
+  const [layersH, setLayersH] = useState(() => {
+    try {
+      return Number(localStorage.getItem("dock-layers")) || 300
+    } catch {
+      return 300
+    }
+  })
   const [section, setSection] = useState<{ id: string; n: number } | null>(null)
   const [intent, setIntent] = useState<{ cmd: string; n: number } | null>(null)
   const pickAfterOpen = useRef(false)
@@ -187,6 +207,24 @@ export default function App() {
     }
   }, [project])
 
+  // Eylemler: kayıt durumu travel'dan önce tanımlı olmalı
+  const [actions, setActions] = useState<Action[]>([])
+  const [actionsLoaded, setActionsLoaded] = useState(false)
+  const [recording, setRecording] = useState<string | null>(null)
+  const [playing, setPlaying] = useState<string | null>(null)
+  const rec = useRef<{ id: string; prev: Item[]; skip: boolean; auto: string | null } | null>(null)
+  useEffect(() => {
+    api.actions().then((r) => {
+      setActions(r.actions)
+      setActionsLoaded(true)
+    }).catch((e) => toast.error("Eylemler yüklenemedi: " + e.message))
+  }, [])
+  useEffect(() => {
+    if (!actionsLoaded) return
+    const t = setTimeout(() => api.saveActions(actions).catch((e) => toast.error(e.message)), 500)
+    return () => clearTimeout(t)
+  }, [actions, actionsLoaded])
+
   // geri al / yinele geçmişi
   const hist = useRef({ past: [] as Item[][], future: [] as Item[][], prev: null as Item[] | null, at: 0, skip: false })
   const [histLen, setHistLen] = useState({ past: 0, future: 0 })
@@ -215,6 +253,13 @@ export default function App() {
     const h = hist.current
     const target = (dir === "undo" ? h.past : h.future).pop()
     if (!target) return
+    if (rec.current) {
+      rec.current.skip = true
+      if (dir === "undo") {
+        const id = rec.current.id
+        setActions((l) => l.map((a) => (a.id === id ? { ...a, steps: a.steps.slice(0, -1) } : a)))
+      }
+    }
     const now = itemsRef.current
     ;(dir === "undo" ? h.future : h.past).push(now)
     h.skip = true
@@ -227,32 +272,43 @@ export default function App() {
     else if (!target.some((t) => t.id === cur)) setCurrentId(target[0]?.id ?? null)
   }, [])
 
+  // tüm kısayollar lib/shortcuts.ts tablosundan; araç harfleri ToolBox'ta, yakınlaştırma Stage'de
+  const keyRef = useRef<(e: KeyboardEvent) => void>(() => {})
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (!(e.ctrlKey || e.metaKey) || e.altKey) return
-      const el = e.target as HTMLElement | null
-      // metin alanlarında tarayıcının kendi geri alması çalışsın
-      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return
-      const z = e.code === "KeyZ" || e.key.toLowerCase() === "z"
-      const y = e.code === "KeyY" || e.key.toLowerCase() === "y"
-      // Ctrl+C / Ctrl+V (ya da Shift ile): renk ve efekt ayarlarını kopyala/yapıştır; seçili yazı varsa tarayıcıya bırak
-      const noText = !window.getSelection()?.toString()
-      if (e.code === "KeyS") e.shiftKey ? saveRef.current.saveAs(false) : saveRef.current.save()
-      else if (e.code === "KeyC" && noText) clipRef.current.copyFx()
-      else if (e.code === "KeyV") clipRef.current.pasteFx()
-      else if (z && !e.shiftKey) travel("undo")
-      else if ((z && e.shiftKey) || y) travel("redo")
-      else return
-      e.preventDefault()
-    }
+    const onKey = (e: KeyboardEvent) => keyRef.current(e)
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [travel])
+  }, [])
 
   const item = useMemo(() => {
     const it = items.find((i) => i.id === currentId)
     return it && withBase(it)
   }, [items, currentId])
+  // kayıt: fotoğraftaki her değişiklik bir adım olur
+  useEffect(() => {
+    const r = rec.current
+    if (!r) return
+    const before = r.prev
+    r.prev = items
+    if (r.skip) {
+      r.skip = false
+      return
+    }
+    const a = before.find((x) => x.id === currentId)
+    const b = items.find((x) => x.id === currentId)
+    if (!a || !b || a === b) return
+    let ops: Op[] = diffItem(withBase(a), withBase(b))
+    if (!ops.length) return
+    // Otomatik Ton gibi işlemler sabit değer değil, her fotoğrafta yeniden hesaplanacak komut olarak yazılır
+    const only = ops.length === 1 ? ops[0] : null
+    if (r.auto && only?.t === "patch" && only.path === "fx.color" && "levels" in only.value) {
+      ops = [{ t: "auto", kind: r.auto }]
+      r.auto = null
+    }
+    const id = r.id
+    setActions((l) => l.map((x) => (x.id === id ? { ...x, steps: addStep(x.steps, ops) } : x)))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items])
   useEffect(() => setSelected([]), [currentId])
   // metin kısalınca artık olmayan kelimeler seçili kalmasın
   const wordCount = item ? words(item.text).length : 0
@@ -381,6 +437,21 @@ export default function App() {
   }
 
   const setMasks = (masks: Mask[]) => update((it) => ({ ...it, fx: { ...it.fx, masks } }))
+  /** Ctrl+A / Ctrl+D. Ayarı olan seçimler yerel düzenleme olarak kalır, yalnızca etkinliği biter. */
+  const selectAll = (on: boolean) => {
+    if (!item) return
+    const all = item.fx.masks ?? []
+    if (!on) {
+      const plain = (m: Mask) => m.type === "select" && !m.fill && !Object.keys(m.adjust ?? {}).length
+      if (!all.some((m) => m.type === "select")) return
+      setMaskSel(null)
+      return setMasks(all.filter((m) => !plain(m)))
+    }
+    const m: Mask = { id: newId(), type: "select", ops: [{ kind: "rect", box: [0, 0, 1, 1], add: true }], feather: 0, invert: false, adjust: {} }
+    setMasks([...all, m])
+    setMaskSel(m.id)
+    setTabRaw("select")
+  }
   const setMask = (p: Partial<Mask>) =>
     update((it) => ({ ...it, fx: { ...it.fx, masks: (it.fx.masks ?? []).map((m) => (m.id === maskSel ? { ...m, ...p } : m)) } }))
   useEffect(() => setMaskSel(null), [currentId])
@@ -405,17 +476,132 @@ export default function App() {
   const toggleGroup = (id: string) => update((it) => ({ ...it, groups: (it.groups ?? []).map((g) => (g.id === id ? { ...g, open: !g.open } : g)) }))
   const renameGroup = (id: string, name: string) => update((it) => ({ ...it, groups: (it.groups ?? []).map((g) => (g.id === id ? { ...g, name } : g)) }))
   /** Fotoğrafı (ids verilirse yalnızca o katmanlarla) tek görsele çizer ve yeni Arka Plan yapar; renk, efekt ve rötuş artık onun üstünde çalışır. */
+  const bakeItem = async (it: Item, ids?: string[]): Promise<Item> => {
+    const r = await api.layersFlatten({ item: effectiveItem(it), ids })
+    const keep = ids ? (it.layers ?? []).filter((l) => l.id !== BASE_ID && !ids.includes(l.id)) : []
+    return {
+      ...it, id: r.id, src: [r.width, r.height], geo: geoForPreset("original"), fx: { ...DEFAULT_FX }, paint: undefined, layers: keep,
+      groups: ids ? it.groups : [], text: ids ? it.text : "", styles: ids ? it.styles : [], offsets: ids ? it.offsets : {},
+      hidden: ids ? (it.hidden ?? []).filter((k) => keep.some((l) => k === `img:${l.id}`)) : [],
+    }
+  }
+  const visibleIds = (it: Item) => {
+    const eff = effectiveItem(it)
+    const off = new Set(eff.hidden ?? [])
+    return (eff.layers ?? []).filter((l) => !off.has(`img:${l.id}`)).map((l) => l.id)
+  }
   const bakeIntoPhoto = async (ids?: string[]) => {
     if (!item) return
     const was = item.id
-    const r = await api.layersFlatten({ item: effectiveItem(item), ids })
-    const keep = ids ? (item.layers ?? []).filter((l) => l.id !== BASE_ID && !ids.includes(l.id)) : []
-    setItems((a) => a.map((i) => i.id !== was ? i : {
-      ...i, id: r.id, src: [r.width, r.height], geo: geoForPreset("original"), fx: { ...DEFAULT_FX }, paint: undefined, layers: keep,
-      groups: ids ? i.groups : [], text: ids ? i.text : "", styles: ids ? i.styles : [], offsets: ids ? i.offsets : {},
-      hidden: ids ? (i.hidden ?? []).filter((k) => keep.some((l) => k === `img:${l.id}`)) : [],
-    }))
-    setCurrentId(r.id)
+    const next = await bakeItem(item, ids)
+    setItems((a) => a.map((i) => (i.id === was ? next : i)))
+    setCurrentId(next.id)
+  }
+  const recordCmd = (cmd: "flatten" | "mergevis") => {
+    if (!rec.current) return
+    const id = rec.current.id
+    setActions((l) => l.map((x) => (x.id === id ? { ...x, steps: [...x.steps, { id: newActionId(), ops: [{ t: "cmd", cmd }] }] } : x)))
+  }
+  const startRecord = (id: string) => {
+    rec.current = { id, prev: itemsRef.current, skip: false, auto: null }
+    setRecording(id)
+  }
+  const stopRecord = () => {
+    rec.current = null
+    setRecording(null)
+  }
+  const playOne = (a: Action, it: Item) => playAction(it, a.steps, {
+    auto: (x, kind) => api.colorAuto({ photo: x.id, geo: x.geo ?? null, fx: x.fx, kind }).then((r) => r.levels),
+    bake: (x, op) => (op === "flatten" ? bakeItem(x) : bakeItem(x, visibleIds(x))),
+  })
+  /** Eylemi oynatır. Tamamı tek geri alma adımıdır; bir fotoğrafta hata olursa o fotoğraf atlanır. */
+  const runAction = async (a: Action, batch: boolean, exportAfter: boolean) => {
+    const targets = batch ? items : items.filter((i) => i.id === currentId)
+    if (!targets.length) return
+    setPlaying(batch ? "batch" : "one")
+    const done = new Map<string, Item>()
+    let failed = 0
+    for (const it of targets) {
+      try {
+        done.set(it.id, await playOne(a, it))
+      } catch (e: any) {
+        failed++
+        toast.error(`${it.name}: ${e.message}`)
+      }
+    }
+    const next = itemsRef.current.map((i) => done.get(i.id) ?? i)
+    setItems(next)
+    const cur = currentRef.current
+    if (cur && done.has(cur)) setCurrentId(done.get(cur)!.id)
+    setPlaying(null)
+    toast.success(batch ? `"${a.name}" ${done.size} fotoğrafa uygulandı${failed ? `, ${failed} atlandı` : ""}` : `"${a.name}" uygulandı; Ctrl+Z ile geri alabilirsin`)
+    if (exportAfter && done.size) generateRef.current(next)
+  }
+  // Kalem ve Yollar
+  const [penTool, setPenTool] = useState<PenTool>("pen")
+  const [pathSel, setPathSel] = useState<string | null>(null)
+  useEffect(() => setPathSel(null), [currentId])
+  const setPaths = (paths: VPath[]) => update((it) => ({ ...it, paths }))
+  const pathOp = (op: string) => {
+    if (!item) return
+    const [W, H] = canvasSize(item.geo, item.src) ?? [1080, 1350]
+    const [rx, ry, rw, rh] = photoRect(item.geo, item.src)
+    if (op === "fromsel") {
+      // seçim fotoğrafa göre, yol tuvale göre
+      const to = ([x, y]: [number, number]): [number, number] => [rx + x * rw, ry + y * rh]
+      const sels = (item.fx.masks ?? []).filter((m) => m.type === "select" && m.ops?.length)
+      const m = sels.find((x) => x.id === maskSel) ?? sels[sels.length - 1]
+      const last = m?.ops?.[m.ops.length - 1]
+      let nodes: VPath["nodes"] | null = null
+      if (last && (last.kind === "rect" || last.kind === "ellipse")) {
+        const a = to([last.box[0], last.box[1]])
+        const b = to([last.box[2], last.box[3]])
+        nodes = nodesFromBox(last.kind, [a[0], a[1], b[0], b[1]])
+      } else if (last && (last.kind === "poly" || last.kind === "magnetic")) nodes = capPoints(last.pts, 200).map((p) => ({ p: to(p) }))
+      if (!nodes) return void toast("Yol yalnızca çerçeve, elips ve kement seçimlerinden oluşturulabilir")
+      const p: VPath = { id: newPathId(), name: `Yol ${(item.paths?.length ?? 0) + 1}`, closed: true, nodes }
+      setPaths([...(item.paths ?? []), p])
+      setPathSel(p.id)
+      return setTabRaw("paths")
+    }
+    const all = item.paths ?? []
+    const cur = all.find((p) => p.id === pathSel) ?? all[all.length - 1]
+    if (!cur || cur.nodes.length < 2) return void toast("Önce Kalem ile bir yol çiz")
+    const pts = flatten(cur)
+    if (op === "stroke") {
+      const closed = cur.closed ? [...pts, pts[0]] : pts
+      addStroke({ tool: "brush", pts: capPoints(closed, 5000).map(([x, y]) => [x, y, 1]), seed: Math.floor(Math.random() * 1e9), b: brush })
+      return void toast.success("Yol geçerli fırçayla konturlandı")
+    }
+    if (cur.nodes.length < 3 && !pts.some((_, i) => i > 1) && op !== "stroke") return void toast("Bu işlem için en az üç noktalı ya da eğri bir yol gerekir")
+    if (op === "selection") {
+      const masks = item.fx.masks ?? []
+      if (masks.length >= MAX_MASKS) return void toast.error(`En fazla ${MAX_MASKS} seçim ve yerel düzenleme olabilir`)
+      const m: Mask = { id: newId(), type: "select", ops: [{ kind: "poly", pts: capPoints(pts, 2000).map(([x, y]) => [(x - rx) / rw, (y - ry) / rh]), add: true }], feather: 0, invert: false, adjust: {} }
+      setMasks([...masks, m])
+      setMaskSel(m.id)
+      setTabRaw("select")
+      return void toast.success("Yol seçime çevrildi")
+    }
+    if (op === "mask") {
+      const target = (item.layers ?? []).find((l) => l.id === (layerSel[0] ?? BASE_ID))
+      if (!target) return
+      if (target.kind === "adjust") return void toast("Vektör maske ayar katmanına uygulanamaz")
+      const uv = capPoints(pts, 400).map(([x, y]) => layerUV(target, W, H, x * W, y * H))
+      putLayer(target.id, { vector: { kind: "path", pts: uv } })
+      return void toast.success(`Vektör maske "${target.name}" katmanına uygulandı`)
+    }
+    if (op === "fill") {
+      const xs = pts.map((p) => p[0])
+      const ys = pts.map((p) => p[1])
+      const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)]
+      if (x1 - x0 < 1e-4 || y1 - y0 < 1e-4) return void toast("Yol doldurulamayacak kadar ince")
+      const base = createLayer("shape", W, H, (item.layers?.length ?? 0) + 1)
+      const ly: ImgLayer = { ...base, name: `${cur.name} Dolgusu`, x: (x0 + x1) / 2, y: (y0 + y1) / 2, w: x1 - x0, ar: ((y1 - y0) * H) / ((x1 - x0) * W), shapeDef: { type: "path", pts: capPoints(pts, 3000).map(([x, y]) => [(x - x0) / (x1 - x0), (y - y0) / (y1 - y0)]), color: brush.color, stroke: "#FFFFFF", strokeW: 0, radius: 0 } }
+      setLayers([...(item.layers ?? []), ly])
+      setLayerSel([ly.id])
+      toast.success("Yol ön plan rengiyle dolduruldu")
+    }
   }
   const layerCommand = async (cmd: string) => {
     if (!item) return
@@ -425,9 +611,31 @@ export default function App() {
     const free = chosen.filter((l) => !l.locked && l.id !== BASE_ID)
     const [, op, arg] = cmd.split(":")
     const [W, H] = canvasSize(item.geo, item.src) ?? [1080, 1350]
+    if (op === "base") {
+      setLayerSel([BASE_ID])
+      return setTabRaw("design")
+    }
+    if (op === "via") {
+      // Photoshop'taki Ctrl+J: seçim varsa seçili alan yeni katman olur, yoksa katman çoğalır
+      const sels = (item.fx.masks ?? []).filter((m) => m.type === "select" && m.ops?.length)
+      const m = sels.find((x) => x.id === maskSel) ?? sels[sels.length - 1]
+      if (m) return void selectionToLayer(arg === "cut", m.id)
+      if (arg === "cut") return void toast("Önce kesilecek alanı seç")
+      return void layerCommand("layer:dup")
+    }
+    if (op === "front" || op === "back" || op === "forward" || op === "backward") {
+      const floor = all[0]?.id === BASE_ID ? 1 : 0
+      const moving = chosen.filter((l) => l.id !== BASE_ID)
+      if (!moving.length) return void toast("Arka Plan her zaman en altta kalır")
+      const rest = all.filter((l) => !moving.includes(l))
+      const low = all.indexOf(moving[0])
+      const high = all.indexOf(moving[moving.length - 1])
+      const at = op === "front" ? rest.length : op === "back" ? floor : op === "forward" ? Math.min(rest.length, high - moving.length + 2) : Math.max(floor, low - 1)
+      return setLayers([...rest.slice(0, at), ...moving, ...rest.slice(at)])
+    }
     const map = (fn: (l: ImgLayer) => ImgLayer) => setLayers(all.map((l) => (picked.includes(l.id) ? fn(l) : l)))
     if (op === "new") {
-      if (all.length >= 40) return void toast("En fazla 40 katman eklenebilir")
+      if (all.length >= 200) return void toast("En fazla 200 katman eklenebilir")
       const ly = createLayer(arg as "blank", W, H, all.length + 1)
       setLayers([...all, ly])
       setLayerSel([ly.id])
@@ -457,6 +665,7 @@ export default function App() {
       try {
         if (op === "flatten") {
           await bakeIntoPhoto()
+          recordCmd("flatten")
           return void toast.success("Görüntü düzleştirildi; Geri Al ile dönebilirsin")
         }
         const eff = effectiveItem(item)
@@ -464,10 +673,13 @@ export default function App() {
         const visible = (eff.layers ?? []).filter((l) => !off.has(`img:${l.id}`))
         const baseShown = visible.some((l) => l.id === BASE_ID)
         // ayar katmanları yalnızca fotoğrafın üstünde anlamlı: fotoğraf birleşmiyorsa dışarıda kalır
-        const ids = op === "merge" ? picked : visible.filter((l) => baseShown || l.kind !== "adjust").map((l) => l.id)
+        const below = all[all.indexOf(chosen[0]) - 1] // tek katman seçiliyse altındakiyle birleşir
+        const ids = op === "merge" ? (picked.length === 1 && below ? [below.id, picked[0]] : picked) : visible.filter((l) => baseShown || l.kind !== "adjust").map((l) => l.id)
         if (ids.length < 2) return void toast(op === "merge" ? "Birleştirmek için en az iki katman seç" : "Birleştirilecek görünür katman yok")
         if (ids.includes(BASE_ID)) {
           await bakeIntoPhoto(ids)
+          if (op === "mergevis") recordCmd("mergevis")
+          else if (rec.current) toast("Seçili katmanları birleştirme eyleme kaydedilmedi; Görünenleri Birleştir kaydedilir")
           return void toast.success("Katmanlar Arka Plan ile birleştirildi")
         }
         const r = await api.layersMerge({ item: eff, ids })
@@ -632,11 +844,19 @@ export default function App() {
 
   const addFiles = async (files: File[]) => {
     const list = files.filter((f) => IMG.test(f.name)).sort(naturalSort)
-    if (!list.length) return toast.error("Desteklenen fotoğraf bulunamadı (jpg, png, webp)")
+    if (!list.length) return toast.error("Desteklenen dosya bulunamadı (jpg, png, webp, psd)")
     setUploading(true)
     let last: string | null = null
     for (const f of list) {
       try {
+        if (/\.psd$/i.test(f.name)) {
+          const d = await api.importPsd(f)
+          const it = { ...newItem(d.id, d.name, DEFAULT_FX, settings.tone), src: [d.width, d.height] as [number, number], geo: geoForPreset("original"), layers: d.layers, groups: d.groups, hidden: d.hidden }
+          setItems((a) => [...a, it])
+          last = last ?? d.id
+          d.warnings.forEach((w) => toast.warning(w, { duration: 10000 }))
+          continue
+        }
         const r = await api.upload(f)
         const geo = geoForPreset(settings.aspect)
         const it = { ...newItem(r.id, r.name, settings.fx, settings.tone), src: [r.width, r.height] as [number, number], geo }
@@ -694,14 +914,14 @@ export default function App() {
     })
 
   // one: yalnızca o fotoğrafı dışa aktar (toplu manifest.json'a dokunulmaz)
-  const generate = async (one?: Item, slices = false) => {
+  const generate = async (one?: Item, slices = false, list: Item[] = items) => {
     // metin isteğe bağlı: metinsiz fotoğraflar yalnızca renk/efektle üretilir
-    if (!items.length) return toast.error("Önce fotoğraf ekle")
+    if (!list.length) return toast.error("Önce fotoğraf ekle")
     setJob(null)
     setDlg(true)
     try {
       const { job: id } = await api.generate({
-        items: (one ? [one] : items).map(effectiveItem), outDir: settings.outDir, export: settings.export, single: !!one, slices,
+        items: (one ? [one] : list).map(effectiveItem), outDir: settings.outDir, export: settings.export, single: !!one, slices,
       })
       setJobId(id)
       for (;;) {
@@ -716,12 +936,15 @@ export default function App() {
     }
   }
 
-  const saveFile = async (copy: boolean) => {
+  const generateRef = useRef((_list: Item[]) => {})
+  generateRef.current = (list) => void generate(undefined, false, list)
+
+  const saveFile = async (copy: boolean, psd = false) => {
     if (!item) return
-    const ex: ExportOpts = { format: "jpg", quality: 95, naming: "number", exif: false, ...settings.export }
-    const formats = COLOR_FORMATS[ex.color ?? "rgb"]
+    const ex: ExportOpts = { format: "jpg", quality: 95, naming: "number", exif: false, ...settings.export, ...(psd ? { format: "psd" as const, color: "rgb" as const } : {}) }
+    const formats = psd ? (["psd"] as ExportOpts["format"][]) : COLOR_FORMATS[ex.color ?? "rgb"]
     try {
-      const name = await saveAs(effectiveItem(item), ex, formats, copy)
+      const name = await saveAs(ex.format === "psd" ? psdItem(item) : effectiveItem(item), ex, formats, copy)
       if (name) toast.success(`Kaydedildi: ${name}`)
     } catch (e: any) {
       toast.error(e.message)
@@ -735,6 +958,24 @@ export default function App() {
     if (sec) setSection({ id: sec, n: ++intentSeq })
   }
   const command = (cmd: string) => {
+    if (cmd.startsWith("color:auto:") && rec.current) rec.current.auto = cmd.slice(11)
+    if (cmd.startsWith("pen:tool:")) {
+      setPenTool(cmd.slice(9) as PenTool)
+      return setTabRaw("paths")
+    }
+    if (cmd.startsWith("path:")) return pathOp(cmd.slice(5))
+    if (cmd.startsWith("view:")) return setIntent({ cmd, n: ++intentSeq })
+    if (cmd.startsWith("win:")) {
+      if (cmd === "win:layers") setShowLayers((v) => !v)
+      else if (cmd === "win:tools") setShowTools((v) => !v)
+      else setShowOptions((v) => !v)
+      return setBare(false)
+    }
+    if (cmd === "panels") return setBare((v) => !v)
+    if (cmd === "help:keys") return setKeysOpen(true)
+    if (cmd === "color:reset") return setBrush({ color: "#000000", color2: "#FFFFFF" })
+    if (cmd === "color:swap") return setBrush({ color: brush.color2, color2: brush.color })
+    if (cmd === "sel:all" || cmd === "sel:none") return selectAll(cmd === "sel:all")
     if (cmd === "tool:design:align2") return tool("design", "align")
     if (cmd.startsWith("tool:")) {
       const [, t, sec] = cmd.split(":")
@@ -826,6 +1067,7 @@ export default function App() {
       save: () => saveRef.current.save(),
       saveAs: () => saveRef.current.saveAs(false),
       saveCopy: () => saveRef.current.saveAs(true),
+      savePsd: () => void saveFile(false, true),
       exportAll: () => generate(),
       settings: () => setCog(true),
       quit,
@@ -844,82 +1086,211 @@ export default function App() {
     }
     run[cmd]?.()
   }
+  keyRef.current = (e) => {
+    if (TYPING(e.target) || document.querySelector("[role=dialog]")) return
+    const combo = comboOf(e)
+    if (!combo) {
+      const dir = ({ ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] } as Record<string, number[]>)[e.code]
+      if (!dir || tab !== "design" || !item || !layerSel.length) return
+      e.preventDefault()
+      const [W, H] = canvasSize(item.geo, item.src) ?? [1080, 1350]
+      const n = e.shiftKey ? 10 : 1
+      return setLayers((item.layers ?? []).map((l) => (layerSel.includes(l.id) && !l.locked ? { ...l, x: l.x + (dir[0] * n) / W, y: l.y + (dir[1] * n) / H } : l)))
+    }
+    // fırça opaklığı: 1 = %10 ... 0 = %100
+    if (/^\d$/.test(combo) && (tab === "brush" || tab === "retouch")) return (tab === "brush" ? setBrush : setRetouchBrush)({ opacity: (Number(combo) || 10) / 10 })
+    const cmd = SHORTCUTS[combo]
+    if (!cmd || (cmd === "copyFx" && window.getSelection()?.toString())) return
+    if (cmd === "layer:del" && tab !== "design" && tab !== "layers") return
+    if (cmd.startsWith("path:") && tab !== "paths") return
+    e.preventDefault()
+    command(cmd)
+  }
   const noItem = !item
-  const menus: Menu[] = [
-    { label: "Dosya", items: [
-      { label: "Yeni proje / Projeler", cmd: "projects" },
-      "sep",
-      { label: "Fotoğraf ekle…", cmd: "addPhotos" },
-      "sep",
-      { label: "Kaydet", cmd: "save", key: "Ctrl+S", disabled: noItem },
-      { label: "Farklı kaydet…", cmd: "saveAs", key: "Ctrl+Shift+S", disabled: noItem },
-      { label: "Kopya kaydet…", cmd: "saveCopy", disabled: noItem },
-      { label: "Tümünü dışa aktar", cmd: "exportAll", disabled: !items.length },
-      "sep",
-      { label: "Ayarlar…", cmd: "settings" },
-      { label: "Çıkış", cmd: "quit" },
-    ] },
-    { label: "Düzenle", items: [
-      { label: "Geri al", cmd: "undo", key: "Ctrl+Z", disabled: !histLen.past },
-      { label: "Yinele", cmd: "redo", key: "Ctrl+Y", disabled: !histLen.future },
-      "sep",
-      { label: "Renk ve efektleri kopyala", cmd: "copyFx", key: "Ctrl+C", disabled: noItem },
-      { label: "Renk ve efektleri yapıştır", cmd: "pasteFx", key: "Ctrl+V", disabled: !clip || noItem },
-      { label: "Fotoğrafı çoğalt", cmd: "duplicate", disabled: noItem },
-    ] },
-    { label: "Görüntü", items: [
-      ...CROP_SECTIONS.flatMap((sec, i): Menu["items"] => [
-        ...(i ? ["sep" as const] : []),
-        ...CROP_TOOLS.filter((t) => t.section === sec).map((t) => ({ label: t.label, cmd: t.cmd, key: t.key })),
-      ]),
-    ] },
-    { label: "Renk", items: COLOR_SECTIONS.flatMap((sec, i): Menu["items"] => [
-      ...(i ? ["sep" as const] : []),
-      ...COLOR_TOOLS.filter((t) => t.section === sec).map((t) => ({ label: t.label, cmd: t.cmd, disabled: noItem && t.cmd !== "color:library" })),
-    ]) },
-    { label: "Efekt", items: [
-      { label: "Filtre Galerisi", cmd: "filter:gallery" },
-      "sep",
-      ...FILTER_SECTIONS.filter((s) => s !== "Efektler").map((sec) => ({ label: sec, children: FILTER_TOOLS.filter((t) => t.section === sec && t.cmd !== "filter:gallery").map((t) => ({ label: t.label, cmd: t.cmd, key: t.en, disabled: noItem })) })),
-      "sep",
-      ...FILTER_TOOLS.filter((t) => t.section === "Efektler").map((t) => ({ label: t.label, cmd: t.cmd })),
-    ] },
-    { label: "Seçim", items: [
-      ...SELECT_SECTIONS.flatMap((sec): Menu["items"] => [
-        ...SELECT_TOOLS.filter((t) => t.section === sec).map((t) => ({ label: t.label, cmd: `sel:${t.id}`, key: t.key, disabled: noItem })),
-        "sep",
-      ]),
-      { label: "Degrade maske", cmd: "mask:linear", disabled: noItem },
-      { label: "Daire maske", cmd: "mask:radial", disabled: noItem },
-      { label: "Tüm yerel düzenlemeler", cmd: "tool:local:select" },
-    ] },
-    { label: "Fırça", items: BRUSH_SECTIONS.flatMap((sec, i): Menu["items"] => [
-      ...(i ? ["sep" as const] : []),
-      ...BRUSH_TOOLS.filter((t) => t.section === sec).map((t) => ({ label: t.label, cmd: t.cmd, key: t.key, disabled: noItem })),
-    ]) },
-    { label: "Silme", items: ERASE_SECTIONS.flatMap((sec, i): Menu["items"] => [
-      ...(i ? ["sep" as const] : []),
-      ...ERASE_TOOLS.filter((t) => t.section === sec).map((t) => ({ label: t.label, cmd: t.cmd, key: t.key, disabled: noItem })),
-    ]) },
-    { label: "Rötuş", items: RETOUCH_SECTIONS.flatMap((sec, i): Menu["items"] => [
-      ...(i ? ["sep" as const] : []),
-      ...RETOUCH_TOOLS.filter((t) => t.section === sec).map((t) => ({ label: t.label, cmd: t.cmd, key: t.key, disabled: noItem })),
-    ]) },
-    { label: "Metin", items: [{ label: "Yazı ekle ve biçimlendir", cmd: "tool:text" }] },
-    { label: "Katman", items: [
-      { label: "Görsel ekle…", cmd: "addImage", disabled: noItem },
-      "sep",
-      ...LAYER_SECTIONS.map((sec) => ({ label: sec, children: LAYER_TOOLS.filter((t) => t.section === sec).map((t) => ({ label: t.label, cmd: t.cmd, key: t.en, disabled: noItem || t.off })) })),
-      "sep",
-      { label: "Dönüştür ve Hizala", children: XFORM_SECTIONS.flatMap((sec) => XFORM_TOOLS.filter((t) => t.section === sec).map((t) => ({ label: t.label, cmd: t.cmd, key: t.en, disabled: noItem }))) },
-    ] },
-    { label: "Görünüm", items: [
-      { label: "Fotoğraf şeridi", cmd: "strip", checked: showStrip },
-      { label: "Hizalama kılavuzları", cmd: "guides", checked: settings.guides },
-      "sep",
-      { label: "Araç panelini kapat", cmd: "closePanel", disabled: !tab },
-    ] },
+  type Entry = { label: string; cmd: string; en?: string; off?: boolean }
+  type Rows = Menu["items"]
+  // tek noktadan menü öğesi: kısayol tablodan, İngilizce ad ipucunda
+  const L = (label: string, cmd: string, opt: { disabled?: boolean; checked?: boolean; title?: string } = {}) => ({ label, cmd, key: keyOf(cmd), ...opt })
+  const E = (t: Entry, disabled = noItem || !!t.off) => L(t.label, t.cmd, { disabled, title: t.en })
+  const by = <T extends Entry & { section: string }>(list: T[], secs: string[]) =>
+    secs.flatMap((sec, i): (ReturnType<typeof E> | "sep")[] => [...(i ? ["sep" as const] : []), ...list.filter((t) => t.section === sec).map((t) => E(t))])
+  const pickCmd = <T extends Entry>(list: T[], cmds: string[]) => cmds.map((c) => E(list.find((t) => t.cmd === c)!))
+  const selE = (id: string) => {
+    const t = SELECT_TOOLS.find((x) => x.id === id)!
+    return L(t.label, `sel:${id}`, { disabled: noItem, title: t.en })
+  }
+  const layerSec = (s: string) => LAYER_TOOLS.filter((t) => t.section === s).map((t) => E(t))
+  const layerPick = (...cmds: string[]) => pickCmd(LAYER_TOOLS, cmds)
+  const xfPick = (...cmds: string[]) => pickCmd(XFORM_TOOLS, cmds)
+  const adjustSecs = COLOR_SECTIONS.filter((s) => s !== "Otomatik")
+  const filterSecs = FILTER_SECTIONS.filter((s) => s !== "Efektler" && s !== "Diğer Filtreler")
+  const cropPick = (...cmds: string[]) => pickCmd(CROP_TOOLS, cmds)
+  const filterPick = (...cmds: string[]) => cmds.map((c) => E(FILTER_TOOLS.find((t) => t.cmd === c)!))
+  const dockOpen = (t: string) => tab === t
+  const fileMenu: Rows = [
+    L("Yeni / Projeler…", "projects"),
+    L("Fotoğraf Aç…", "addPhotos"),
+    L("Görsel Yerleştir…", "addImage", { disabled: noItem, title: "Place" }),
+    "sep",
+    L("Kaydet", "save", { disabled: noItem }),
+    L("Farklı Kaydet…", "saveAs", { disabled: noItem }),
+    L("Kopya Kaydet…", "saveCopy", { disabled: noItem }),
+    L("PSD Olarak Kaydet…", "savePsd", { disabled: noItem, title: "Katmanlı Photoshop dosyası" }),
+    L("Tümünü Dışa Aktar", "exportAll", { disabled: !items.length }),
+    "sep",
+    { label: "Otomatikleştir", children: [L("Eylemler ve Toplu İşlem…", "tool:actions", { title: "Actions / Batch" })] },
+    "sep",
+    L("Çıkış", "quit"),
   ]
+  const editMenu: Rows = [
+    L("Geri Al", "undo", { disabled: !histLen.past }),
+    L("Yinele", "redo", { disabled: !histLen.future }),
+    "sep",
+    L("Renk ve Efektleri Kopyala", "copyFx", { disabled: noItem }),
+    L("Renk ve Efektleri Yapıştır", "pasteFx", { disabled: !clip || noItem }),
+    L("Fotoğrafı Çoğalt", "duplicate", { disabled: noItem }),
+    "sep",
+    E(ERASE_TOOLS.find((t) => t.cmd === "erase:fill")!),
+    E(ERASE_TOOLS.find((t) => t.cmd === "erase:gen")!),
+    { label: "Silme ve Arka Plan", children: by(ERASE_TOOLS, ERASE_SECTIONS.filter((s) => s !== "Maskeler")) },
+    "sep",
+    E(XFORM_TOOLS.find((t) => t.cmd === "xf:free")!),
+    { label: "Dönüştür", children: [...xfPick("xf:scale", "xf:rotate", "xf:skew", "xf:distort", "xf:perspective"), "sep", ...xfPick("xf:warp", "xf:puppet", "xf:pwarp"), "sep", ...xfPick("design:again")] },
+    E(XFORM_TOOLS.find((t) => t.cmd === "xf:camove")!),
+    "sep",
+    ...xfPick("design:autoalign", "design:autoblend"),
+    "sep",
+    { label: "Yol", children: [L("Yolu Doldur", "path:fill", { disabled: !item?.paths?.length, title: "Fill Path" }), L("Yolu Konturla", "path:stroke", { disabled: !item?.paths?.length, title: "Stroke Path" })] },
+    "sep",
+    L("Tercihler…", "settings"),
+  ]
+  const imageMenu: Rows = [
+    { label: "Ayarlamalar", children: by(COLOR_TOOLS, adjustSecs) },
+    "sep",
+    ...pickCmd(COLOR_TOOLS, ["color:auto:tone", "color:auto:contrast", "color:auto:color"]),
+    E(COLOR_TOOLS.find((t) => t.cmd === "color:library")!, false),
+    "sep",
+    ...cropPick("tool:crop:size", "tool:crop:canvas", "tool:crop:rotate"),
+    "sep",
+    { label: "Kırp", children: cropPick("tool:crop:ratio", "tool:crop:custom", "crop:persp", "tool:crop:ca") },
+    { label: "Düzelt", children: cropPick("crop:line", "tool:crop:edges", "tool:crop:upright") },
+    { label: "Dilimler", children: cropPick("slice:draw", "slice:select") },
+  ]
+  const layerMenu: Rows = [
+    { label: "Yeni", children: [...layerSec("Katman Türleri").filter((x) => x.cmd !== "layer:base"), "sep", L("Görsel Yerleştir…", "addImage", { disabled: noItem })] },
+    ...layerPick("layer:dup", "layer:del", "layer:rename"),
+    "sep",
+    { label: "Katman Stili", children: layerSec("Katman Stilleri") },
+    { label: "Maskeler", children: layerSec("Maskeler") },
+    "sep",
+    ...layerPick("layer:group", "layer:ungroup"),
+    { label: "Düzenle (Sıralama)", children: [L("Öne Getir", "layer:front", { disabled: noItem }), L("Bir Öne", "layer:forward", { disabled: noItem }), L("Bir Arkaya", "layer:backward", { disabled: noItem }), L("Arkaya Gönder", "layer:back", { disabled: noItem })] },
+    { label: "Hizala ve Dağıt", children: xfPick("tool:design:align", "tool:design:align2", "design:autoalign", "design:autoblend") },
+    ...layerPick("layer:link", "layer:lock", "layer:unlock", "layer:toggle"),
+    "sep",
+    ...layerPick("layer:merge", "layer:mergevis", "layer:flatten"),
+    "sep",
+    { label: "Katman Özellikleri", children: [...layerPick("layer:sec:blend", "layer:sec:opacity", "layer:sec:fill", "layer:sec:label"), "sep", ...layerPick("layer:sec:comps", "layer:filter", "layer:base")] },
+  ]
+  const typeMenu: Rows = [L("Yazı Aracı", "tool:text", { disabled: noItem, title: "Type Tool" }), L("Metin Katmanı Ekle", "layer:new:text", { disabled: noItem, title: "Text Layer" })]
+  const selectMenu: Rows = [
+    L("Tümünü Seç", "sel:all", { disabled: noItem, title: "All" }),
+    L("Seçimi Kaldır", "sel:none", { disabled: noItem, title: "Deselect" }),
+    selE("invert"),
+    "sep",
+    selE("subject"), selE("background"), selE("sky"), selE("range"), selE("focus"),
+    "sep",
+    selE("refine"),
+    { label: "Değiştir", children: ["border", "smooth", "expand", "contract", "feather"].map(selE) },
+    selE("grow"), selE("similar"),
+    "sep",
+    selE("save"), selE("load"),
+    "sep",
+    L("Yolu Seçime Çevir", "path:selection", { disabled: !item?.paths?.length, title: "Load Path as Selection" }),
+    L("Seçimden Yol Oluştur", "path:fromsel", { disabled: noItem, title: "Make Work Path" }),
+    "sep",
+    E(LAYER_TOOLS.find((t) => t.cmd === "layer:quickmask")!),
+    L("Degrade Maske", "mask:linear", { disabled: noItem }),
+    L("Daire Maske", "mask:radial", { disabled: noItem }),
+    L("Tüm Yerel Düzenlemeler", "tool:local:select", { disabled: noItem }),
+  ]
+  const filterMenu: Rows = [
+    L("Filtre Galerisi…", "filter:gallery", { title: "Filter Gallery" }),
+    ...filterPick("filter:add:wideangle", "filter:add:lenscor", "filter:add:liquify", "filter:vanish", "color:tool:basic"),
+    "sep",
+    ...filterSecs.map((sec) => ({ label: sec, children: by(FILTER_TOOLS, [sec]) })),
+    { label: "Diğer", children: filterPick("filter:add:highpass", "filter:add:custom") },
+    "sep",
+    { label: "Rötuş ve Portre", children: by(RETOUCH_TOOLS, RETOUCH_SECTIONS) },
+    E(FILTER_TOOLS.find((t) => t.cmd === "filter:ai")!),
+    "sep",
+    ...FILTER_TOOLS.filter((t) => t.section === "Efektler").map((t) => E(t, false)),
+  ]
+  const viewMenu: Rows = [
+    L("Yakınlaştır", "view:in", { disabled: noItem }),
+    L("Uzaklaştır", "view:out", { disabled: noItem }),
+    L("Ekrana Sığdır", "view:fit", { disabled: noItem }),
+    L("%100", "view:100", { disabled: noItem }),
+    "sep",
+    L("Önce / Sonra Karşılaştır", "view:compare", { disabled: noItem }),
+    "sep",
+    L("Akıllı Kılavuzlar", "guides", { checked: settings.guides }),
+    L("Izgara", "view:grid", { disabled: noItem }),
+  ]
+  const windowMenu: Rows = [
+    L("Araçlar", "win:tools", { checked: showTools }),
+    L("Seçenekler", "win:options", { checked: showOptions }),
+    L("Katmanlar", "win:layers", { checked: showLayers }),
+    L("Fotoğraf Şeridi", "strip", { checked: showStrip }),
+    L("Panelleri Gizle / Göster", "panels"),
+    "sep",
+    L("Ayarlamalar", "tool:color", { checked: dockOpen("color") }),
+    L("Filtreler", "tool:fx", { checked: dockOpen("fx") }),
+    L("Özellikler", "tool:layers", { checked: dockOpen("layers") }),
+    L("Geçmiş", "tool:history", { checked: dockOpen("history") }),
+    L("Eylemler", "tool:actions", { checked: dockOpen("actions") }),
+    L("Yollar", "tool:paths", { checked: dockOpen("paths") }),
+    L("Çerçeve", "tool:frame", { checked: dockOpen("frame") }),
+    "sep",
+    { label: "Fırça", children: by(BRUSH_TOOLS, BRUSH_SECTIONS.filter((s) => s !== "Çizim" && s !== "Silgi" && s !== "Geçmiş")) },
+    "sep",
+    L("Etkin Paneli Kapat", "closePanel", { disabled: !tab }),
+  ]
+  const helpMenu: Rows = [L("Klavye Kısayolları", "help:keys"), "sep", L("Güncellemeleri Denetle ve Hakkında…", "settings")]
+  const menus: Menu[] = [
+    { label: "Dosya", items: fileMenu }, { label: "Düzenle", items: editMenu }, { label: "Görüntü", items: imageMenu }, { label: "Katman", items: layerMenu }, { label: "Yazı", items: typeMenu },
+    { label: "Seçim", items: selectMenu }, { label: "Filtre", items: filterMenu }, { label: "Görünüm", items: viewMenu }, { label: "Pencere", items: windowMenu }, { label: "Yardım", items: helpMenu },
+  ]
+  // ToolBox'ta hangi araç basılı görünecek
+  const currentTool = tab === "brush" ? `brush:tool:${brushTool}` : tab === "retouch" ? `retouch:tool:${retouchTool}` : tab === "select" ? `sel:${selTool.mode}` : tab === "design" ? (xform === "free" ? "xf:free" : "xf:move") : tab === "slice" ? `slice:${sliceTool}` : perspEdit ? "crop:persp" : tab === "crop" ? "tool:crop:ratio" : tab === "text" ? "tool:text" : tab === "paths" ? `pen:tool:${penTool}` : `tool:${tab}`
+  const historySeq = tab === "history" ? [...hist.current.past, items, ...[...hist.current.future].reverse()] : []
+  const history = {
+    rows: historySeq.map((snap, i) => (i ? stepName(historySeq[i - 1], snap) : "Açılış")),
+    at: histLen.past,
+    go: (i: number) => {
+      const d = i - hist.current.past.length
+      for (let n = Math.abs(d); n > 0; n--) travel(d < 0 ? "undo" : "redo")
+    },
+  }
+  const showPanel = !!tab && tab !== "eyedrop" && tab !== "hand" && tab !== "zoom"
+  const startResize = (e: React.PointerEvent) => {
+    const y0 = e.clientY
+    const h0 = layersH
+    const el = e.currentTarget as HTMLElement
+    el.setPointerCapture(e.pointerId)
+    const move = (ev: PointerEvent) => setLayersH(Math.max(140, Math.min(window.innerHeight - 260, h0 + y0 - ev.clientY)))
+    const stop = () => {
+      el.removeEventListener("pointermove", move)
+      el.removeEventListener("pointerup", stop)
+      try {
+        localStorage.setItem("dock-layers", String(el.dataset.h ?? ""))
+      } catch {
+        /* tarayıcı depolaması kapalı olabilir */
+      }
+    }
+    el.addEventListener("pointermove", move)
+    el.addEventListener("pointerup", stop)
+  }
 
   const quit = async () => {
     setBye(true)
@@ -965,12 +1336,12 @@ export default function App() {
           if (e.dataTransfer.files.length) addFiles([...e.dataTransfer.files])
         }}
       >
-        <header className="flex h-12 shrink-0 items-center justify-between gap-3 border-b px-3">
+        <header className="flex h-8 shrink-0 items-center justify-between gap-2 border-b bg-card px-2">
           <div className="flex min-w-0 items-center gap-2">
             <button onClick={closeProject} title="Projeler" className="flex shrink-0 items-center rounded-md p-1 hover:bg-accent">
-              <img src="/logo.png" alt="Projeler" className="h-7 w-7" />
+              <img src="/logo.png" alt="Projeler" className="h-5 w-5" />
             </button>
-            <MenuBar menus={menus} onCommand={command} active={tab} />
+            <MenuBar menus={menus} onCommand={command} />
             <input
               key={project.id}
               defaultValue={project.name}
@@ -984,12 +1355,12 @@ export default function App() {
                   ;(e.target as HTMLInputElement).blur()
                 }
               }}
-              className="ml-2 h-7 w-[200px] min-w-0 truncate rounded-md border border-transparent bg-transparent px-2 text-xs text-muted-foreground outline-none transition-colors hover:border-border focus:border-primary/60 focus:text-foreground"
+              className="ml-2 h-6 w-[160px] min-w-0 truncate rounded-md border border-transparent bg-transparent px-2 text-xs text-muted-foreground outline-none transition-colors hover:border-border focus:border-primary/60 focus:text-foreground"
             />
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1">
             {upd?.newer && (
-              <Button variant="secondary" size="sm" className="h-8 gap-1.5 border border-primary/40 text-primary" onClick={() => setUpdOpen(true)}>
+              <Button variant="secondary" size="sm" className="h-6 gap-1 border border-primary/40 px-2 text-[11px] text-primary" onClick={() => setUpdOpen(true)}>
                 <ArrowUpCircle className="!size-4" /> Yeni sürüm v{upd.latest}
               </Button>
             )}
@@ -1000,54 +1371,81 @@ export default function App() {
               <Redo2 className="h-4 w-4" />
             </Button>
             <SaveMenu disabled={!item} onSave={() => saveRef.current.save()} onSaveAs={() => saveRef.current.saveAs(false)} onSaveCopy={() => saveRef.current.saveAs(true)} />
-            <Button onClick={() => generate()} disabled={!items.length} className="h-8 gap-1.5">
-              <Sparkles className="!size-4" /> Görselleri üret
+            <Button onClick={() => generate()} disabled={!items.length} size="sm" className="h-6 gap-1 px-2 text-[11px]" title="Tüm fotoğrafları çıktı klasörüne kaydet">
+              <Download className="!size-3" /> Tümünü Dışa Aktar
             </Button>
             <Button variant="ghost" size="icon-sm" aria-label="Ayarlar" onClick={() => setCog(true)}>
               <Cog className="h-4 w-4" />
             </Button>
           </div>
         </header>
+        {!bare && showOptions && (
+          <OptionsBar
+            tab={tab} item={item} run={command} brushTool={brushTool} brush={brush} setBrush={setBrush} retouchTool={retouchTool} retouchBrush={retouchBrush} setRetouchBrush={setRetouchBrush}
+            cloneSource={cloneSource} armSource={armSource} selTool={selTool} setSelTool={setSelTool} xform={xform} setXform={setXform} layerSel={layerSel} putLayer={putLayer} setGeo={setGeo}
+            sliceTool={sliceTool} mode={mode} setMode={setMode} eraseMode={eraseMode} maskTool={maskTool} setMaskTool={setMaskTool} penTool={penTool} setPenTool={setPenTool}
+          />
+        )}
         <div className="flex min-h-0 flex-1">
-          {/* sol: araç kutusu + seçilen aracın ayarları (seçilmeden kapalı) */}
-          <ToolBox active={tab} onCommand={command} />
-          {tab && <Panel
-            item={item} items={items} cfg={cfg} selected={selected} setSelected={setSelected} setText={setText}
-            patch={(p, all) => (all && p.fx ? patchAllFx() : patch(p, all))}
-            presets={presets} groups={groups} onPresetsChange={loadPresets}
-            tab={tab} setTab={setTab} setGeo={setGeo} applyAllGeo={applyAllGeo} perspEdit={perspEdit} setPerspEdit={setPerspEdit} lineMode={lineMode} setLineMode={setLineMode}
-            eraseMode={eraseMode} setEraseMode={setEraseMode} maskTool={maskTool} setMaskTool={setMaskTool} addSpecial={addSpecial} command={command}
-            filterSel={filterSel} setFilterSel={setFilterSel} liquify={liquify} setLiquify={setLiquify} previewImg={previewImg} setPick={setColorPick} retouchTool={retouchTool} setRetouchTool={setRetouchTool} retouchBrush={retouchBrush} setRetouchBrush={setRetouchBrush} cloneSource={cloneSource} armSource={armSource} patchMode={patchMode} setPatchMode={setPatchMode}
-            brushTool={brushTool} setBrushTool={setBrushTool} brush={brush} setBrush={setBrush} smoothing={smoothing} setSmoothing={setSmoothing} settings={settings} setSettings={setSettings}
-            xform={xform} setXform={setXform} xformDelta={lastXform}
-            sliceTool={sliceTool} setSliceTool={setSliceTool} sliceSel={sliceSel} setSliceSel={setSliceSel} setSlices={setSlices} exportSlices={() => item && generate(effectiveItem(item), true)}
-            setLayers={setLayers} layerSel={layerSel} setLayerSel={setLayerSel} selectionToLayer={selectionToLayer}
-            onCopy={copyFx} onPaste={() => pasteFx()} canPaste={!!clip}
-            maskSel={maskSel} setMaskSel={setMaskSel} setMasks={setMasks} maskShow={maskShow} setMaskShow={setMaskShow}
-            selTool={selTool} setSelTool={setSelTool} section={section} intent={intent} onClose={() => setTabRaw("")}
-          />}
-          {/* orta: önizleme + fotoğraf şeridi */}
+          {!bare && showTools && <ToolBox active={tab} current={currentTool} onCommand={command} fg={brush.color} bg={brush.color2} setFg={(color) => setBrush({ color })} setBg={(color2) => setBrush({ color2 })} />}
+          {/* orta: belge sekmeleri, tuval, durum çubuğu */}
           <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+            {items.length > 0 && <DocTabs items={items} currentId={currentId} select={setCurrentId} remove={removeItem} add={() => fileRef.current?.click()} />}
             <Stage
-              item={item ? effectiveItem(item) : undefined} cfg={cfg} mode={mode} setMode={setMode} selected={selected} setSelected={setSelected}
+              item={item ? effectiveItem(item) : undefined} cfg={cfg} mode={mode} intent={intent} nav={tab === "hand" || tab === "zoom" ? tab : ""} textTab={tab === "text"} layerName={layerSel.length === 1 ? item?.layers?.find((l) => l.id === layerSel[0])?.name : undefined} selected={selected} setSelected={setSelected}
               update={update} applyStyle={applyStyle} resetPosition={resetPosition} pickFiles={() => fileRef.current?.click()}
               guides={settings.guides} wm={wm}
               cropping={cropping} geoSrc={geoSrc && geoSrc.id === item?.id ? geoSrc : null} setGeo={setGeo} perspEdit={perspEdit} lineMode={lineMode} endLine={() => setLineMode(false)}
               eraseMode={tab === "erase" ? eraseMode : ""} maskTool={maskTool} putLayer={putLayer}
               brushMode={tab === "brush" || tab === "retouch"} brushTool={tab === "retouch" ? retouchTool : brushTool} brush={tab === "retouch" ? retouchBrush : brush} setBrush={tab === "retouch" ? setRetouchBrush : setBrush} smoothing={tab === "retouch" ? 0 : smoothing} onStroke={addStroke}
-              filterEdit={curFilter ? { filter: curFilter, set: setCurFilter, liquify } : null} pick={tab === "color" || tab === "layers" ? colorPick?.fn ?? null : null} onPreview={setPreviewImg} patchMode={patchMode} source={cloneSource} setSource={setCloneSource} armed={armedSource} setArmed={setArmedSource} onNeedSource={() => toast("Önce Alt+tıkla ile kaynak seç")}
+              filterEdit={curFilter ? { filter: curFilter, set: setCurFilter, liquify } : null}
+              pick={tab === "eyedrop" ? ([r, g, b]) => setBrush({ color: "#" + [r, g, b].map((v) => Math.round(v).toString(16).padStart(2, "0")).join("").toUpperCase() }) : tab === "color" || tab === "layers" ? colorPick?.fn ?? null : null}
+              onPreview={setPreviewImg} patchMode={patchMode} source={cloneSource} setSource={setCloneSource} armed={armedSource} setArmed={setArmedSource} onNeedSource={() => toast("Önce Alt+tıkla ile kaynak seç")}
               xform={xform} onXformDone={(a, b) => setLastXform(xformDelta(a, b))}
+              pen={tab === "paths" ? { sel: pathSel, setSel: setPathSel, onChange: setPaths, tool: penTool } : null}
               sliceMode={tab === "slice"} sliceTool={sliceTool} sliceSel={sliceSel} setSliceSel={setSliceSel} setSlices={setSlices}
               designMode={tab === "design"} layerSel={layerSel} setLayerSel={setLayerSel} setLayers={changeLayers}
-              localMode={tab === "local" || tab === "select" || tab === "slice" || tab === "brush" || tab === "retouch" || (tab === "erase" && !!eraseMode)} mask={curMask} maskShow={maskShow} setMask={setMask} selTool={selTool}
+              localMode={tab === "paths" || tab === "local" || tab === "select" || tab === "slice" || tab === "brush" || tab === "retouch" || (tab === "erase" && !!eraseMode)} mask={curMask} maskShow={maskShow} setMask={setMask} selTool={selTool}
             />
             {showStrip && <Filmstrip items={items} currentId={currentId} select={setCurrentId} move={move} remove={removeItem} pickFiles={() => fileRef.current?.click()} uploading={uploading} pasteTo={clip ? pasteFx : undefined} exportOne={(id) => { const it = items.find((i) => i.id === id); if (it) generate(it) }} duplicate={duplicateItem} />}
           </div>
-          {/* sağ: katmanlar ve efektler */}
-          <LayersPanel item={item} presets={presets} wm={wm} tool={tab} maskSel={maskSel} sel={layerSel} open={openLayer} toggle={toggleLayer} remove={removeLayerFx} run={command} put={putLayerSafe} toggleGroup={toggleGroup} renameGroup={renameGroup} renaming={renaming} setRenaming={setRenaming} filterOpen={filterOpen} setFilterOpen={setFilterOpen} />
+          {/* sağ: panel yuvası (Photoshop'taki gibi üstte özellikler, altta katmanlar) */}
+          {!bare && (showPanel || showLayers) && (
+            <div className="flex w-[320px] shrink-0 flex-col border-l bg-card">
+              <div className="flex shrink-0 items-center gap-px border-b px-1 pt-1" role="tablist" aria-label="Paneller">
+                {([["color", "Ayarlamalar"], ["fx", "Filtreler"], ["layers", "Özellikler"], ["history", "Geçmiş"], ["actions", "Eylemler"]] as const).map(([t, l]) => (
+                  <button key={t} role="tab" aria-selected={tab === t} onClick={() => setTabRaw(tab === t ? "" : t)} className={`rounded-t-sm px-2 py-1 text-[11px] transition-colors ${tab === t ? "bg-background text-foreground" : "text-muted-foreground hover:bg-accent/60"}`}>{l}{t === "actions" && recording ? <span className="ml-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-destructive" aria-label="Kaydediliyor" /> : null}</button>
+                ))}
+              </div>
+              {showPanel && <Panel
+                item={item} items={items} cfg={cfg} selected={selected} setSelected={setSelected} setText={setText}
+                patch={(p, all) => (all && p.fx ? patchAllFx() : patch(p, all))}
+                presets={presets} groups={groups} onPresetsChange={loadPresets}
+                tab={tab} setTab={setTab} setGeo={setGeo} applyAllGeo={applyAllGeo} perspEdit={perspEdit} setPerspEdit={setPerspEdit} lineMode={lineMode} setLineMode={setLineMode}
+                eraseMode={eraseMode} setEraseMode={setEraseMode} maskTool={maskTool} setMaskTool={setMaskTool} addSpecial={addSpecial} command={command}
+                filterSel={filterSel} setFilterSel={setFilterSel} liquify={liquify} setLiquify={setLiquify} previewImg={previewImg} setPick={setColorPick} retouchTool={retouchTool} setRetouchTool={setRetouchTool} retouchBrush={retouchBrush} setRetouchBrush={setRetouchBrush} cloneSource={cloneSource} armSource={armSource} patchMode={patchMode} setPatchMode={setPatchMode}
+                brushTool={brushTool} setBrushTool={setBrushTool} brush={brush} setBrush={setBrush} smoothing={smoothing} setSmoothing={setSmoothing} settings={settings} setSettings={setSettings}
+                xform={xform} setXform={setXform} xformDelta={lastXform}
+                sliceTool={sliceTool} setSliceTool={setSliceTool} sliceSel={sliceSel} setSliceSel={setSliceSel} setSlices={setSlices} exportSlices={() => item && generate(effectiveItem(item), true)}
+                setLayers={setLayers} layerSel={layerSel} setLayerSel={setLayerSel} selectionToLayer={selectionToLayer}
+                onCopy={copyFx} onPaste={() => pasteFx()} canPaste={!!clip}
+                maskSel={maskSel} setMaskSel={setMaskSel} setMasks={setMasks} maskShow={maskShow} setMaskShow={setMaskShow}
+                selTool={selTool} setSelTool={setSelTool} section={section} intent={intent} onClose={() => setTabRaw("")} history={history} pathsPanel={{ setPaths, sel: pathSel, setSel: setPathSel, tool: penTool, setTool: setPenTool, run: command }} actionsPanel={{ actions, setActions, recording, startRecord, stopRecord, play: runAction, busy: playing, count: items.length, hasItem: !!item }}
+              />}
+              {showLayers && (
+                <>
+                  {showPanel && <div role="separator" aria-orientation="horizontal" title="Sürükleyerek boyutlandır" data-h={layersH} onPointerDown={startResize} className="h-1.5 shrink-0 cursor-row-resize border-y bg-background hover:bg-primary/30" />}
+                  <div className={showPanel ? "shrink-0" : "min-h-0 flex-1"} style={showPanel ? { height: layersH } : undefined}>
+                    <LayersPanel item={item} presets={presets} wm={wm} tool={tab} maskSel={maskSel} sel={layerSel} open={openLayer} toggle={toggleLayer} remove={removeLayerFx} run={command} put={putLayerSafe} toggleGroup={toggleGroup} renameGroup={renameGroup} renaming={renaming} setRenaming={setRenaming} filterOpen={filterOpen} setFilterOpen={setFilterOpen} />
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </div>
-        <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => { addFiles([...(e.target.files || [])]); e.target.value = "" }} />
+        <input ref={fileRef} type="file" accept="image/*,.psd" multiple hidden onChange={(e) => { addFiles([...(e.target.files || [])]); e.target.value = "" }} />
         <GenerateDialog open={dlg} onClose={() => setDlg(false)} job={job} jobId={jobId} />
+        <KeysDialog open={keysOpen} onClose={() => setKeysOpen(false)} />
         {dialogs}
       </div>
     </TooltipProvider>

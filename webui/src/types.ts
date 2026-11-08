@@ -141,6 +141,9 @@ export type TextFx = { shadow?: number; outline?: number; outlineColor?: string;
 export type Watermark = { enabled: boolean; text: string; position: string; opacity: number; size: number }
 
 // Görsel katmanı (birleştirme): x, y merkez (0..1 tuval), w: genişlik (tuvalin oranı), ar: yükseklik/genişlik
+export type PenTool = "pen" | "free" | "add" | "del" | "convert" | "path" | "direct"
+export type PathNode = { p: [number, number]; in?: [number, number] | null; out?: [number, number] | null }
+export type VPath = { id: string; name: string; closed: boolean; nodes: PathNode[] }
 export type ImgLayer = {
   id: string
   photo: string
@@ -153,6 +156,7 @@ export type ImgLayer = {
   opacity: number
   flipH: boolean
   cutout: boolean // yapay zekâ ile konuyu kes
+  off?: boolean // yalnızca PSD yazarken: gizli katman
   base?: boolean // ana fotoğrafın kendisi ya da kopyası: renk ve efektler uygulanmış haliyle çizilir
   // dönüşüm (kutuya göre 0..1): sy dikey ölçek, corners köşe kaymaları, warp 4x4, pwarp 3x2 düğüm, pins kukla pimleri
   sy?: number
@@ -177,7 +181,7 @@ export type ImgLayer = {
   smart?: boolean
   paint?: { strokes: Stroke[] }
   textDef?: { value: string; family?: string | null; color: string; align: "left" | "center" | "right"; bold?: boolean }
-  shapeDef?: { type: string; color: string; stroke: string; strokeW: number; radius: number }
+  shapeDef?: { type: string; pts?: [number, number][]; color: string; stroke: string; strokeW: number; radius: number }
   fillDef?: { type: "color" | "gradient" | "pattern"; color: string; color2: string; angle: number; pattern: string; scale: number }
   adjust?: ColorEdits
 }
@@ -221,6 +225,7 @@ export type Item = {
   layers?: ImgLayer[] // fotoğrafın üstündeki görseller (yazının altında)
   groups?: LayerGroup[]
   comps?: LayerComp[]
+  paths?: VPath[] // Kalem ile çizilen yollar; çıktıda görünmez
   selections?: SavedSelection[] // Selection Tool: kaydedilen seçimler
   slices?: Slice[] // dilimleme
   paint?: { strokes: Stroke[] } // fırça darbeleri
@@ -271,7 +276,7 @@ export type Job = {
 }
 
 export type ColorMode = "rgb" | "gray" | "cmyk" | "bitmap" | "indexed" | "lab"
-export type ExportOpts = { format: "jpg" | "png" | "webp" | "tiff"; quality: number; naming: "number" | "original"; exif: boolean; color?: ColorMode; dpi?: number | null }
+export type ExportOpts = { format: "jpg" | "png" | "webp" | "tiff" | "psd"; quality: number; naming: "number" | "original"; exif: boolean; color?: ColorMode; dpi?: number | null }
 
 export type Settings = {
   outDir: string

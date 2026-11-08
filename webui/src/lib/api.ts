@@ -33,6 +33,12 @@ export const api = {
     fetch("/api/photos?name=" + encodeURIComponent(file.name), { method: "POST", headers: H, body: file }).then((r) =>
       j<{ id: string; name: string; width: number; height: number }>(r)
     ),
+  actions: () => fetch("/api/actions").then((r) => j<{ actions: import("@/lib/actions").Action[] }>(r)),
+  saveActions: (actions: unknown) => fetch("/api/actions", json("PUT", { actions })).then((r) => j(r)),
+  importPsd: (file: File) =>
+    fetch("/api/photos/psd?name=" + encodeURIComponent(file.name), { method: "POST", headers: H, body: file }).then((r) =>
+      j<{ id: string; name: string; width: number; height: number; layers: import("@/types").ImgLayer[]; groups: { id: string; name: string; open: boolean }[]; hidden: string[]; warnings: string[] }>(r)
+    ),
   duplicate: (id: string) => fetch("/api/photos/" + encodeURIComponent(id) + "/duplicate", json("POST", {})).then((r) => j<{ id: string }>(r)),
   remove: (id: string) => fetch("/api/photos/" + encodeURIComponent(id), { method: "DELETE", headers: H }).then((r) => j(r)),
   presets: () => fetch("/api/presets").then((r) => j<PresetList>(r)),

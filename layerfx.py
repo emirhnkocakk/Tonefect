@@ -116,7 +116,13 @@ def _shape(s, w, h):
     p = sw // 2 + 1
     kw = {"fill": fill, "outline": out, "width": sw}
     t = s.get("type", "rect")
-    if t == "ellipse":
+    if t == "path":  # Kalem ile cizilen yol: noktalar kutuya gore 0..1
+        pts = [(u * W, v * H) for u, v in s.get("pts") or []]
+        if len(pts) >= 3:
+            d.polygon(pts, fill=fill)
+            if sw:
+                d.line(pts + pts[:1], fill=out, width=sw, joint="curve")
+    elif t == "ellipse":
         d.ellipse([p, p, W - p, H - p], **kw)
     elif t == "rect":
         d.rounded_rectangle([p, p, W - p, H - p], radius=int(float(s.get("radius", 0)) * min(W, H) / 2), **kw)

@@ -22,6 +22,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
+import psdfile
 import adjustments
 import filters
 import layerfx
@@ -2770,9 +2771,9 @@ def compose(cfg, base, text, tone, accent_word="", styles=None, block=(0, 0), of
     return img, layout
 
 
-EXPORT_FORMATS = {"jpg": "JPEG", "png": "PNG", "webp": "WEBP", "tiff": "TIFF"}
+EXPORT_FORMATS = {"jpg": "JPEG", "png": "PNG", "webp": "WEBP", "tiff": "TIFF", "psd": "PSD"}
 # renk modu -> kaydedebilen bicimler (ilki varsayilan)
-COLOR_MODES = {"rgb": ("jpg", "png", "webp", "tiff"), "gray": ("jpg", "png", "tiff"), "cmyk": ("jpg", "tiff"),
+COLOR_MODES = {"rgb": ("jpg", "png", "webp", "tiff", "psd"), "gray": ("jpg", "png", "tiff"), "cmyk": ("jpg", "tiff"),
                "bitmap": ("png", "tiff"), "indexed": ("png", "tiff"), "lab": ("tiff",)}
 
 
@@ -2836,17 +2837,55 @@ def save_image(img, out_path, fmt="jpg", quality=95, exif=None, color="rgb", dpi
         img.save(out_path, "JPEG", quality=int(quality), subsampling=0 if quality >= 90 else 2, **kw)
 
 
+def psd_stack(cfg, base, layers, loader, text_layer, wm_layer):
+    """PSD icin katmanlar (alttan uste). Ayar katmani ve otomatik harman PSD'de karsiliksiz: o noktaya kadarki birlesik goruntu piksel katmani olur."""
+    W, H = base.size
+    blank = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    out = []
+    if not any(ly.get("id") == "base" for ly in layers):
+        out.append({"name": "Arka Plan", "image": base.convert("RGBA")})
+    shown = []
+    for ly in layers:
+        off = bool(ly.get("off"))
+        name = ly.get("name") or "Katman"
+        if not off:
+            shown.append(ly)
+        entry = {"name": name, "hidden": off, "group": ly.get("groupName")}
+        if ly.get("kind") == "adjust" or ly.get("blend"):
+            out.append({**entry, "name": f"{name} (uygulanmış)", "image": place_layers(base, shown, loader) if shown else blank})
+            continue
+        solo = {**ly, "opacity": 1.0, "mode": "normal", "clip": False}
+        out.append({**entry, "image": place_layers(blank, [solo], loader, source=base), "opacity": float(ly.get("opacity", 1.0)), "mode": ly.get("mode", "normal"), "clip": bool(ly.get("clip"))})
+    if text_layer is not None:
+        out.append({"name": "Yazı", "image": text_layer})
+    if wm_layer is not None:
+        out.append({"name": "Filigran", "image": wm_layer})
+    return out
+
+
 def render_one(cfg, image_path, text, tone, accent_word, out_path,
                styles=None, fx=None, block=(0, 0), offsets=None, geo=None, wm=None,
                fmt="jpg", quality=95, keep_exif=False, font=None, textfx=None, color="rgb", dpi=None,
                layers=None, loader=None, slices=None):
     """slices verilirse tam gorsel yerine her dilim ayri dosya olur ve yollarin listesi doner."""
     out_path = Path(out_path)
+    if fmt == "psd" and slices:  # dilimler tek katmanli parcalardir
+        fmt, out_path = "png", out_path.with_suffix(".png")
     base = make_base(cfg, image_path, fx, geo)
+    # gizli katmanlar yalnizca PSD'ye yazilir, cizime girmez (gizli Arka Plan tuvali bos birakir)
+    visible = [({**ly, "opacity": 0.0} if ly.get("id") == "base" else ly) if ly.get("off") else ly for ly in (layers or [])]
+    visible = [ly for ly in visible if not ly.get("off") or ly.get("id") == "base"]
     img, layout = compose(cfg, base, text, tone, accent_word, styles, block, offsets, wm=wm, font=font, textfx=textfx,
-                          layers=layers, loader=loader)
+                          layers=visible, loader=loader)
     size = layout["size"] if layout else 0
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    if fmt == "psd":
+        W, H = base.size
+        blank = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        text_layer = compose(cfg, blank, text, tone, accent_word, styles, block, offsets, wm={"enabled": False}, font=font, textfx=textfx)[0] if text.strip() else None
+        mark = watermark_layer(cfg, W, H, canvas_scale(W, H), wm)
+        psdfile.write(out_path, W, H, psd_stack(cfg, base, layers or [], loader, text_layer, mark if mark.getbbox() else None), img, dpi)
+        return size
     if slices:
         W, H = img.size
         paths = []

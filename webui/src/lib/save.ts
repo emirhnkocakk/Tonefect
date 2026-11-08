@@ -3,7 +3,7 @@ import type { ColorMode, ExportOpts, Item } from "@/types"
 
 // render.COLOR_MODES ile aynı: renk modu -> kaydedebilen biçimler (ilki varsayılan)
 export const COLOR_FORMATS: Record<ColorMode, ExportOpts["format"][]> = {
-  rgb: ["jpg", "png", "webp", "tiff"], gray: ["jpg", "png", "tiff"], cmyk: ["jpg", "tiff"],
+  rgb: ["jpg", "png", "webp", "tiff", "psd"], gray: ["jpg", "png", "tiff"], cmyk: ["jpg", "tiff"],
   bitmap: ["png", "tiff"], indexed: ["png", "tiff"], lab: ["tiff"],
 }
 
@@ -13,8 +13,9 @@ const TYPES: Record<ExportOpts["format"], { description: string; accept: Record<
   png: { description: "PNG", accept: { "image/png": [".png"] } },
   webp: { description: "WebP", accept: { "image/webp": [".webp"] } },
   tiff: { description: "TIFF", accept: { "image/tiff": [".tif", ".tiff"] } },
+  psd: { description: "Photoshop (PSD)", accept: { "image/vnd.adobe.photoshop": [".psd"] } },
 }
-const EXT: Record<string, ExportOpts["format"]> = { jpg: "jpg", jpeg: "jpg", png: "png", webp: "webp", tif: "tiff", tiff: "tiff" }
+const EXT: Record<string, ExportOpts["format"]> = { jpg: "jpg", jpeg: "jpg", png: "png", webp: "webp", tif: "tiff", tiff: "tiff", psd: "psd" }
 
 /** true: kaydedildi, false: vazgeçildi. formats: seçilebilecek biçimler (ilki önerilen). */
 export async function saveAs(item: Item, ex: ExportOpts, formats: ExportOpts["format"][], copy = false): Promise<string | false> {

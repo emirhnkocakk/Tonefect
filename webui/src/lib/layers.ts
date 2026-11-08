@@ -118,6 +118,13 @@ export function effectiveItem(item: Item): Item {
   return { ...item, fx, layers, paint: h.has("paint") ? undefined : item.paint, text: h.has("text") ? "" : item.text }
 }
 
+/** PSD için: gizli katmanlar da gider, dosyada gizli olarak durur. Diğer gizlemeler (efektler) normal uygulanır. */
+export function psdItem(item: Item): Item {
+  const h = new Set(item.hidden ?? [])
+  const off = (l: ImgLayer) => h.has(`img:${l.id}`) || (!!l.group && h.has(`group:${l.group}`))
+  return effectiveItem({ ...item, hidden: [...h].filter((k) => !k.startsWith("img:") && !k.startsWith("group:")), layers: (item.layers ?? []).map((l) => (off(l) ? { ...l, off: true } : l)) })
+}
+
 /** Katmanı kaldırır (gizleme değil, ayarı sıfırlar). */
 export function removeLayer(item: Item, layer: Layer): Item {
   const fx = { ...item.fx, texture: { ...(item.fx.texture ?? {}) }, adjust: { ...(item.fx.adjust ?? {}) } }
