@@ -11,7 +11,7 @@ import { Slider } from "@/components/ui/slider"
 import { Switch } from "@/components/ui/switch"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useAi } from "@/components/AiSetup"
-import { api, thumbUrl } from "@/lib/api"
+import { api } from "@/lib/api"
 import { useIntent } from "@/lib/hooks"
 import { align, distribute, type AlignKind } from "@/lib/design"
 import { cn } from "@/lib/utils"
@@ -173,25 +173,6 @@ export function DesignPanel({ layers, setLayers, sel, setSel, canvas: [W, H], in
           </Button>
         </div>
       </section>
-
-      {layers.length > 0 && (
-        <div className="space-y-1.5">
-          {[...layers].reverse().map((l) => (
-            <div
-              key={l.id}
-              onClick={(e) => setSel(e.shiftKey ? (sel.includes(l.id) ? sel.filter((x) => x !== l.id) : [...sel, l.id]) : [l.id])}
-              className={cn(
-                "flex cursor-pointer items-center gap-2 rounded-lg border px-2 py-1.5 text-sm transition-colors hover:border-primary/60",
-                sel.includes(l.id) ? "border-primary/70 bg-primary/15" : "text-muted-foreground"
-              )}
-            >
-              {l.photo ? <img src={thumbUrl(l.photo)} alt="" className="h-8 w-8 rounded object-cover" draggable={false} /> : <span className="grid h-6 w-6 place-items-center rounded bg-muted text-[9px] text-muted-foreground">{l.name.slice(0, 1)}</span>}
-              <span className="flex-1 truncate text-xs">{l.name}</span>
-            </div>
-          ))}
-          <p className="text-[10px] text-muted-foreground">Shift ile birden çok katman seç. Üstteki, önde görünür.</p>
-        </div>
-      )}
 
       {sel.length > 0 && (
         <div className="space-y-2">

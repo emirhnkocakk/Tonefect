@@ -793,6 +793,71 @@ def _base_untouched(c):
         and near(c["rot"], 0.0) and near(c["opacity"], 1.0) and not (c["flipH"] or c["blend"] or c["clip"] or c["defringe"])
 
 
+# Bu filtreler görüntüyü kaydırır ya da yayar: katmanın şeffaflığı da aynı işlemden geçer
+SHAPE_FILTERS = {"gaussian", "boxblur", "motion", "radial", "lens", "field", "iris", "tilt", "displace", "pinch", "polar", "ripple", "shear", "spherize", "twirl", "wave", "zigzag", "lenscor", "liquify", "perspective", "wideangle", "wind", "extrude"}
+
+
+def clean_layer_fx(raw):
+    """Katmana özel renk, filtre ve efektler. Etkisizse hiç yazılmaz."""
+    fx = {**clean_fx({**ORIGINAL_FX, **raw}), "frame": {}, "masks": [], "background": {}, "paint": {}, "retouch": {}}
+    if fx["preset"] == "b:original" and not (fx["bw"] or fx["adjust"] or fx["color"] or fx["filters"] or fx["grain"] or fx["vignette"] or fx["texture"]):
+        return {}
+    out = {"fx": fx}
+    shape = [f for f in (raw.get("filters") if isinstance(raw.get("filters"), list) else []) if isinstance(f, dict) and f.get("kind") in SHAPE_FILTERS and not f.get("off")]
+    if shape:
+        out["fxAlpha"] = clean_fx({**ORIGINAL_FX, "filters": shape})
+    return out
+
+
+GRADED_LAYERS = {}
+
+
+def grade_layer(src, ly):
+    """Katman görseline kendi renk ve filtrelerini uygular; şeffaflık korunur, bulanıklık ve bozma kenara da yansır."""
+    fx = ly["fx"]
+
+    def make():
+        a = np.asarray(src.getchannel("A"), np.float32) / 255.0
+        rgb = np.asarray(src.convert("RGB"), np.float32) / 255.0
+        if a.min() < 0.999:  # şeffaf yerlerin siyahı filtrelerde kenara sızmasın
+            s = max(src.size) / 64.0
+            soft = engine.gauss(rgb * a[..., None], s) / np.maximum(engine.gauss(a, s), 1e-4)[..., None]
+            rgb = rgb * a[..., None] + np.clip(soft, 0, 1) * (1 - a[..., None])
+        base = Image.fromarray((rgb * 255 + 0.5).astype(np.uint8), "RGB")
+        k = engine.canvas_scale(*src.size)
+        out = engine.grade(base, CFG, 7, {**fx, "_filter_k": None}, k).convert("RGBA")
+        alpha = src.getchannel("A")
+        if ly.get("fxAlpha"):
+            alpha = engine.grade(alpha.convert("RGB"), CFG, 7, {**ly["fxAlpha"], "_filter_k": None}, k).convert("L")
+        out.putalpha(alpha)
+        return out
+
+    if not ly.get("photo"):
+        return make()  # üretilen katman her seferinde yeniden çizilir
+    return _lru(GRADED_LAYERS, (ly["photo"], ly.get("cutout"), src.size, fx_key(fx)), make, 16)
+
+
+engine.LAYER_FX = grade_layer
+
+
+def layer_from_strokes(d):
+    """Çizimi şeffaf görsele işler ve doluluk kutusuna kırpar: katman gibi davranan gerçek bir görsel olur."""
+    paint = clean_paint({"strokes": d.get("strokes")})
+    if not paint:
+        return {"empty": True}
+    cw, ch = int(num(d.get("w"), 16, 30000, 1080)), int(num(d.get("h"), 16, 30000, 1350))
+    f = min(1.0, 4096 / max(cw, ch))
+    size = (max(1, round(cw * f)), max(1, round(ch * f)))
+    blank = Image.new("RGBA", size, (0, 0, 0, 0))
+    out = engine.apply_paint(blank, blank, paint)
+    box = out.getchannel("A").getbbox()
+    if not box:
+        return {"empty": True}
+    rec = save_photo("cizim.png", _png(out.crop(box)))
+    w, h = box[2] - box[0], box[3] - box[1]
+    return {**rec, "x": (box[0] + w / 2) / size[0], "y": (box[1] + h / 2) / size[1], "w": w / size[0], "ar": h / w}
+
+
 def text_index(d):
     """Yazının altında kalan katman sayısı (çizime giren katmanlara göre); None: en üstte."""
     anchor, raw = d.get("textAfter"), d.get("layers")
@@ -825,6 +890,8 @@ def clean_layer_extra(ly, kind):
     st = layerfx.clean_styles(ly.get("styles"))
     if st:
         out["styles"] = st
+    if isinstance(ly.get("fx"), dict):
+        out.update(clean_layer_fx(ly["fx"]))
     if kind:
         out["kind"] = kind
         out["ar"] = round(num(ly.get("ar"), 0.01, 50.0, 1.0), 4)
@@ -2111,6 +2178,8 @@ class Handler(BaseHTTPRequestHandler):
             if c == "/api/session" and m == "PUT":
                 save_session(self._body())
                 return self._json({"ok": True})
+            if c == "/api/layers/from-strokes" and m == "POST":
+                return self._json(layer_from_strokes(json.loads(self._body())))
             if c == "/api/photos/psd" and m == "POST":
                 return self._json(import_psd(q.get("name", ["belge.psd"])[0], self._body()))
             if c == "/api/photos" and m == "POST":

@@ -30,6 +30,8 @@ import { ActionsPanel } from "@/components/ActionsPanel"
 import { PathsPanel } from "@/components/PathsPanel"
 import { GeoPanel } from "@/components/GeoPanel"
 import { canvasSize, legacyGeo } from "@/lib/geo"
+import { geoForPreset } from "@/lib/platforms"
+import { BASE_ID } from "@/lib/layers"
 import { DesignPanel } from "@/components/DesignPanel"
 import type { BrushSettings, BrushTool, CloneSource, MaskPaintTool, Settings, Config, Fx, Geo, ImgLayer, Item, Mask, PresetMeta, SelectTool, Slice, XformMode } from "@/types"
 import type { XformDelta } from "@/lib/transform"
@@ -106,16 +108,20 @@ type Props = {
   xformDelta: XformDelta | null
   section: { id: string; n: number } | null // menüden gelinen bölüm: oraya kaydırılır
   history: { rows: string[]; at: number; go: (i: number) => void }
+  fxLayer?: ImgLayer
+  setLayerFx: (p: Partial<Fx>) => void
   actionsPanel: React.ComponentProps<typeof ActionsPanel>
   pathsPanel: Omit<React.ComponentProps<typeof PathsPanel>, "paths" | "setPaths"> & { setPaths: (p: NonNullable<Item["paths"]>) => void }
   intent: { cmd: string; n: number } | null // menüden gelen işlem (örn. yeni seçim, görsel ekle)
   onClose: () => void
 }
 
-export function Panel({ item, items, cfg, selected, setSelected, setText, patch, presets, groups, onPresetsChange, tab, setTab, setGeo, applyAllGeo, onCopy, onPaste, canPaste, maskSel, setMaskSel, setMasks, maskShow, setMaskShow, selTool, setSelTool, perspEdit, setPerspEdit, setLayers, layerSel, setLayerSel, selectionToLayer, lineMode, setLineMode, sliceTool, setSliceTool, sliceSel, setSliceSel, setSlices, exportSlices, eraseMode, setEraseMode, maskTool, setMaskTool, addSpecial, command, brushTool, setBrushTool, filterSel, setFilterSel, liquify, setLiquify, previewImg, setPick, retouchTool, setRetouchTool, retouchBrush, setRetouchBrush, cloneSource, armSource, patchMode, setPatchMode, brush, setBrush, smoothing, setSmoothing, settings, setSettings, xform, setXform, xformDelta, section, intent, onClose, history, actionsPanel, pathsPanel }: Props) {
+export function Panel({ item, items, cfg, selected, setSelected, setText, patch, presets, groups, onPresetsChange, tab, setTab, setGeo, applyAllGeo, onCopy, onPaste, canPaste, maskSel, setMaskSel, setMasks, maskShow, setMaskShow, selTool, setSelTool, perspEdit, setPerspEdit, setLayers, layerSel, setLayerSel, selectionToLayer, lineMode, setLineMode, sliceTool, setSliceTool, sliceSel, setSliceSel, setSlices, exportSlices, eraseMode, setEraseMode, maskTool, setMaskTool, addSpecial, command, brushTool, setBrushTool, filterSel, setFilterSel, liquify, setLiquify, previewImg, setPick, retouchTool, setRetouchTool, retouchBrush, setRetouchBrush, cloneSource, armSource, patchMode, setPatchMode, brush, setBrush, smoothing, setSmoothing, settings, setSettings, xform, setXform, xformDelta, section, intent, onClose, history, actionsPanel, pathsPanel, fxLayer, setLayerFx }: Props) {
   const ws = item ? words(item.text) : []
   const max = cfg.limits.max_words
-  const setFx = (p: Partial<Fx>, all = false) => item && patch({ fx: { ...item.fx, ...p } }, all)
+  const setFx = (p: Partial<Fx>, all = false) => (fxLayer ? setLayerFx(p) : item && patch({ fx: { ...item.fx, ...p } }, all))
+  // renk ve filtre panelleri seçili nesneyi kendi "fotoğrafı" gibi görür
+  const target: Item | undefined = item && fxLayer ? { ...item, id: fxLayer.photo || item.id, geo: geoForPreset("original"), fx: { bw: false, grain: 0, vignette: 0, preset: "b:original", amount: 1, adjust: {}, ...fxLayer.fx } } : item
   useEffect(() => {
     if (!section) return
     const t = setTimeout(() => {
@@ -145,6 +151,12 @@ export function Panel({ item, items, cfg, selected, setSelected, setText, patch,
             </div>
           ) : null
         })()}
+        {fxLayer && (
+          <div className="mx-4 mb-2 flex items-center gap-2 rounded-sm border border-primary/40 bg-primary/10 px-2 py-1 text-[11px]">
+            <span className="min-w-0 flex-1 truncate">Düzenlenen nesne: <b>{fxLayer.name}</b></span>
+            <button className="shrink-0 text-muted-foreground underline hover:text-foreground" onClick={() => setLayerSel([BASE_ID])}>Arka Plana Geç</button>
+          </div>
+        )}
 
         <TabsContent value="paths" className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 pt-1">
           {!item ? <p className="pt-6 text-sm text-muted-foreground">Önce bir fotoğraf ekle.</p> : <PathsPanel paths={item.paths ?? []} {...pathsPanel} />}
@@ -248,7 +260,7 @@ export function Panel({ item, items, cfg, selected, setSelected, setText, patch,
         </TabsContent>
 
         <TabsContent value="color" className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 pt-1">
-          <ColorPanel item={item} presets={presets} groups={groups} setFx={setFx} onPresetsChange={onPresetsChange} onCopy={onCopy} onPaste={onPaste} canPaste={canPaste} items={items} preview={previewImg} setPick={setPick} intent={intent} />
+          <ColorPanel item={target} presets={presets} groups={groups} setFx={setFx} onPresetsChange={onPresetsChange} onCopy={onCopy} onPaste={onPaste} canPaste={canPaste} items={items} preview={previewImg} setPick={setPick} intent={intent} />
         </TabsContent>
 
         <TabsContent value="erase" className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 pt-1">
@@ -320,7 +332,7 @@ export function Panel({ item, items, cfg, selected, setSelected, setText, patch,
         </TabsContent>
 
         <TabsContent value="fx" className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 pt-1">
-          {!item ? <p className="pt-6 text-sm text-muted-foreground">Önce bir fotoğraf ekle.</p> : <FxPanel item={item} setFx={setFx} filterSel={filterSel} setFilterSel={setFilterSel} maskSel={maskSel} liquify={liquify} setLiquify={setLiquify} run={command} intent={intent} />}
+          {!item ? <p className="pt-6 text-sm text-muted-foreground">Önce bir fotoğraf ekle.</p> : <FxPanel item={target!} setFx={setFx} filterSel={filterSel} setFilterSel={setFilterSel} maskSel={maskSel} liquify={liquify} setLiquify={setLiquify} run={command} intent={intent} />}
         </TabsContent>
 
       </Tabs>

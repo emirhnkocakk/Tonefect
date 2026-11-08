@@ -39,7 +39,7 @@ import { mergeStyle, naturalSort, remap, words } from "@/lib/text"
 import { legacyGeo, naturalSize, canvasSize, photoRect } from "@/lib/geo"
 import { applyTheme, isLightTheme } from "@/lib/themes"
 import { BASE_ID, effectiveItem, keepTextAnchor, moveInStack, psdItem, removeLayer, stackIds, withBase, type Layer } from "@/lib/layers"
-import type { PenTool, VPath, BrushSettings, BrushTool, CloneSource, FilterItem, MaskPaintTool, Stroke, Config, ExportOpts, Geo, ImgLayer, Item, Job, Mask, Mode, SelectTool, PresetMeta, Settings, Slice, Style, XformMode, UpdateInfo, Watermark } from "@/types"
+import type { Fx, PenTool, VPath, BrushSettings, BrushTool, CloneSource, FilterItem, MaskPaintTool, Stroke, Config, ExportOpts, Geo, ImgLayer, Item, Job, Mask, Mode, SelectTool, PresetMeta, Settings, Slice, Style, XformMode, UpdateInfo, Watermark } from "@/types"
 
 // Yeni fotoğraflar olduğu gibi açılır; görünüm ve efektleri kullanıcı kendisi seçer.
 const DEFAULT_FX: Item["fx"] = { bw: false, grain: 0, vignette: 0, preset: "b:original", amount: 1, adjust: {} }
@@ -379,7 +379,14 @@ export default function App() {
   const [filterSel, setFilterSel] = useState<string | null>(null)
   const [liquify, setLiquifyRaw] = useState<LiquifyTool>({ tool: "push", size: 0.2, rate: 0.6 })
   const setLiquify = (p: Partial<LiquifyTool>) => setLiquifyRaw((l) => ({ ...l, ...p }))
-  const curFilter = tab === "fx" ? item?.fx.filters?.find((f) => f.id === filterSel && !f.off) : undefined
+  // Ayarlamalar ve Filtreler seçili nesneye uygulanır; seçim yoksa ya da Arka Plan seçiliyse fotoğrafa
+  const fxLayer = tab === "color" || tab === "fx" ? item?.layers?.find((l) => l.id === layerSel[0] && l.id !== BASE_ID && l.kind !== "adjust") : undefined
+  const setLayerFx = (p: Partial<Fx>) => {
+    if (!fxLayer) return
+    const id = fxLayer.id
+    update((it) => ({ ...it, layers: (it.layers ?? []).map((l) => (l.id === id ? { ...l, fx: { ...l.fx, ...p } } : l)) }))
+  }
+  const curFilter = tab === "fx" && !fxLayer ? item?.fx.filters?.find((f) => f.id === filterSel && !f.off) : undefined
   const setCurFilter = (p: Partial<FilterItem>) => update((it) => ({ ...it, fx: { ...it.fx, filters: (it.fx.filters ?? []).map((f) => (f.id === filterSel ? { ...f, ...p } : f)) } }))
   const [cloneSource, setCloneSource] = useState<CloneSource | null>(null)
   const [armedSource, setArmedSource] = useState(false)
@@ -395,15 +402,26 @@ export default function App() {
   }, [currentId])
   const addSpecial = (t: "fillgaps" | "colorkey") => addStroke({ tool: t, pts: [[0.5, 0.5, 1]], seed: 0, b: brush })
   const addStroke = (s: Stroke) => {
-    // Fırça ve Kalem yeni katmana boyar; aynı boya katmanı seçili kaldıkça darbeler oraya eklenir. Rötuş araçları fotoğrafın kendisinde çalışır.
+    // Her çizim ayrı bir nesnedir: önce anında görünür, sonra kendi sınırlarına kırpılmış gerçek görsele dönüşür.
+    // Elle açılmış Boş Katman seçiliyse darbeler o katmanda birikir. Rötuş araçları fotoğrafın kendisinde çalışır.
     const drawing = tab === "brush" || tab === "paths"
     const has = drawing && !!item?.layers?.some((l) => l.id === layerSel[0] && l.kind === "blank")
     let fresh: ImgLayer | null = null
     if (drawing && !has && item && (s.tool === "brush" || s.tool === "pencil")) {
       const [W, H] = canvasSize(item.geo, item.src) ?? [1080, 1350]
       const n = item.layers?.length ?? 1
-      fresh = { ...createLayer("blank", W, H, n), name: `Boya ${n}` }
-      setLayerSel([fresh.id])
+      const made: ImgLayer = { ...createLayer("blank", W, H, n), name: `Çizim ${n}` }
+      fresh = made
+      const owner = item.id
+      api.layerFromStrokes({ strokes: [s], w: W, h: H }).then((r) => {
+        hist.current.skip = true // aynı geri alma adımı: görsele dönüşmek ayrı adım sayılmaz
+        setItems((a) => a.map((i) => {
+          if (i.id !== owner) return i
+          if (r.empty) return { ...i, layers: (i.layers ?? []).filter((l) => l.id !== made.id) }
+          return { ...i, layers: (i.layers ?? []).map((l) => (l.id === made.id ? { ...l, kind: undefined, paint: undefined, photo: r.id, x: r.x, y: r.y, w: r.w, ar: r.ar } : l)) }
+        }))
+        if (!r.empty) setLayerSel([made.id])
+      }).catch((e) => toast.error(e.message))
     }
     update((prev) => {
     const it = fresh ? { ...prev, layers: [...(prev.layers ?? []), fresh] } : prev
@@ -482,6 +500,8 @@ export default function App() {
   const openLayer = (l: Layer, additive = false) => {
     if (l.tool === "settings") return setCog(true)
     if (l.layerId && additive) return setLayerSel(layerSel.includes(l.layerId) ? layerSel.filter((x) => x !== l.layerId) : withLinks([...layerSel, l.layerId]))
+    // Photoshop gibi: katman seçmek açık aracı değiştirmez
+    if (l.layerId && tab) return setLayerSel(withLinks([l.layerId]))
     setTab(l.tool)
     if (l.maskId) setMaskSel(l.maskId)
     if (l.layerId) setLayerSel(withLinks([l.layerId]))
@@ -1448,7 +1468,7 @@ export default function App() {
                 setLayers={setLayers} layerSel={layerSel} setLayerSel={setLayerSel} selectionToLayer={selectionToLayer}
                 onCopy={copyFx} onPaste={() => pasteFx()} canPaste={!!clip}
                 maskSel={maskSel} setMaskSel={setMaskSel} setMasks={setMasks} maskShow={maskShow} setMaskShow={setMaskShow}
-                selTool={selTool} setSelTool={setSelTool} section={section} intent={intent} onClose={() => setTabRaw("")} history={history} pathsPanel={{ setPaths, sel: pathSel, setSel: setPathSel, tool: penTool, setTool: setPenTool, run: command }} actionsPanel={{ actions, setActions, recording, startRecord, stopRecord, play: runAction, busy: playing, count: items.length, hasItem: !!item }}
+                selTool={selTool} setSelTool={setSelTool} section={section} intent={intent} onClose={() => setTabRaw("")} history={history} fxLayer={fxLayer} setLayerFx={setLayerFx} pathsPanel={{ setPaths, sel: pathSel, setSel: setPathSel, tool: penTool, setTool: setPenTool, run: command }} actionsPanel={{ actions, setActions, recording, startRecord, stopRecord, play: runAction, busy: playing, count: items.length, hasItem: !!item }}
               />}
               {showLayers && (
                 <>

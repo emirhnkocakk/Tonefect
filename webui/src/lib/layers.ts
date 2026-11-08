@@ -110,7 +110,7 @@ export function buildLayers(item: Item, presets: PresetMeta[], wm: Watermark | n
       out.push({ key: `group:${g.id}`, kind: "group", label: g.name, sub: "grup", tool: "design", groupId: g.id, open: g.open, hideable: true, removable: true })
     }
     if (g && !g.open) return
-    const bits = [l.kind ? TYPE[l.kind] : l.smart ? "akıllı nesne" : "görsel", l.cutout ? "kesilmiş" : "", l.opacity < 1 ? pct(l.opacity) : "", l.styles && Object.values(l.styles).some((s) => s.on) ? "fx" : ""]
+    const bits = [l.kind ? TYPE[l.kind] : l.smart ? "akıllı nesne" : "görsel", l.cutout ? "kesilmiş" : "", l.fx && (l.fx.filters?.length || l.fx.bw || Object.keys(l.fx.color ?? {}).length || Object.keys(l.fx.adjust ?? {}).length || (l.fx.preset && l.fx.preset !== "b:original")) ? "düzenlendi" : "", l.opacity < 1 ? pct(l.opacity) : "", l.styles && Object.values(l.styles).some((s) => s.on) ? "fx" : ""]
     out.push({ key: `img:${l.id}`, kind: "image", label: l.name.replace(/\.(png|jpe?g|webp)$/i, ""), sub: bits.filter(Boolean).join(" · "), tool: l.kind ? "layers" : "design", layerId: l.id, layer: l, depth: g ? 1 : 0, hideable: true, removable: true })
   })
   // Arka Plan ve ona uygulanan düzenlemeler en altta; düzenlemeler fotoğrafın altında girintili görünür

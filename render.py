@@ -2652,6 +2652,9 @@ def _adjust_layer(img, ly, under):
     return Image.fromarray((np.clip(a, 0, 1) * 255 + 0.5).astype(np.uint8), "RGBA")
 
 
+LAYER_FX = None  # sunucu baglar: katmana ozel renk ve filtre (img, katman) -> img
+
+
 def place_layers(base, layers, loader, source=None):
     """Fotografin ustune (yazinin altina) baska gorselleri yerlestirir. loader(layer) -> RGBA.
     id'si "base" olan katman fotografin kendisidir: tuval once bosalir, islenmis fotograf o katman gibi yerlesir.
@@ -2672,6 +2675,8 @@ def place_layers(base, layers, loader, source=None):
             src = layerfx.make(ly, gw, min(max(1, round(gw * float(ly["ar"]))), 8192), _layer_font)
         else:
             src = photo if ly.get("base") else loader(ly)
+        if ly.get("fx") and LAYER_FX:
+            src = LAYER_FX(src, ly)
         fancy = bool(ly.get("styles")) or float(ly.get("fill", 1.0)) < 1 or ly.get("mode", "normal") != "normal"
         sy = float(ly.get("sy", 1.0))
         w = max(1, round(float(ly["w"]) * W))

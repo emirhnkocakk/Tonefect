@@ -625,6 +625,10 @@ export function Stage({ item, cfg, mode, intent, nav, pen, layerName, textTab, s
             {designMode && !holdOrig && setLayers && setLayerSel && (
               <LayerOverlay layers={(item.layers ?? []).filter((l) => l.kind !== "adjust" && !l.locked)} sel={layerSel ?? []} setSel={setLayerSel} onChange={(next) => setLayers((item.layers ?? []).map((l) => next.find((n) => n.id === l.id) ?? l))} w={size.w} h={size.h} mode={xform ?? "move"} onDone={onXformDone} />
             )}
+            {designMode && !holdOrig && boxes.length > 0 && (() => {
+              const bb = union()!
+              return <div title="Yazıyı taşı" onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} className="absolute z-40 cursor-move rounded-sm border border-dashed border-transparent hover:border-primary/70" style={{ left: bb[0] * sx - 6, top: bb[1] * sy - 6, width: (bb[2] - bb[0]) * sx + 12, height: (bb[3] - bb[1]) * sy + 12 }} />
+            })()}
             {mask && !holdOrig && (() => {
               // maskeler fotoğrafa göre; tuval genişletildiyse fotoğrafın olduğu alana yerleşir
               const [rx, ry, rw, rh] = photoRect(item.geo, item.src)
