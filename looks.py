@@ -26,7 +26,7 @@ LUMA = np.array([0.299, 0.587, 0.114], dtype=np.float32)
 HUE_BANDS = {"Red": 0, "Orange": 30, "Yellow": 60, "Green": 120,
              "Aqua": 180, "Blue": 240, "Purple": 270, "Magenta": 300}
 # kullanicinin ince ayar kaydiricilari (fade 0..1, digerleri -1..1) + "hsl" karistirici
-ADJUST_KEYS = ("exposure", "contrast", "highlights", "shadows", "whites", "blacks", "fade",
+ADJUST_KEYS = ("exposure", "contrast", "highlights", "shadows", "midtones", "whites", "blacks", "fade",
                "temperature", "tint", "vibrance", "saturation",
                "sharpen", "clarity", "denoise")  # detay: render.detail uygular (apply yok sayar)
 POSITIVE_KEYS = ("fade", "sharpen", "denoise")  # 0..1; digerleri -1..1
@@ -121,6 +121,9 @@ def apply(arr, look):
             a = a + (0.15 * v("whites") * _smooth(0.6, 1.0, L))[..., None]
         if v("blacks"):
             a = a + (0.12 * v("blacks") * (1 - _smooth(0.0, 0.35, L)))[..., None]
+
+    if v("midtones"):  # uclar sabit, orta tonlar kayar
+        a = np.power(np.clip(a, 0, 1), np.float32(2.0 ** (-v("midtones") * 0.9)))
 
     c = v("contrast")
     if c > 0:

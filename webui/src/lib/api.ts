@@ -1,4 +1,4 @@
-import type { Adjust, AiStatus, Config, ProjectMeta, Fx, Job, PresetMeta, UpdateInfo, UpdateStatus, Watermark } from "@/types"
+import type { ColorEdits, Adjust, AiStatus, Config, ProjectMeta, Fx, Job, PresetMeta, UpdateInfo, UpdateStatus, Watermark } from "@/types"
 
 type PresetList = { presets: PresetMeta[]; groups: string[] }
 
@@ -44,6 +44,8 @@ export const api = {
   savePreset: (name: string, fx: Fx) => fetch("/api/presets/save", json("POST", { name, fx })).then((r) => j<PresetMeta>(r)),
   deletePreset: (id: string) => fetch("/api/presets/" + encodeURIComponent(id), { method: "DELETE", headers: H }).then((r) => j<PresetList>(r)),
   preview: (p: unknown) => fetch("/api/preview", json("POST", p)).then((r) => j<any>(r)),
+  brushThumb: (body: unknown) => fetch("/api/brush/thumb", json("POST", body)).then((r) => j<{ image: string }>(r)),
+  autoAlign: (body: unknown) => fetch("/api/layers/autoalign", json("POST", body)).then((r) => j<{ layers: Record<string, { x: number; y: number; w: number; rot: number }>; tried: number }>(r)),
   extractSelection: (body: unknown) =>
     fetch("/api/selection/extract", json("POST", body)).then((r) =>
       j<{ id: string; name: string; width: number; height: number; x: number; y: number; w: number }>(r)
@@ -58,10 +60,17 @@ export const api = {
   openFolder: (path: string) => fetch("/api/open-folder", json("POST", { path })).then((r) => j(r)),
   watermark: (w: Watermark) => fetch("/api/watermark", json("PUT", w)).then((r) => j<Watermark>(r)),
   maskView: (body: unknown) => fetch("/api/mask/view", json("POST", body)).then((r) => j<{ image: string; coverage: number }>(r)),
-  aiStatus: () => fetch("/api/ai/status").then((r) => j<AiStatus>(r)),
-  aiInstall: () => fetch("/api/ai/install", json("POST", {})).then((r) => j<AiStatus>(r)),
+  aiStatus: (model = "isnet") => fetch("/api/ai/status?model=" + model).then((r) => j<AiStatus>(r)),
+  aiInstall: (model = "isnet") => fetch("/api/ai/install", json("POST", { model })).then((r) => j<AiStatus>(r)),
   fonts: () => fetch("/api/fonts").then((r) => j<{ bundled: string[]; system: string[] }>(r)),
+  layerSpec: () => fetch("/api/layers/spec").then((r) => j<unknown>(r)),
+  layersMerge: (body: unknown) => fetch("/api/layers/merge", json("POST", body)).then((r) => j<{ id: string; name: string; width: number; height: number }>(r)),
+  layersFlatten: (body: unknown) => fetch("/api/layers/flatten", json("POST", body)).then((r) => j<{ id: string; name: string; width: number; height: number }>(r)),
+  filterSpec: () => fetch("/api/filters/spec").then((r) => j<import("@/lib/filters").FilterSpec>(r)),
+  filterThumbs: () => fetch("/api/filters/thumbs").then((r) => j<{ thumbs: Record<string, string> }>(r)),
+  colorAuto: (body: unknown) => fetch("/api/color/auto", json("POST", body)).then((r) => j<{ levels: NonNullable<ColorEdits["levels"]> }>(r)),
   auto: (body: unknown) => fetch("/api/auto", json("POST", body)).then((r) => j<{ adjust: Adjust }>(r)),
+  geoAuto: (body: unknown) => fetch("/api/geo/auto", json("POST", body)).then((r) => j<{ straighten?: number; v?: number; h?: number; crop?: [number, number, number, number] | null }>(r)),
   geoSource: (body: unknown) =>
     fetch("/api/geo/source", json("POST", body)).then((r) => j<{ image: string; inner: [number, number]; source: [number, number] }>(r)),
   signature: (text: string) => fetch("/api/signature", json("PUT", { text })).then((r) => j<{ signature: string }>(r)),

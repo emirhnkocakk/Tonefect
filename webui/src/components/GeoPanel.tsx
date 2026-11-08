@@ -1,10 +1,14 @@
-import { FlipHorizontal2, FlipVertical2, Link2, RotateCcw, RotateCw, Spline, Unlink2 } from "lucide-react"
+import { useState } from "react"
+import { Eraser, FlipHorizontal2, FlipVertical2, Link2, Loader2, RotateCcw, RotateCw, Ruler, Spline, Unlink2, Wand2 } from "lucide-react"
+import { toast } from "sonner"
+import { Switch } from "@/components/ui/switch"
+import { api } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Slider } from "@/components/ui/slider"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { ASPECTS, MAX_SIDE, SIZE_PRESETS, naturalSize, photoSize, ratioOf } from "@/lib/geo"
+import { ASPECTS, MAX_SIDE, SIZE_PRESETS, keystoneQuad, naturalSize, photoSize, ratioOf } from "@/lib/geo"
 import { PLATFORMS, platformGroups, platformOf, ratioText } from "@/lib/platforms"
 import { cn } from "@/lib/utils"
 import type { CanvasExt, Geo, Item } from "@/types"
@@ -16,6 +20,8 @@ type Props = {
   applyAll: () => void
   perspEdit: boolean
   setPerspEdit: (v: boolean) => void
+  lineMode: boolean
+  setLineMode: (v: boolean) => void
 }
 
 function IconBtn({ label, onClick, children }: { label: string; onClick: () => void; children: React.ReactNode }) {
@@ -31,7 +37,32 @@ function IconBtn({ label, onClick, children }: { label: string; onClick: () => v
   )
 }
 
-export function GeoPanel({ item, geo, setGeo, applyAll, perspEdit, setPerspEdit }: Props) {
+export function GeoPanel({ item, geo, setGeo, applyAll, perspEdit, setPerspEdit, lineMode, setLineMode }: Props) {
+  const [ratioW, setRatioW] = useState("7")
+  const [ratioH, setRatioH] = useState("5")
+  const [auto, setAuto] = useState("")
+  const runAuto = async (kind: "straighten" | "upright" | "trim") => {
+    setAuto(kind)
+    try {
+      const r = await api.geoAuto({ photo: item.id, geo, kind })
+      if (kind === "straighten") {
+        setGeo({ straighten: r.straighten ?? 0, crop: null })
+        if (!r.straighten) toast("Belirgin bir eğim bulunamadı")
+      } else if (kind === "upright") setKeystone(r.v ?? 0, r.h ?? 0)
+      else if (r.crop) setGeo({ aspect: "free", crop: r.crop, ca: false, outW: null, outH: null, lock: true })
+      else toast("Temizlenecek düz renkli kenar bulunamadı")
+    } catch (e: any) {
+      toast.error(e.message)
+    }
+    setAuto("")
+  }
+  const setKeystone = (v: number, h: number) => setGeo({ keystone: v || h ? { v, h } : null, persp: v || h ? keystoneQuad(v, h) : null, crop: null })
+  const ks = geo.keystone ?? { v: 0, h: 0 }
+  const applyRatio = () => {
+    const a = parseFloat(ratioW.replace(",", "."))
+    const b = parseFloat(ratioH.replace(",", "."))
+    if (a > 0 && b > 0) setGeo({ aspect: `${a}:${b}`, crop: null, outW: null, outH: null, lock: true })
+  }
   const src = item.src
   const nat = src ? naturalSize(geo, src) : null
   const out = photoSize(geo, src)
@@ -76,7 +107,7 @@ export function GeoPanel({ item, geo, setGeo, applyAll, perspEdit, setPerspEdit 
         </div>
         {!!ratioOf(geo.aspect) && (
           <div className="grid grid-cols-2 gap-1.5">
-            {([[null, "Kırparak", "kenarlar kesilir"], ["content", "İçeriğe duyarlı", "hiçbir şey kesilmez"]] as const).map(([v, l, s]) => (
+            {([[null, "Kırparak", "kenarlar kesilir"], ["content", "İçeriğe Duyarlı Ölçek", "hiçbir şey kesilmez"]] as const).map(([v, l, s]) => (
               <button
                 key={l}
                 onClick={() => setGeo({ fit: v, crop: null, outW: null, outH: null, lock: true })}
@@ -99,7 +130,25 @@ export function GeoPanel({ item, geo, setGeo, applyAll, perspEdit, setPerspEdit 
       </div>
 
       <div className="space-y-2">
-        <Label id="sec-rotate">Döndür ve çevir</Label>
+        <Label id="sec-custom">Özel En-Boy Oranı</Label>
+        <div className="flex items-center gap-1.5">
+          <Input type="number" min={0.1} step="any" aria-label="Oran genişliği" value={ratioW} onChange={(e) => setRatioW(e.target.value)} className="h-8 text-center text-xs" />
+          <span className="text-xs text-muted-foreground">:</span>
+          <Input type="number" min={0.1} step="any" aria-label="Oran yüksekliği" value={ratioH} onChange={(e) => setRatioH(e.target.value)} className="h-8 text-center text-xs" />
+          <Button variant="secondary" size="sm" className="h-8 shrink-0 text-xs" onClick={applyRatio}>Kırp</Button>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between rounded-lg border p-3">
+        <div className="pr-3">
+          <Label id="sec-ca">İçeriğe Duyarlı Kırp</Label>
+          <p className="text-[11px] text-muted-foreground">Düzeltince boş kalan köşeler çevreden dolar; çerçeveyi fotoğrafın dışına taşırabilirsin. Geniş alanlarda dolgu bulanık görünür.</p>
+        </div>
+        <Switch checked={!!geo.ca} onCheckedChange={(v) => setGeo({ ca: v, crop: null })} />
+      </div>
+
+      <div className="space-y-2">
+        <Label id="sec-rotate">Döndür ve Çevir</Label>
         <div className="grid grid-cols-4 gap-1.5">
           <IconBtn label="Sola döndür" onClick={() => setGeo({ rotate: (geo.rotate + 270) % 360, crop: null })}>
             <RotateCcw className="h-4 w-4" />
@@ -120,7 +169,7 @@ export function GeoPanel({ item, geo, setGeo, applyAll, perspEdit, setPerspEdit 
         <div className="flex items-center justify-between">
           <Label id="sec-persp">Perspektif kırpma</Label>
           {geo.persp && (
-            <button className="text-xs text-muted-foreground hover:text-primary" onClick={() => setGeo({ persp: null, crop: null })}>
+            <button className="text-xs text-muted-foreground hover:text-primary" onClick={() => setGeo({ persp: null, keystone: null, crop: null })}>
               sıfırla
             </button>
           )}
@@ -148,7 +197,44 @@ export function GeoPanel({ item, geo, setGeo, applyAll, perspEdit, setPerspEdit 
           </div>
         </div>
         <Slider min={-45} max={45} step={0.5} value={[geo.straighten]} onValueChange={([v]) => setGeo({ straighten: v })} />
-        <p className="text-[11px] text-muted-foreground">Eğik ufku düzeltir; boş köşeler otomatik kırpılır.</p>
+        <div className="grid grid-cols-2 gap-1.5">
+          <Button variant={lineMode ? "default" : "secondary"} size="sm" className="text-xs" onClick={() => setLineMode(!lineMode)}>
+            <Ruler className="!size-3.5" /> Çizgi Çiz
+          </Button>
+          <Button variant="secondary" size="sm" className="text-xs" disabled={!!auto} onClick={() => runAuto("straighten")}>
+            {auto === "straighten" ? <Loader2 className="!size-3.5 animate-spin" /> : <Wand2 className="!size-3.5" />} Otomatik
+          </Button>
+        </div>
+        <p className="text-[11px] text-muted-foreground">
+          {lineMode ? "Fotoğrafta ufuk ya da duvar boyunca bir çizgi çiz: o çizgi düz olacak." : geo.ca ? "Eğik ufku düzeltir; boş köşeler çevreden doldurulur." : "Eğik ufku düzeltir; boş köşeler otomatik kırpılır."}
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        <Label id="sec-edges">Kenarları Düzelt</Label>
+        <Button variant="secondary" size="sm" className="w-full text-xs" disabled={!!auto} onClick={() => runAuto("trim")}>
+          {auto === "trim" ? <Loader2 className="!size-3.5 animate-spin" /> : <Eraser className="!size-3.5" />} Düz Renkli Kenarları Temizle
+        </Button>
+        <p className="text-[11px] text-muted-foreground">Taramalardaki ya da ekran görüntülerindeki boş beyaz/siyah kenarları kırpar.</p>
+      </div>
+
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <Label id="sec-upright">Perspektifi Düzelt</Label>
+          <div className="flex items-center gap-2">
+            {!!geo.keystone && <button className="text-xs text-muted-foreground hover:text-primary" onClick={() => setKeystone(0, 0)}>sıfırla</button>}
+            <button className="flex items-center gap-1 text-xs text-muted-foreground hover:text-primary disabled:opacity-50" disabled={!!auto} onClick={() => runAuto("upright")}>
+              {auto === "upright" ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wand2 className="h-3 w-3" />} otomatik
+            </button>
+          </div>
+        </div>
+        {([["Dikey", "v"], ["Yatay", "h"]] as const).map(([l, k]) => (
+          <div key={k} className="space-y-1.5">
+            <div className="flex justify-between text-xs"><span className="text-muted-foreground">{l}</span><span>{Math.round(ks[k] * 100)}</span></div>
+            <Slider min={-100} max={100} step={1} value={[Math.round(ks[k] * 100)]} onValueChange={([x]) => (k === "v" ? setKeystone(x / 100, ks.h) : setKeystone(ks.v, x / 100))} />
+          </div>
+        ))}
+        <p className="text-[11px] text-muted-foreground">Yukarı doğru daralan binaları düzleştirir; kenarlar fotoğrafın içinde kalır.</p>
       </div>
 
       <div className="space-y-2">
@@ -226,7 +312,7 @@ export function GeoPanel({ item, geo, setGeo, applyAll, perspEdit, setPerspEdit 
       {out && <CanvasSection photo={out} canvas={geo.canvas ?? null} set={(c) => setGeo({ canvas: c })} />}
 
       <div className="grid grid-cols-2 gap-2">
-        <Button variant="ghost" size="sm" className="text-xs" onClick={() => setGeo({ crop: null, rotate: 0, flipH: false, flipV: false, straighten: 0, outW: null, outH: null, lock: true, canvas: null, persp: null, fit: null })}>
+        <Button variant="ghost" size="sm" className="text-xs" onClick={() => setGeo({ crop: null, rotate: 0, flipH: false, flipV: false, straighten: 0, outW: null, outH: null, lock: true, canvas: null, persp: null, fit: null, ca: false, keystone: null })}>
           <RotateCcw className="!size-3.5" /> Sıfırla
         </Button>
         <Button variant="secondary" size="sm" className="text-xs" onClick={applyAll}>

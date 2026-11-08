@@ -1,15 +1,17 @@
 import { useEffect, useRef, useState } from "react"
 import { BookmarkPlus, ClipboardCopy, ClipboardPaste, Loader2, Upload, Wand2, X } from "lucide-react"
 import { toast } from "sonner"
-import { AdjustPanel } from "@/components/AdjustPanel"
+import { ColorTools, type ColorPick } from "@/components/ColorTools"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Slider } from "@/components/ui/slider"
 import { api } from "@/lib/api"
+import { COLOR_ON, colorActive, COLOR_GRID } from "@/lib/color"
+import { useIntent } from "@/lib/hooks"
 import { cn } from "@/lib/utils"
-import type { Adjust, Fx, Item, PresetMeta } from "@/types"
+import type { Adjust, ColorEdits, ColorToolId, Fx, Item, PresetMeta } from "@/types"
 
 type Props = {
   item?: Item
@@ -20,6 +22,10 @@ type Props = {
   onCopy: () => void
   onPaste: () => void
   canPaste: boolean
+  items: Item[]
+  preview: string | null
+  setPick: (f: ColorPick | null) => void
+  intent?: { cmd: string; n: number } | null
 }
 
 // anahtar sırasından ve sıfır değerlerden bağımsız karşılaştırma (sunucu sırayı değiştirebilir)
@@ -33,7 +39,39 @@ function sameAdjust(a: Adjust, b: Adjust) {
 
 const IMPORT_ACCEPT = ".xmp,.lrtemplate,.dng,.cube,.zip"
 
-export function ColorPanel({ item, presets, groups, setFx, onPresetsChange, onCopy, onPaste, canPaste }: Props) {
+export function ColorPanel({ item, presets, groups, setFx, onPresetsChange, onCopy, onPaste, canPaste, items, preview, setPick, intent }: Props) {
+  const [sub, setSub] = useState<"library" | "edit">(() => (item?.fx.color && COLOR_GRID.some((t) => colorActive(t.tool!, item.fx.color!)) ? "edit" : "library"))
+  const [colorTool, setColorTool] = useState<ColorToolId>("basic")
+  const flash = (id: string) => setTimeout(() => {
+    const el = document.getElementById(id)
+    if (!el) return
+    el.scrollIntoView({ behavior: "smooth", block: "center" })
+    el.classList.add("menu-flash")
+    setTimeout(() => el.classList.remove("menu-flash"), 1200)
+  }, 120)
+  useIntent(intent, "color:", (cmd) => {
+    if (cmd === "color:library") return setSub("library")
+    if (cmd.startsWith("color:auto:")) {
+      if (!item) return
+      setSub("edit")
+      setColorTool("levels")
+      const kind = cmd.slice(11)
+      api.colorAuto({ photo: item.id, geo: item.geo ?? null, fx: item.fx, kind })
+        .then((r) => {
+          setFx({ color: { ...item.fx.color, levels: r.levels } })
+          toast.success("Uygulandı; Seviyeler'den değiştirebilirsin")
+        })
+        .catch((e) => toast.error(e.message))
+      return
+    }
+    const [, , t, row] = cmd.split(":") as [string, string, ColorToolId, string?]
+    setSub("edit")
+    setColorTool(t)
+    if (row) flash(t === "wb" ? `sec-wb-${row}` : `sec-adj-${row}`)
+    // Tersine çevir, siyah beyaz gibi araçlar seçilince hemen uygulanır
+    const on = COLOR_ON[t as keyof ColorEdits]
+    if (item && on && !colorActive(t, item.fx.color ?? {})) setFx({ color: { ...item.fx.color, [t]: { ...(item.fx.color?.[t as keyof ColorEdits] as object), ...on } } })
+  })
   const fileRef = useRef<HTMLInputElement>(null)
   const [thumbs, setThumbs] = useState<Record<string, string>>({})
   const [importing, setImporting] = useState(false)
@@ -59,7 +97,7 @@ export function ColorPanel({ item, presets, groups, setFx, onPresetsChange, onCo
   // Kendi kaydedilen ayarlar (tarif) değerlerini fotoğrafa kopyalar.
   const choose = (p: PresetMeta) => {
     if (!item) return toast.info("Bu görünümü uygulamak için önce bir fotoğraf ekle")
-    if (p.recipe) setFx({ preset: p.recipe.base, amount: p.recipe.amount, adjust: p.recipe.adjust, bw: p.recipe.bw })
+    if (p.recipe) setFx({ preset: p.recipe.base, amount: p.recipe.amount, adjust: p.recipe.adjust, bw: p.recipe.bw, color: p.recipe.color ?? {} })
     else setFx({ preset: p.id, amount: 1, bw: p.bw })
   }
   const isOn = (p: PresetMeta) =>
@@ -141,6 +179,14 @@ export function ColorPanel({ item, presets, groups, setFx, onPresetsChange, onCo
 
   return (
     <div className="space-y-5">
+      <div className="grid grid-cols-2 gap-1 rounded-lg bg-muted/50 p-1">
+        {([["library", "Görünümler"], ["edit", "Düzenle"]] as const).map(([v, l]) => (
+          <button key={v} onClick={() => setSub(v)} className={cn("rounded-md py-1 text-xs transition-colors", sub === v ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}>{l}</button>
+        ))}
+      </div>
+      {sub === "edit" && !item && <p className="text-sm text-muted-foreground">Önce bir fotoğraf ekle.</p>}
+      {sub === "edit" && item && <ColorTools item={item} items={items} tool={colorTool} setTool={setColorTool} setFx={setFx} presets={presets} onPresetsChange={onPresetsChange} preview={preview} setPick={setPick} />}
+      {sub === "library" && <>
       <div className="flex items-center justify-between">
         <Label id="sec-library">Renk kütüphanesi</Label>
         <div className="flex items-center">
@@ -212,8 +258,6 @@ export function ColorPanel({ item, presets, groups, setFx, onPresetsChange, onCo
       <Button variant="secondary" className="w-full gap-2" onClick={autoEnhance} disabled={autoBusy} title="Işık, ton ve canlılığı fotoğrafa göre otomatik ayarlar">
         {autoBusy ? <Loader2 className="!size-4 animate-spin" /> : <Wand2 className="!size-4" />} Otomatik iyileştir
       </Button>
-      <div id="sec-adjust"><AdjustPanel adjust={adjust} setAdjust={(a) => setFx({ adjust: a })} /></div>
-
       <div className="space-y-2">
         <div className="grid grid-cols-2 gap-2">
           <Button variant="ghost" size="sm" className="text-xs" onClick={onCopy} title="Renk ve efekt ayarlarını kopyala (Ctrl+C)">
@@ -228,12 +272,13 @@ export function ColorPanel({ item, presets, groups, setFx, onPresetsChange, onCo
         </Button>
       </div>
       </>)}
+      </>}
 
       <Dialog open={saveOpen} onOpenChange={(o) => !saving && setSaveOpen(o)}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle>Hazır ayar olarak kaydet</DialogTitle>
-            <DialogDescription>Görünüm, yoğunluk, ışık, renk, renk karıştırıcı ve detay ayarları kaydedilir. Vinyet ve parazit dahil değildir.</DialogDescription>
+            <DialogDescription>Görünüm, yoğunluk, ışık, renk, renk düzenlemeleri ve detay ayarları kaydedilir. Vinyet ve parazit dahil değildir.</DialogDescription>
           </DialogHeader>
           <Input
             autoFocus

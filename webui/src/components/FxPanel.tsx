@@ -4,11 +4,24 @@ import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Slider } from "@/components/ui/slider"
 import { BackgroundPanel } from "@/components/BackgroundPanel"
+import { FilterPanel } from "@/components/FilterPanel"
 import { api } from "@/lib/api"
+import type { LiquifyTool } from "@/lib/filters"
+import { useIntent } from "@/lib/hooks"
 import { cn } from "@/lib/utils"
 import type { Frame, Fx, Item, Texture } from "@/types"
 
-type Props = { item: Item; setFx: (p: Partial<Fx>, all?: boolean) => void }
+type Props = {
+  item: Item
+  setFx: (p: Partial<Fx>, all?: boolean) => void
+  filterSel: string | null
+  setFilterSel: (id: string | null) => void
+  maskSel: string | null
+  liquify: LiquifyTool
+  setLiquify: (p: Partial<LiquifyTool>) => void
+  run: (cmd: string) => void
+  intent?: { cmd: string; n: number } | null
+}
 
 type EffectKey = "bw" | "grain" | "vignette" | "leak" | "bloom" | "dust"
 const EFFECTS: [EffectKey, string, number][] = [
@@ -52,9 +65,28 @@ export function Tile({ img, label, on, selected, badge, onClick }: { img?: strin
   )
 }
 
+const seenIntent = { n: 0 }
+
 /** Efektler: her efekt aynı sade örnek görselin kare önizlemesinde; tıkla aç, altta miktarını ayarla. */
-export function FxPanel({ item, setFx }: Props) {
+export function FxPanel({ item, setFx, filterSel, setFilterSel, maskSel, liquify, setLiquify, run, intent }: Props) {
   const fx = item.fx
+  const [sub, setSub] = useState<"filters" | "effects">("filters")
+  const scroll = (id: string) => setTimeout(() => {
+    const el = document.getElementById(id)
+    if (!el) return
+    el.scrollIntoView({ behavior: "smooth", block: "start" })
+    el.classList.add("menu-flash")
+    setTimeout(() => el.classList.remove("menu-flash"), 1200)
+  }, 120)
+  // filtre komutu gelince filtre sekmesi açılır; komutu içindeki panel yürütür
+  if (sub !== "filters" && intent && intent.cmd.startsWith("filter:") && intent.n !== seenIntent.n) {
+    seenIntent.n = intent.n
+    setSub("filters")
+  }
+  useIntent(intent, "fx:", (cmd) => {
+    setSub("effects")
+    scroll(cmd === "fx:background" ? "sec-background" : "sec-effects")
+  })
   const tex: Texture = fx.texture ?? {}
   const [thumbs, setThumbs] = useState<Record<string, string>>({})
   const [sel, setSel] = useState<EffectKey | null>(null)
@@ -81,7 +113,14 @@ export function FxPanel({ item, setFx }: Props) {
   const cur = sel && sel !== "bw" ? EFFECTS.find(([k]) => k === sel)! : null
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
+      <div className="grid grid-cols-2 gap-1 rounded-lg bg-muted/50 p-1">
+        {([["filters", "Filtreler"], ["effects", "Efektler"]] as const).map(([v, l]) => (
+          <button key={v} onClick={() => setSub(v)} className={cn("rounded-md py-1 text-xs transition-colors", sub === v ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}>{l}</button>
+        ))}
+      </div>
+      {sub === "filters" && <FilterPanel item={item} setFx={setFx} sel={filterSel} setSel={setFilterSel} maskSel={maskSel} liquify={liquify} setLiquify={setLiquify} run={run} intent={intent} />}
+      {sub === "effects" && <div className="space-y-6">
       <section id="sec-effects" className="space-y-3">
         <Label>Efektler</Label>
         <div className="grid grid-cols-3 gap-2.5">
@@ -130,6 +169,7 @@ export function FxPanel({ item, setFx }: Props) {
       <Button variant="secondary" size="sm" className="w-full" onClick={() => setFx({}, true)}>
         Renk ve efektleri tüm fotoğraflara uygula
       </Button>
+      </div>}
     </div>
   )
 }

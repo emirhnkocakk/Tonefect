@@ -5,6 +5,12 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { StyleBar } from "@/components/StyleBar"
 import { CropEditor } from "@/components/CropEditor"
 import { LayerOverlay } from "@/components/LayerOverlay"
+import { SliceOverlay } from "@/components/SliceOverlay"
+import { BrushOverlay } from "@/components/BrushOverlay"
+import { PatchOverlay } from "@/components/PatchOverlay"
+import { FilterOverlay, filterHasOverlay } from "@/components/FilterOverlay"
+import type { LiquifyTool } from "@/lib/filters"
+import { LayerMaskOverlay } from "@/components/LayerMaskOverlay"
 import { FULL_QUAD, PerspEditor, type Quad } from "@/components/PerspEditor"
 import { MaskOverlay } from "@/components/MaskOverlay"
 import { SelectOverlay } from "@/components/SelectOverlay"
@@ -12,7 +18,7 @@ import { canvasScale, canvasSize, cropOf, innerSize, legacyGeo, lockRatio, photo
 import { useFit, usePreview } from "@/lib/hooks"
 import { commonStyle } from "@/lib/text"
 import { cn } from "@/lib/utils"
-import type { Config, Geo, ImgLayer, Item, Mask, Mode, SelectTool, Style, Watermark } from "@/types"
+import type { BrushSettings, BrushTool, CloneSource, FilterItem, MaskPaintTool, Stroke, Config, Geo, ImgLayer, Item, Mask, Mode, SelectTool, Slice, Style, Watermark, XformMode } from "@/types"
 
 type Props = {
   item?: Item
@@ -30,6 +36,33 @@ type Props = {
   cropping: boolean
   geoSrc: { image: string; inner: [number, number] } | null
   perspEdit?: boolean
+  lineMode?: boolean
+  endLine?: () => void
+  eraseMode?: "" | "layermask" | "vector"
+  maskTool?: MaskPaintTool
+  putLayer?: (id: string, p: Partial<ImgLayer>) => void
+  brushMode?: boolean
+  brushTool?: BrushTool
+  patchMode?: Record<string, string>
+  filterEdit?: { filter: FilterItem; set: (p: Partial<FilterItem>) => void; liquify: LiquifyTool } | null
+  pick?: ((rgb: [number, number, number]) => void) | null
+  onPreview?: (img: string | null) => void
+  source?: CloneSource | null
+  setSource?: (s: CloneSource | null) => void
+  armed?: boolean
+  setArmed?: (v: boolean) => void
+  onNeedSource?: () => void
+  brush?: BrushSettings
+  setBrush?: (p: Partial<BrushSettings>) => void
+  smoothing?: number
+  onStroke?: (s: Stroke) => void
+  xform?: XformMode
+  onXformDone?: (a: ImgLayer, b: ImgLayer) => void
+  sliceMode?: boolean
+  sliceTool?: "draw" | "select"
+  sliceSel?: string | null
+  setSliceSel?: (id: string | null) => void
+  setSlices?: (s: Slice[]) => void
   designMode?: boolean
   layerSel?: string[]
   setLayerSel?: (ids: string[]) => void
@@ -62,7 +95,34 @@ type Guide = { x1: number; y1: number; x2: number; y2: number }
 const THRESH = 8
 const MARGIN = 0.08
 
-export function Stage({ item, cfg, mode, setMode, selected, setSelected, update, applyStyle, resetPosition, pickFiles, guides: guidesOn, wm, cropping, geoSrc, setGeo, perspEdit, designMode, layerSel, setLayerSel, setLayers, localMode, mask, maskShow, setMask, selTool }: Props) {
+/** Damlalık: önizlemede tıklanan yerin 5x5 ortalama rengini verir. */
+function PickOverlay({ image, onPick }: { image: string; onPick: (rgb: [number, number, number]) => void }) {
+  const click = (e: React.PointerEvent) => {
+    e.stopPropagation()
+    e.preventDefault()
+    const r = e.currentTarget.getBoundingClientRect()
+    const fx = (e.clientX - r.left) / r.width
+    const fy = (e.clientY - r.top) / r.height
+    const img = new Image()
+    img.onload = () => {
+      const c = document.createElement("canvas")
+      c.width = img.width
+      c.height = img.height
+      const g = c.getContext("2d")!
+      g.drawImage(img, 0, 0)
+      const x = Math.max(0, Math.min(img.width - 5, Math.round(fx * img.width) - 2))
+      const y = Math.max(0, Math.min(img.height - 5, Math.round(fy * img.height) - 2))
+      const d = g.getImageData(x, y, 5, 5).data
+      const sum = [0, 0, 0]
+      for (let i = 0; i < d.length; i += 4) for (let k = 0; k < 3; k++) sum[k] += d[i + k]
+      onPick([sum[0] / 25, sum[1] / 25, sum[2] / 25])
+    }
+    img.src = image
+  }
+  return <div className="absolute inset-0 z-40 cursor-crosshair rounded-xl" onPointerDown={click} />
+}
+
+export function Stage({ item, cfg, mode, setMode, selected, setSelected, update, applyStyle, resetPosition, pickFiles, guides: guidesOn, wm, cropping, geoSrc, setGeo, perspEdit, lineMode, endLine, eraseMode, maskTool, putLayer, brushMode, brushTool, patchMode, filterEdit, pick, onPreview, source, setSource, armed, setArmed, onNeedSource, brush, setBrush, smoothing, onStroke, xform, onXformDone, sliceMode, sliceTool, sliceSel, setSliceSel, setSlices, designMode, layerSel, setLayerSel, setLayers, localMode, mask, maskShow, setMask, selTool }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const stageRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef<Drag | null>(null)
@@ -82,6 +142,7 @@ export function Stage({ item, cfg, mode, setMode, selected, setSelected, update,
   const maxPw = zoom > 1 ? Math.min(W, 12000) : 1600
   const pw = Math.min(maxPw, Math.max(480, Math.ceil((size.w * dpr) / 80) * 80))
   const { preview, busy, error } = usePreview(cropping ? undefined : item, pw, wm)
+  useEffect(() => onPreview?.(preview?.image ?? null), [preview?.image])
 
   // önce/sonra: basılı tutunca ya da bölünmüş görünümde düzenlenmemiş hali
   const [compare, setCompare] = useState(false)
@@ -504,7 +565,7 @@ export function Stage({ item, cfg, mode, setMode, selected, setSelected, update,
                 image={geoSrc?.image ?? null}
                 size={geoSrc?.inner ?? ((g.rotate % 180 ? [src[1], src[0]] : src) as [number, number])}
                 quad={(g.persp as Quad | null | undefined) ?? FULL_QUAD}
-                onChange={(q) => setGeo({ persp: q, crop: null })}
+                onChange={(q) => setGeo({ persp: q, keystone: null, crop: null })}
               />
             )
           })()
@@ -520,6 +581,11 @@ export function Stage({ item, cfg, mode, setMode, selected, setSelected, update,
                 lock={lockRatio(g, inner[0], inner[1])}
                 onChange={(c) => setGeo({ crop: c })}
                 onReset={() => setGeo({ crop: null })}
+                lineMode={lineMode}
+                onLine={(a) => {
+                  setGeo({ straighten: Math.max(-45, Math.min(45, Math.round(((g.straighten || 0) - a) * 100) / 100)), crop: null })
+                  endLine?.()
+                }}
               />
             )
           })()
@@ -598,8 +664,22 @@ export function Stage({ item, cfg, mode, setMode, selected, setSelected, update,
               ))}
             </div>
 
+            {eraseMode && !holdOrig && maskTool && putLayer && (() => {
+              const ly = (item.layers ?? []).find((l) => l.id === layerSel?.[0])
+              return ly ? <LayerMaskOverlay layer={ly} mode={eraseMode} tool={maskTool} onChange={(p) => putLayer(ly.id, p)} w={size.w} h={size.h} /> : null
+            })()}
+            {filterEdit && !holdOrig && filterHasOverlay(filterEdit.filter) && <FilterOverlay w={size.w} h={size.h} filter={filterEdit.filter} set={filterEdit.set} liquify={filterEdit.liquify} />}
+            {pick && preview?.image && <PickOverlay image={preview.image} onPick={pick} />}
+            {brushMode && !holdOrig && brush && setBrush && onStroke && (brushTool === "patch" || brushTool === "camove" ? (
+              <PatchOverlay w={size.w} h={size.h} tool={brushTool} mode={patchMode?.[brushTool] ?? (brushTool === "patch" ? "source" : "move")} brush={brush} onStroke={onStroke} preview={preview?.image ?? null} />
+            ) : (
+              <BrushOverlay w={size.w} h={size.h} tool={brushTool ?? "brush"} brush={brush} smoothing={smoothing ?? 0} setBrush={setBrush} onStroke={onStroke} preview={preview?.image ?? null} source={source} setSource={setSource} armed={armed} setArmed={setArmed} onNeedSource={onNeedSource} />
+            ))}
+            {sliceMode && !holdOrig && setSlices && setSliceSel && (
+              <SliceOverlay slices={item.slices ?? []} tool={sliceTool ?? "draw"} sel={sliceSel ?? null} setSel={setSliceSel} onChange={setSlices} w={size.w} h={size.h} />
+            )}
             {designMode && !holdOrig && setLayers && setLayerSel && (
-              <LayerOverlay layers={item.layers ?? []} sel={layerSel ?? []} setSel={setLayerSel} onChange={setLayers} w={size.w} h={size.h} />
+              <LayerOverlay layers={(item.layers ?? []).filter((l) => l.kind !== "adjust" && !l.locked)} sel={layerSel ?? []} setSel={setLayerSel} onChange={(next) => setLayers((item.layers ?? []).map((l) => next.find((n) => n.id === l.id) ?? l))} w={size.w} h={size.h} mode={xform ?? "move"} onDone={onXformDone} />
             )}
             {mask && !holdOrig && (() => {
               // maskeler fotoğrafa göre; tuval genişletildiyse fotoğrafın olduğu alana yerleşir

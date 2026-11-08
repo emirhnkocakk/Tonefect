@@ -11,6 +11,8 @@ type Props = {
   lock: number | null // 0..1 biriminde w/h; null = serbest
   onChange: (c: Rect) => void
   onReset: () => void
+  lineMode?: boolean
+  onLine?: (deg: number) => void // çizilen çizginin eğimi (-45..45)
 }
 
 const MIN = 0.04
@@ -50,7 +52,21 @@ function resize(start: Rect, h: string, dx: number, dy: number, lock: number | n
   return [nx, ny, nw, nh]
 }
 
-export function CropEditor({ image, inner, crop, lock, onChange, onReset }: Props) {
+type Px = [number, number]
+
+export function CropEditor({ image, inner, crop, lock, onChange, onReset, lineMode, onLine }: Props) {
+  const [line, setLine] = useState<{ a: Px; b: Px } | null>(null)
+  const local = (e: React.PointerEvent): Px => {
+    const r = boxRef.current!.getBoundingClientRect()
+    return [e.clientX - r.left, e.clientY - r.top]
+  }
+  const finishLine = () => {
+    if (line && Math.hypot(line.b[0] - line.a[0], line.b[1] - line.a[1]) > 12) {
+      const deg = (Math.atan2(line.b[1] - line.a[1], line.b[0] - line.a[0]) * 180) / Math.PI
+      onLine?.((((deg + 45) % 90) + 90) % 90 - 45)
+    }
+    setLine(null)
+  }
   const wrapRef = useRef<HTMLDivElement>(null)
   const boxRef = useRef<HTMLDivElement>(null)
   const size = useFit(wrapRef, inner[0] / inner[1], 28)
@@ -112,7 +128,7 @@ export function CropEditor({ image, inner, crop, lock, onChange, onReset }: Prop
               <div key={"h" + i} className="absolute inset-x-0 h-px bg-white/70" style={{ top: `${(i * 100) / 3}%` }} />
             ))}
           </div>
-          {HANDLES.map((hd) => {
+          {!lineMode && HANDLES.map((hd) => {
             const left = hd.includes("w") ? "0%" : hd.includes("e") ? "100%" : "50%"
             const top = hd.includes("n") ? "0%" : hd.includes("s") ? "100%" : "50%"
             const corner = hd.length === 2
@@ -129,6 +145,27 @@ export function CropEditor({ image, inner, crop, lock, onChange, onReset }: Prop
             )
           })}
         </div>
+        {lineMode && (
+          <div
+            className="absolute inset-0 z-10 cursor-crosshair"
+            onPointerDown={(e) => {
+              if (e.button !== 0) return
+              e.stopPropagation()
+              ;(e.currentTarget as Element).setPointerCapture(e.pointerId)
+              const p = local(e)
+              setLine({ a: p, b: p })
+            }}
+            onPointerMove={(e) => line && setLine({ ...line, b: local(e) })}
+            onPointerUp={finishLine}
+            onPointerCancel={() => setLine(null)}
+          >
+            {line && (
+              <svg width={size.w} height={size.h} className="pointer-events-none absolute inset-0">
+                <line x1={line.a[0]} y1={line.a[1]} x2={line.b[0]} y2={line.b[1]} stroke="white" strokeWidth={1.5} strokeDasharray="6 4" style={{ filter: "drop-shadow(0 0 1px rgba(0,0,0,0.9))" }} />
+              </svg>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )

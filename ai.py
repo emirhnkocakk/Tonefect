@@ -12,36 +12,48 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageOps
 
-MODEL_NAME = "isnet-general-use.onnx"
-MODEL_URL = "https://github.com/danielgatis/rembg/releases/download/v0.0.0/isnet-general-use.onnx"
-MODEL_SHA256 = "60920e99c45464f2ba57bee2ad08c919a52bbf852739e96947fbb4358c0d964a"
-MODEL_SIZE = 178_648_008
+MODELS = {
+    "isnet": {"name": "isnet-general-use.onnx", "size": 178_648_008,
+              "url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/isnet-general-use.onnx",
+              "sha256": "60920e99c45464f2ba57bee2ad08c919a52bbf852739e96947fbb4358c0d964a"},
+    # LaMa: nesne silme ve bosluk doldurma (Apache-2.0)
+    "lama": {"name": "lama_fp32.onnx", "size": 208_044_816,
+             "url": "https://huggingface.co/Carve/LaMa-ONNX/resolve/c3c0c9e468934d62e79c329e35d82dd09ff8c444/lama_fp32.onnx",
+             "sha256": "1faef5301d78db7dda502fe59966957ec4b79dd64e16f03ed96913c7a4eb68d6"},
+}
 INPUT = 1024
+LAMA_INPUT = 512
 MATTE_MAX = 2048  # saklanan maskenin en uzun kenari
 
-STATE = {"state": "idle", "done": 0, "total": MODEL_SIZE, "error": ""}
-_session = None
+STATES = {k: {"state": "idle", "done": 0, "total": m["size"], "error": ""} for k, m in MODELS.items()}
+STATE = STATES["isnet"]
+_sessions = {}
 _lock = threading.Lock()
 
 
-def model_path(root):
-    return Path(root) / "models" / MODEL_NAME
+def model_path(root, model="isnet"):
+    return Path(root) / "models" / MODELS[model]["name"]
 
 
-def installed(root):
-    p = model_path(root)
-    return p.is_file() and p.stat().st_size == MODEL_SIZE
+def installed(root, model="isnet"):
+    p = model_path(root, model)
+    return p.is_file() and p.stat().st_size == MODELS[model]["size"]
 
 
-def download(root):
-    """Modeli indirir (arka planda cagrilir); STATE ilerlemeyi tutar."""
-    dest = model_path(root)
+def downloading():
+    return any(st["state"] == "downloading" for st in STATES.values())
+
+
+def download(root, model="isnet"):
+    """Modeli indirir (arka planda cagrilir); STATES ilerlemeyi tutar."""
+    m, st = MODELS[model], STATES[model]
+    dest = model_path(root, model)
     tmp = dest.with_suffix(".part")
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
-        STATE.update(state="downloading", done=0, total=MODEL_SIZE, error="")
+        st.update(state="downloading", done=0, total=m["size"], error="")
         h = hashlib.sha256()
-        req = urllib.request.Request(MODEL_URL, headers={"User-Agent": "Tonefect"})
+        req = urllib.request.Request(m["url"], headers={"User-Agent": "Tonefect"})
         with urllib.request.urlopen(req, timeout=30) as r, open(tmp, "wb") as f:
             while True:
                 chunk = r.read(512 * 1024)
@@ -49,33 +61,55 @@ def download(root):
                     break
                 f.write(chunk)
                 h.update(chunk)
-                STATE["done"] += len(chunk)
-        if h.hexdigest() != MODEL_SHA256:
+                st["done"] += len(chunk)
+        if h.hexdigest() != m["sha256"]:
             raise RuntimeError("İndirilen model doğrulanamadı (dosya bozuk ya da değişmiş).")
         tmp.replace(dest)
-        STATE.update(state="ready")
+        st.update(state="ready")
     except Exception as e:
         tmp.unlink(missing_ok=True)
-        STATE.update(state="error", error=str(e))
+        st.update(state="error", error=str(e))
 
 
-def status(root):
-    if installed(root) and STATE["state"] != "downloading":
-        return {"state": "ready", "done": MODEL_SIZE, "total": MODEL_SIZE, "error": "", "size": MODEL_SIZE}
-    return {**STATE, "size": MODEL_SIZE}
+def status(root, model="isnet"):
+    size = MODELS[model]["size"]
+    if installed(root, model) and STATES[model]["state"] != "downloading":
+        return {"state": "ready", "done": size, "total": size, "error": "", "size": size}
+    return {**STATES[model], "size": size}
 
 
-def _get_session(root):
-    global _session
+def _get_session(root, model="isnet"):
     with _lock:
-        if _session is None:
-            if not installed(root):
+        if model not in _sessions:
+            if not installed(root, model):
                 raise RuntimeError("Yapay zekâ modeli kurulu değil.")
             import onnxruntime as ort  # gecikmeli: uygulama acilisini yavaslatmasin
             opts = ort.SessionOptions()
             opts.log_severity_level = 3
-            _session = ort.InferenceSession(str(model_path(root)), opts, providers=["CPUExecutionProvider"])
-        return _session
+            _sessions[model] = ort.InferenceSession(str(model_path(root, model)), opts, providers=["CPUExecutionProvider"])
+        return _sessions[model]
+
+
+def warm(root, model):
+    """Modeli arka planda belleğe alır (ilk yükleme ~20 sn sürebilir)."""
+    try:
+        _get_session(root, model)
+    except Exception:
+        pass
+
+
+def lama_fill(root, rgb, hole):
+    """rgb: H x W x 3 (0..1), hole: H x W bool. LaMa ile doldurulmus H x W x 3 (0..1) dondurur."""
+    sess = _get_session(root, "lama")
+    h, w = hole.shape
+    img = Image.fromarray((np.clip(rgb, 0, 1) * 255 + 0.5).astype(np.uint8)).resize((LAMA_INPUT, LAMA_INPUT), Image.LANCZOS)
+    mask = Image.fromarray(hole.astype(np.uint8) * 255).resize((LAMA_INPUT, LAMA_INPUT), Image.BILINEAR)
+    x = np.asarray(img, np.float32).transpose(2, 0, 1)[None] / 255.0
+    m = (np.asarray(mask, np.float32)[None, None] > 25).astype(np.float32)  # kenar pikselleri de maskeye girsin
+    names = [i.name for i in sess.get_inputs()]
+    out = sess.run(None, {names[0]: x, names[1]: m})[0][0].transpose(1, 2, 0)
+    res = Image.fromarray(np.clip(out, 0, 255).astype(np.uint8)).resize((w, h), Image.LANCZOS)
+    return np.asarray(res, np.float32) / 255.0
 
 
 def predict(root, img):

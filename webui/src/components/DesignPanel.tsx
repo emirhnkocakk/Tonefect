@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from "react"
+import { useRef, useState } from "react"
 import {
   AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignHorizontalDistributeCenter,
   AlignStartHorizontal, AlignStartVertical, AlignVerticalDistributeCenter, ArrowDown, ArrowUp, Copy, FlipHorizontal2,
-  ImagePlus, Loader2, Maximize, Trash2,
+  Blend, ImagePlus, Loader2, Maximize, Repeat, RotateCcw, SquareStack, Trash2,
 } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -12,9 +12,11 @@ import { Switch } from "@/components/ui/switch"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useAi } from "@/components/AiSetup"
 import { api, thumbUrl } from "@/lib/api"
+import { useIntent } from "@/lib/hooks"
 import { align, distribute, type AlignKind } from "@/lib/design"
 import { cn } from "@/lib/utils"
-import type { ImgLayer } from "@/types"
+import type { ImgLayer, Item, XformMode } from "@/types"
+import { XFORM_MODES, applyDelta, type XformDelta } from "@/lib/transform"
 
 type Props = {
   layers: ImgLayer[]
@@ -23,6 +25,10 @@ type Props = {
   setSel: (ids: string[]) => void
   canvas: [number, number]
   intent?: { cmd: string; n: number } | null
+  item: Item
+  mode: XformMode
+  setMode: (m: XformMode) => void
+  delta: XformDelta | null
 }
 
 const ALIGN: [AlignKind, string, typeof AlignStartVertical][] = [
@@ -50,7 +56,33 @@ function Icon({ label, onClick, disabled, children }: { label: string; onClick: 
 }
 
 /** Tasarım: fotoğrafın üstüne başka görseller (logo, ürün, ikinci fotoğraf) ekle, hizala ve dağıt. */
-export function DesignPanel({ layers, setLayers, sel, setSel, canvas: [W, H], intent }: Props) {
+export function DesignPanel({ layers, setLayers, sel, setSel, canvas: [W, H], intent, item, mode, setMode, delta }: Props) {
+  const [aligning, setAligning] = useState(false)
+  const selected = layers.filter((l) => sel.includes(l.id))
+  const again = () => {
+    if (!delta) return void toast("Önce bir dönüşüm yap")
+    if (!selected.length) return void toast("Önce bir katman seç")
+    setLayers(layers.map((l) => (sel.includes(l.id) ? applyDelta(l, delta) : l)))
+  }
+  const autoAlign = async () => {
+    if (!selected.length) return void toast("Önce hizalanacak katmanı seç")
+    setAligning(true)
+    try {
+      const r = await api.autoAlign({ item: { ...item, layers }, ids: sel })
+      setLayers(layers.map((l) => (r.layers[l.id] ? { ...l, ...r.layers[l.id] } : l)))
+      const n = Object.keys(r.layers).length
+      n ? toast.success(`${n} katman hizalandı`) : toast("Ortak içerik bulunamadı; katmanlar üst üste binmeli ve benzer içerik taşımalı")
+    } catch (e: any) {
+      toast.error(e.message)
+    }
+    setAligning(false)
+  }
+  const autoBlend = () => {
+    if (!selected.length) return void toast("Önce bir katman seç")
+    const on = !selected.every((l) => l.blend)
+    setLayers(layers.map((l) => (sel.includes(l.id) ? { ...l, blend: on } : l)))
+  }
+  const modeEntry = XFORM_MODES.find((t) => t.mode === mode)
   const fileRef = useRef<HTMLInputElement>(null)
   const [busy, setBusy] = useState(false)
   const ai = useAi()
@@ -99,9 +131,12 @@ export function DesignPanel({ layers, setLayers, sel, setSel, canvas: [W, H], in
     setLayers(layers.filter((l) => !sel.includes(l.id)))
     setSel([])
   }
-  useEffect(() => {
-    if (intent?.cmd === "design:add") fileRef.current?.click()
-  }, [intent])
+  useIntent(intent, "design:", (cmd) => {
+    if (cmd === "design:add") fileRef.current?.click()
+    else if (cmd === "design:again") again()
+    else if (cmd === "design:autoalign") autoAlign()
+    else if (cmd === "design:autoblend") autoBlend()
+  })
 
   const fill = () => cur && set({ x: 0.5, y: 0.5, rot: 0, w: Math.max(1, H / (W * cur.ar)) })
 
@@ -110,12 +145,48 @@ export function DesignPanel({ layers, setLayers, sel, setSel, canvas: [W, H], in
       <div className="space-y-2">
         <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp" multiple hidden onChange={(e) => add(e.target.files)} />
         <Button className="w-full" onClick={() => fileRef.current?.click()} disabled={busy}>
-          {busy ? <Loader2 className="!size-4 animate-spin" /> : <ImagePlus className="!size-4" />} Görsel ekle
+          {busy ? <Loader2 className="!size-4 animate-spin" /> : <ImagePlus className="!size-4" />} Görsel Ekle
         </Button>
         <p className="text-[11px] text-muted-foreground">
           Logo, ürün, ikinci bir fotoğraf ya da çıkartma ekle. Şeffaf PNG'ler şeffaf kalır. Önizlemede sürükle, köşeden büyüt, üstteki noktayla döndür.
         </p>
       </div>
+
+      <section id="sec-xform" className="space-y-2">
+        <Label>Araçlar</Label>
+        <div className="grid grid-cols-5 gap-1">
+          {XFORM_MODES.map((t) => {
+            const I = t.icon
+            return (
+              <Tooltip key={t.cmd}>
+                <TooltipTrigger asChild>
+                  <button
+                    aria-label={t.label}
+                    onClick={() => setMode(t.mode!)}
+                    className={cn("grid h-9 place-items-center rounded-md border transition-colors hover:border-primary/60", mode === t.mode ? "border-primary/70 bg-primary/15 text-foreground" : "text-muted-foreground")}
+                  >
+                    <I className="h-4 w-4" strokeWidth={1.8} />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>{t.label} ({t.en}){t.key ? ` · ${t.key}` : ""}</TooltipContent>
+              </Tooltip>
+            )
+          })}
+        </div>
+        {modeEntry && (
+          <p className="text-[11px] text-muted-foreground">
+            <span className="font-medium text-foreground">{modeEntry.label}</span> · {modeEntry.hint}
+          </p>
+        )}
+        <div className="grid grid-cols-2 gap-1.5">
+          <Button variant="secondary" size="sm" className="text-xs" disabled={!delta || !selected.length} onClick={again}>
+            <Repeat className="!size-3.5" /> Dönüşümü Tekrarla
+          </Button>
+          <Button variant="ghost" size="sm" className="text-xs" disabled={!selected.length} onClick={() => setLayers(layers.map((l) => (sel.includes(l.id) ? { ...l, rot: 0, sy: undefined, corners: undefined, warp: undefined, pwarp: undefined, pins: undefined } : l)))}>
+            <RotateCcw className="!size-3.5" /> Dönüşümü Sıfırla
+          </Button>
+        </div>
+      </section>
 
       {layers.length > 0 && (
         <div className="space-y-1.5">
@@ -128,7 +199,7 @@ export function DesignPanel({ layers, setLayers, sel, setSel, canvas: [W, H], in
                 sel.includes(l.id) ? "border-primary/70 bg-primary/15" : "text-muted-foreground"
               )}
             >
-              <img src={thumbUrl(l.photo)} alt="" className="h-8 w-8 rounded object-cover" draggable={false} />
+              {l.photo ? <img src={thumbUrl(l.photo)} alt="" className="h-8 w-8 rounded object-cover" draggable={false} /> : <span className="grid h-6 w-6 place-items-center rounded bg-muted text-[9px] text-muted-foreground">{l.name.slice(0, 1)}</span>}
               <span className="flex-1 truncate text-xs">{l.name}</span>
             </div>
           ))}
@@ -138,7 +209,7 @@ export function DesignPanel({ layers, setLayers, sel, setSel, canvas: [W, H], in
 
       {sel.length > 0 && (
         <div className="space-y-2">
-          <Label id="sec-align">Hizala {sel.length > 1 ? "(seçime göre)" : "(tuvale göre)"}</Label>
+          <Label id="sec-align">Katmanları Hizala {sel.length > 1 ? "(seçime göre)" : "(tuvale göre)"}</Label>
           <div className="grid grid-cols-6 gap-1">
             {ALIGN.map(([k, label, I]) => (
               <Icon key={k} label={label} onClick={() => setLayers(align(layers, sel, k, W, H))}>
@@ -148,13 +219,21 @@ export function DesignPanel({ layers, setLayers, sel, setSel, canvas: [W, H], in
           </div>
           <div className="grid grid-cols-2 gap-1">
             <Button variant="secondary" size="sm" className="text-xs" disabled={sel.length < 3} onClick={() => setLayers(distribute(layers, sel, "h", W, H))}>
-              <AlignHorizontalDistributeCenter className="!size-3.5" /> Yatay dağıt
+              <AlignHorizontalDistributeCenter className="!size-3.5" /> Yatay Dağıt
             </Button>
             <Button variant="secondary" size="sm" className="text-xs" disabled={sel.length < 3} onClick={() => setLayers(distribute(layers, sel, "v", W, H))}>
-              <AlignVerticalDistributeCenter className="!size-3.5" /> Dikey dağıt
+              <AlignVerticalDistributeCenter className="!size-3.5" /> Dikey Dağıt
             </Button>
           </div>
           {sel.length < 3 && <p className="text-[10px] text-muted-foreground">Dağıtmak için en az 3 katman seç: aralarındaki boşluklar eşitlenir.</p>}
+          <div id="sec-auto-layers" className="grid grid-cols-2 gap-1">
+            <Button variant="secondary" size="sm" className="text-xs" disabled={aligning} onClick={autoAlign} title="Auto-Align Layers: tek katman fotoğrafa, birden çok katman en alttakine göre içerikten hizalanır">
+              {aligning ? <Loader2 className="!size-3.5 animate-spin" /> : <SquareStack className="!size-3.5" />} Otomatik Hizala
+            </Button>
+            <Button variant={selected.every((l) => l.blend) ? "default" : "secondary"} size="sm" className="text-xs" onClick={autoBlend} title="Auto-Blend Layers: renkleri alttakine eşitler, kenarları yumuşatır">
+              <Blend className="!size-3.5" /> Otomatik Harmanla
+            </Button>
+          </div>
         </div>
       )}
 

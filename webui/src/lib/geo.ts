@@ -13,7 +13,13 @@ export const ASPECTS: [string, string, string?][] = [
   ["16:9", "Geniş", "16:9"],
   ["3:2", "Fotoğraf", "3:2"],
   ["2:3", "Dikey", "2:3"],
+  ["4:3", "Klasik", "4:3"],
+  ["3:4", "Klasik Dikey", "3:4"],
+  ["5:4", "Baskı", "5:4"],
+  ["21:9", "Sinema", "21:9"],
 ]
+
+export const CA_SCALE = 1.5 // render.CA_SCALE: içeriğe duyarlı kırpmada taşma payı
 
 export const SIZE_PRESETS: [string, number | null][] = [
   ["Orijinal", null],
@@ -53,6 +59,10 @@ function inner(w: number, h: number, deg: number): [number, number] {
 export function innerSize(geo: Geo, src: [number, number]): [number, number] {
   let [w, h] = geo.rotate % 180 ? [src[1], src[0]] : src
   if (geo.persp) [w, h] = perspSize(geo.persp, w, h)
+  if (geo.ca) {
+    const a = (Math.abs(geo.straighten || 0) * Math.PI) / 180
+    return [(w * Math.cos(a) + h * Math.sin(a)) * CA_SCALE, (w * Math.sin(a) + h * Math.cos(a)) * CA_SCALE]
+  }
   return inner(w, h, geo.straighten || 0)
 }
 
@@ -66,13 +76,14 @@ export function perspSize(q: [number, number][], w: number, h: number): [number,
 /** Kırpma kutusu (0..1). crop yoksa orana göre ortalanmış en büyük kutu. */
 export function cropOf(geo: Geo, iw: number, ih: number): [number, number, number, number] {
   if (geo.crop) return geo.crop
-  if (geo.fit === "content") return [0, 0, 1, 1]
-  const r = ratioOf(geo.aspect)
-  if (!r) return [0, 0, 1, 1]
-  let cw = 1
-  let ch = 1
-  if (iw / ih > r) cw = (r * ih) / iw
-  else ch = iw / r / ih
+  const base = geo.ca ? 1 / CA_SCALE : 1
+  let cw = base
+  let ch = base
+  const r = geo.fit === "content" ? null : ratioOf(geo.aspect)
+  if (r) {
+    if (iw / ih > r) cw = (base * r * ih) / iw
+    else ch = (base * iw) / r / ih
+  }
   return [(1 - cw) / 2, (1 - ch) / 2, cw, ch]
 }
 
@@ -119,3 +130,12 @@ export function photoSize(geo: Geo | null | undefined, src?: [number, number] | 
 
 /** Yazı/filigran ölçeği: 1080x1350 tuvalde 1 (render.canvas_scale). */
 export const canvasScale = (w: number, h: number) => Math.sqrt((w * h) / (1080 * 1350))
+
+/** Perspektifi Düzelt: v > 0 üst, v < 0 alt; h > 0 sol, h < 0 sağ kenar daraltılır (fotoğrafın içinde kalır). */
+export function keystoneQuad(v: number, h: number): [number, number][] {
+  const a = Math.max(v, 0) * 0.4
+  const b = Math.max(-v, 0) * 0.4
+  const c = Math.max(h, 0) * 0.4
+  const d = Math.max(-h, 0) * 0.4
+  return [[a, c], [1 - a, d], [1 - b, 1 - d], [b, 1 - c]]
+}

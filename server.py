@@ -36,6 +36,9 @@ import numpy as np
 from PIL import Image, ImageOps
 
 import ai
+import adjustments
+import filters
+import layerfx
 import looks
 import render as engine
 
@@ -159,6 +162,176 @@ def clean_styles(styles, n_words):
     return out
 
 
+RETOUCH_NUMS = ("smooth", "tone", "blemish", "fsLow", "fsHigh", "scratch", "denoise", "fade", "cast", "sharp")
+
+
+def clean_retouch(r, masks=None):
+    """Otomatik rötuş; hepsi sıfırsa yok sayılır (eski projeler bire bir aynı kalır)."""
+    if not isinstance(r, dict):
+        return {}
+    out = {k: round(num(r.get(k), 0.0, 1.0), 3) for k in RETOUCH_NUMS if num(r.get(k), 0.0, 1.0)}
+    area = next((m for m in masks if isinstance(m, dict) and m.get("id") == r.get("area")), None) if r.get("area") and isinstance(masks, list) else None
+    if not out:
+        return {}
+    out["texture"] = round(num(r.get("texture", 0.6), 0.0, 1.0, 0.6), 3)
+    out["fsRadius"] = round(num(r.get("fsRadius", 0.3), 0.0, 1.0, 0.3), 3)
+    if r.get("fsSkin"):
+        out["fsSkin"] = True
+    if isinstance(area, dict):
+        got = clean_masks([area], keep_empty=True)
+        if got and got[0]["type"] == "select":
+            out["areaMask"] = got[0]
+    return out
+
+
+COLOR_HSL = ("Red", "Yellow", "Green", "Cyan", "Blue", "Magenta", "White", "Neutral", "Black")
+
+
+def _hex(v, d):
+    return v.upper() if isinstance(v, str) and HEX_RE.fullmatch(v) else d
+
+
+def _triple(v, lo=-1.0, hi=1.0):
+    v = v if isinstance(v, list) and len(v) == 3 else [0, 0, 0]
+    return [round(num(x, lo, hi), 3) for x in v]
+
+
+def clean_color(c):
+    """Renk ve ışık düzenlemeleri; yalnızca etkisi olanlar kalır (eski projeler bire bir aynı)."""
+    if not isinstance(c, dict):
+        return {}
+    out = {}
+
+    def nums(name, spec):
+        d = c.get(name) if isinstance(c.get(name), dict) else {}
+        r = {k: round(num(d.get(k), lo, hi, de), 3) for k, (lo, hi, de) in spec.items()}
+        return d, r, any(r[k] != spec[k][2] for k in spec)
+
+    _, r, on = nums("wb", {"temp": (-1, 1, 0), "tint": (-1, 1, 0)})
+    if on:
+        out["wb"] = r
+    _, r, on = nums("bc", {"b": (-1, 1, 0), "c": (-1, 1, 0)})
+    if on:
+        out["bc"] = r
+    _, r, on = nums("hue", {"h": (-180, 180, 0), "s": (-1, 1, 0), "l": (-1, 1, 0)})
+    if on:
+        out["hue"] = r
+    _, r, on = nums("shhi", {"s": (0, 1, 0), "h": (0, 1, 0), "mid": (-1, 1, 0)})
+    if on:
+        out["shhi"] = {**r, **nums("shhi", {"radius": (0, 1, 0.3), "color": (-1, 1, 0)})[1]}
+    _, r, on = nums("hdr", {"amount": (0, 1, 0)})
+    if on:
+        out["hdr"] = {**r, **nums("hdr", {"radius": (0, 1, 0.3), "detail": (0, 1, 0.3), "sat": (-1, 1, 0)})[1]}
+    d, r, on = nums("filter", {"density": (0, 1, 0)})
+    if on:
+        out["filter"] = {**r, "color": _hex(d.get("color"), "#EC8A00"), "preserve": d.get("preserve", True) is not False}
+    for name in ("invert", "desat"):
+        if isinstance(c.get(name), dict) and c[name].get("on"):
+            out[name] = {"on": True}
+    d = c.get("posterize")
+    if isinstance(d, dict) and d.get("on"):
+        out["posterize"] = {"n": int(num(d.get("n"), 2, 32, 4))}
+    d = c.get("threshold")
+    if isinstance(d, dict) and d.get("on"):
+        out["threshold"] = {"level": round(num(d.get("level"), 0, 1, 0.5), 3)}
+    d = c.get("bw")
+    if isinstance(d, dict) and d.get("on"):
+        defaults = {"r": 0.4, "y": 0.6, "g": 0.4, "c": 0.6, "b": 0.2, "m": 0.8}
+        out["bw"] = {k: round(num(d.get(k), -2, 3, v), 3) for k, v in defaults.items()}
+        if d.get("tint"):
+            out["bw"].update(tint=True, hue=round(num(d.get("hue"), 0, 360, 40), 1), sat=round(num(d.get("sat"), 0, 1, 0.2), 3))
+    d = c.get("mixer")
+    if isinstance(d, dict):
+        rows = {k: [round(num(x, -2, 2), 3) for x in (d.get(k) if isinstance(d.get(k), list) and len(d[k]) == 4 else base)]
+                for k, base in (("r", [1, 0, 0, 0]), ("g", [0, 1, 0, 0]), ("b", [0, 0, 1, 0]))}
+        if d.get("mono") or rows != {"r": [1, 0, 0, 0], "g": [0, 1, 0, 0], "b": [0, 0, 1, 0]}:
+            out["mixer"] = {**rows, "mono": bool(d.get("mono"))}
+    d = c.get("lut")
+    if isinstance(d, dict) and d.get("id") in PRESETS and d["id"] and num(d.get("amount"), 0, 1, 1):
+        out["lut"] = {"id": d["id"], "amount": round(num(d.get("amount"), 0, 1, 1), 3)}
+    d = c.get("gradient")
+    if isinstance(d, dict) and d.get("on") and isinstance(d.get("stops"), list):
+        stops = sorted(([round(num(s[0], 0, 1), 3), _hex(s[1], "#000000")] for s in d["stops"][:8] if isinstance(s, list) and len(s) == 2), key=lambda s: s[0])
+        if len(stops) >= 2:
+            out["gradient"] = {"stops": stops, "amount": round(num(d.get("amount"), 0, 1, 1), 3), "reverse": bool(d.get("reverse"))}
+    d = c.get("selective")
+    if isinstance(d, dict) and isinstance(d.get("bands"), dict):
+        bands = {}
+        for k, v in d["bands"].items():
+            if k in COLOR_HSL and isinstance(v, list) and len(v) == 4:
+                ink = [round(num(x, -1, 1), 3) for x in v]
+                if any(ink):
+                    bands[k] = ink
+        if bands:
+            out["selective"] = {"bands": bands, "relative": d.get("relative", True) is not False}
+    d = c.get("balance")
+    if isinstance(d, dict):
+        r = {k: _triple(d.get(k)) for k in ("shadows", "mids", "highs")}
+        if any(any(v) for v in r.values()):
+            out["balance"] = {**r, "preserve": d.get("preserve", True) is not False}
+    d = c.get("levels")
+    if isinstance(d, dict):
+        lv = {}
+        for k in ("rgb", "r", "g", "b"):
+            v = d.get(k)
+            if isinstance(v, list) and len(v) == 5:
+                b = round(num(v[0], 0, 0.95), 3)
+                e = [b, round(num(v[1], 0.1, 9.99, 1), 3), round(max(b + 0.01, num(v[2], 0.02, 1, 1)), 3), round(num(v[3], 0, 1), 3), round(num(v[4], 0, 1, 1), 3)]
+                if e != [0, 1, 1, 0, 1]:
+                    lv[k] = e
+        if lv:
+            out["levels"] = lv
+    d = c.get("curves")
+    if isinstance(d, dict):
+        cv = {}
+        for k in ("rgb", "r", "g", "b"):
+            v = d.get(k)
+            if isinstance(v, list) and 2 <= len(v) <= 16:
+                pts = {}
+                for p in v:
+                    if isinstance(p, list) and len(p) == 2:
+                        pts[round(num(p[0], 0, 1), 4)] = round(num(p[1], 0, 1), 4)
+                e = [[x, pts[x]] for x in sorted(pts)]
+                if len(e) >= 2 and any(abs(x - y) > 1e-3 for x, y in e) or (len(e) >= 2 and (e[0][0] > 0 or e[-1][0] < 1)):
+                    cv[k] = e
+        if cv:
+            out["curves"] = cv
+    d = c.get("match")
+    if isinstance(d, dict) and d.get("photo") and (UPLOADS / Path(str(d["photo"])).name).is_file():
+        out["match"] = {"photo": Path(str(d["photo"])).name, "lum": round(num(d.get("lum"), 0, 2, 1), 3), "sat": round(num(d.get("sat"), 0, 2, 1), 3), "fade": round(num(d.get("fade"), 0, 1), 3)}
+    d, r, on = nums("replace", {"h": (-180, 180, 0), "s": (-1, 1, 0), "l": (-1, 1, 0)})
+    if on:
+        out["replace"] = {**r, "color": _hex(d.get("color"), "#FF0000"), "fuzz": round(num(d.get("fuzz"), 0, 1, 0.3), 3)}
+    d = c.get("grade")
+    if isinstance(d, dict):
+        r = {}
+        for k in ("shadow", "mid", "high", "global"):
+            v = d.get(k)
+            if isinstance(v, list) and len(v) == 3 and (num(v[1], 0, 1) or num(v[2], -1, 1)):
+                r[k] = [round(num(v[0], 0, 360), 1), round(num(v[1], 0, 1), 3), round(num(v[2], -1, 1), 3)]
+        if r:
+            out["grade"] = {**r, "balance": round(num(d.get("balance"), -1, 1), 3), "blend": round(num(d.get("blend"), 0, 1, 0.5), 3)}
+    return out
+
+
+def clean_filters(ls, masks):
+    """Filtre yığını: sıra korunur; kapalı ve bilinmeyenler atlanır. Yalnızca seçili alan: seçim filtreye gömülür."""
+    out = []
+    for raw in (ls if isinstance(ls, list) else [])[:filters.MAX_STACK]:
+        if not isinstance(raw, dict):
+            continue
+        f = filters.clean_one(raw, lambda pid: (UPLOADS / Path(pid).name).is_file())
+        if f is None:
+            continue
+        area = next((m for m in masks if isinstance(m, dict) and m.get("id") == raw.get("area")), None) if raw.get("area") and isinstance(masks, list) else None
+        if area:
+            got = clean_masks([area], keep_empty=True)
+            if got and got[0]["type"] == "select":
+                f["areaMask"] = got[0]
+        out.append(f)
+    return out
+
+
 def clean_fx(fx_in):
     preset = str(fx_in.get("preset") or "")
     if preset not in PRESETS:  # silinmiş ayar -> klasik görünüm
@@ -189,7 +362,9 @@ def clean_fx(fx_in):
             "amount": num(fx_in.get("amount", 1.0), 0.0, 1.0, 1.0),
             "adjust": {k: v for k, v in adjust.items() if v},
             "texture": clean_texture(fx_in.get("texture")), "frame": clean_frame(fx_in.get("frame")),
-            "masks": clean_masks(fx_in.get("masks")), "background": clean_background(fx_in.get("background"))}
+            "masks": clean_masks(fx_in.get("masks")), "background": clean_background(fx_in.get("background")),
+            "retouch": clean_retouch(fx_in.get("retouch"), fx_in.get("masks")), "color": clean_color(fx_in.get("color")),
+            "filters": clean_filters(fx_in.get("filters"), fx_in.get("masks"))}
 
 
 def clean_background(b):
@@ -198,14 +373,39 @@ def clean_background(b):
         return {}
     c = b.get("color")
     return {"mode": b["mode"], "color": c if isinstance(c, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", c) else "#FFFFFF",
-            "blur": round(num(b.get("blur"), 0.0, 1.0, 0.5), 3)}
+            "blur": round(num(b.get("blur"), 0.0, 1.0, 0.5), 3), "edge": round(num(b.get("edge"), 0.0, 1.0), 3), "defringe": round(num(b.get("defringe"), 0.0, 1.0), 3)}
 
 
 AI_LOCK = threading.Lock()
 
 
+def ai_model(m):
+    return m if m in ai.MODELS else "isnet"
+
+
+def lama_fill(rgb, hole):
+    with AI_LOCK:
+        return ai.lama_fill(HERE, rgb, hole)
+
+
+class _InpaintHook:
+    """Model kurulduysa engine.INPAINT_FN gibi davranır; kurulu değilse yama eşleştirme kullanılır."""
+    def __bool__(self):
+        return ai.installed(HERE, "lama")
+
+    def __call__(self, rgb, hole):
+        return lama_fill(rgb, hole)
+
+
+AI_OPS = ("subject", "object", "sky")  # object ve sky model yoksa da çalışır, varsa daha iyi sonuç verir
+OBJECTS = {}  # nesne seçimi: kutu başına bir kez çalışır
+
+
 def needs_matte(fx):
-    return bool(fx.get("background")) or any(op.get("kind") == "subject" for m in fx.get("masks") or [] for op in m.get("ops") or [])
+    masks = list(fx.get("masks") or []) + [(fx.get("retouch") or {}).get("areaMask") or {}] + [f.get("areaMask") or {} for f in fx.get("filters") or []]
+    if any(f["kind"] == "lens" and f.get("depth") == "subject" for f in fx.get("filters") or []):
+        return True
+    return bool(fx.get("background")) or any(op.get("kind") in AI_OPS for m in masks for op in m.get("ops") or [])
 
 
 def matte_provider(path, geo):
@@ -220,6 +420,17 @@ def matte_provider(path, geo):
                 held["m"] = ai.matte_for(HERE, path, MATTES)
         guide = get_src(path)["proxy"] if geo and geo.get("fit") == "content" else None  # aynı bükülme için
         return engine.align_matte(held["m"], geo, get_src(path)["size"] if geo else None, size, guide)
+
+    def crop(arr, box):
+        """Nesne seçimi: model yalnızca kutunun içine bakar."""
+        def make():
+            img = Image.fromarray((np.clip(arr, 0, 1) * 255).astype(np.uint8))
+            img.thumbnail((1024, 1024), Image.BILINEAR)
+            with AI_LOCK:
+                return ai.predict(HERE, img)
+        key = (str(path), json.dumps(geo, sort_keys=True), tuple(box))
+        return np.asarray(_lru(OBJECTS, key, make, 8).resize((arr.shape[1], arr.shape[0]), Image.BILINEAR), np.float32) / 255.0
+    fn.ready, fn.crop = ai.installed(HERE), crop
     return fn
 
 
@@ -234,23 +445,55 @@ def _pt(v, lo=-0.5, hi=1.5):
 
 
 def clean_select_ops(ops):
-    """Akıllı seçim adımları (sihirli değnek / fırça); toplam nokta sayısı sınırlı."""
+    """Selection Tool adımları; toplam nokta sayısı sınırlı."""
     out, budget = [], 6000
+
+    def box(q):
+        if not isinstance(q, list) or len(q) != 4:
+            return None
+        v = [round(num(c, -0.2, 1.2), 4) for c in q]
+        return v if abs(v[2] - v[0]) > 0.002 and abs(v[3] - v[1]) > 0.002 else None
+
     for op in (ops if isinstance(ops, list) else [])[:300]:
         if not isinstance(op, dict):
             continue
-        add = op.get("add", True) is not False
-        if op.get("kind") == "subject":
-            out.append({"kind": "subject", "add": add, "inverse": bool(op.get("inverse"))})
-        elif op.get("kind") == "wand":
-            out.append({"kind": "wand", "p": _pt(op.get("p"), 0.0, 1.0), "tol": round(num(op.get("tol"), 0.0, 1.0, 0.3), 3),
-                        "contiguous": op.get("contiguous", True) is not False, "add": add})
-        elif op.get("kind") == "brush" and isinstance(op.get("pts"), list):
-            pts = [_pt(q, -0.2, 1.2) for q in op["pts"][:budget]]
+        kind, add, c = op.get("kind"), op.get("add", True) is not False, None
+        pts = [[round(x, 4), round(y, 4)] for x, y in (_pt(q, -0.2, 1.2) for q in op["pts"][:budget])] if isinstance(op.get("pts"), list) else []
+        tol = round(num(op.get("tol"), 0.0, 1.0, 0.3), 3)
+        if kind == "subject":
+            c = {"kind": kind, "inverse": bool(op.get("inverse"))}
+        elif kind == "wand":
+            c = {"kind": kind, "p": _pt(op.get("p"), 0.0, 1.0), "tol": tol, "contiguous": op.get("contiguous", True) is not False}
+        elif kind == "brush" and pts:
+            c = {"kind": kind, "pts": pts, "r": round(num(op.get("r"), 0.002, 0.3, 0.03), 4), "hard": round(num(op.get("hard"), 0.0, 1.0, 0.6), 3)}
+        elif kind == "quick" and pts:
+            c = {"kind": kind, "pts": pts, "r": round(num(op.get("r"), 0.002, 0.3, 0.03), 4), "tol": tol}
+        elif kind in ("poly", "magnetic") and len(pts) >= 3:
+            c = {"kind": kind, "pts": pts}
+        elif kind in ("rect", "ellipse", "object") and box(op.get("box")):
+            c = {"kind": kind, "box": box(op["box"])}
+        elif kind == "row":
+            c = {"kind": kind, "y": round(num(op.get("y"), 0.0, 1.0, 0.5), 5)}
+        elif kind == "col":
+            c = {"kind": kind, "x": round(num(op.get("x"), 0.0, 1.0, 0.5), 5)}
+        elif kind == "range":
+            c = {"kind": kind, "p": _pt(op.get("p"), 0.0, 1.0), "tol": tol}
+        elif kind == "focus":
+            c = {"kind": kind, "amt": round(num(op.get("amt"), 0.0, 1.0, 0.5), 3)}
+        elif kind == "sky":
+            c = {"kind": kind}
+        elif kind == "invert":
+            out.append({"kind": kind})
+        elif kind in ("expand", "contract", "feather", "smooth", "border"):
+            out.append({"kind": kind, "amt": round(num(op.get("amt"), 0.0, 0.2, 0.01), 5)})
+        elif kind in ("grow", "similar"):
+            out.append({"kind": kind, "tol": tol})
+        if c:
+            c["add"] = add
+            if op.get("intersect"):
+                c["intersect"] = True
+            out.append(c)
             budget -= len(pts)
-            if pts:
-                out.append({"kind": "brush", "pts": [[round(x, 4), round(y, 4)] for x, y in pts],
-                            "r": round(num(op.get("r"), 0.002, 0.3, 0.03), 4), "hard": round(num(op.get("hard"), 0.0, 1.0, 0.6), 3), "add": add})
         if budget <= 0:
             break
     return out
@@ -274,6 +517,11 @@ def clean_masks(ms, keep_empty=False):
             c.update(c=pt(m.get("c")), r=pt(m.get("r"), 0.01, 2.0), feather=round(num(m.get("feather"), 0.0, 1.0, 0.5), 3))
         if m["type"] == "select" and m.get("fill"):
             c["fill"] = True
+        if m["type"] == "select" and isinstance(m.get("refine"), dict):
+            rf = m["refine"]
+            rf = {"edge": round(num(rf.get("edge"), 0.0, 1.0), 3), "smooth": round(num(rf.get("smooth"), 0.0, 1.0), 3), "shift": round(num(rf.get("shift"), -1.0, 1.0), 3), "contrast": round(num(rf.get("contrast"), 0.0, 1.0), 3)}
+            if any(rf.values()):
+                c["refine"] = rf
         if c["adjust"] or c.get("fill") or keep_empty:
             out.append(c)
     return out
@@ -370,6 +618,7 @@ def clean_item(d):
     fx = clean_fx(fx_in)
     block = d.get("block") or [0, 0]
     lim = 2 * max(W, H)  # metni tuvalin çok dışına atan değerler çizimi bozmasın
+    fx["paint"] = clean_paint(d.get("paint"), d.get("hidden"))
     block = [num(block[0], -lim, lim), num(block[1], -lim, lim)]
     offsets = {str(k): (num(v[0], -lim, lim), num(v[1], -lim, lim))
                for k, v in (d.get("offsets") or {}).items()}
@@ -380,23 +629,211 @@ def clean_item(d):
         "geo": clean_geo(d.get("geo")),
         "font": clean_font(d.get("font")), "textfx": clean_textfx(d.get("textfx")),
         "layers": clean_layers(d.get("layers"), d.get("hidden")),
+        "slices": clean_slices(d.get("slices")),
     }
+
+
+BRUSH_NUMS = {"size": (0.001, 0.6, 0.03), "hard": (0, 1, 0.8), "opacity": (0, 1, 1), "flow": (0, 1, 1), "spacing": (0.02, 3, 0.15),
+              "angle": (-180, 180, 0), "round": (0.05, 1, 1), "sizeJ": (0, 1, 0), "minD": (0, 1, 0), "angleJ": (0, 1, 0), "roundJ": (0, 1, 0),
+              "hueJ": (0, 1, 0), "satJ": (0, 1, 0), "briJ": (0, 1, 0), "fgbgJ": (0, 1, 0), "scatter": (0, 10, 0), "count": (1, 8, 1),
+              "wet": (0, 1, 0), "dry": (0, 1, 0), "texDepth": (0, 1, 0.6), "tol": (0, 1, 0.3), "pickup": (0, 1, 0.5), "load": (0, 1, 0),
+              "dualSize": (0.1, 3, 0.5), "dualScatter": (0, 5, 0), "dualHard": (0, 1, 0.8), "amount": (0, 1, 0.5), "stampScale": (0.02, 1, 0.2)}
+HEX_RE = re.compile(r"#[0-9a-fA-F]{6}")
+
+
+def clean_brush(b):
+    b = b if isinstance(b, dict) else {}
+    out = {k: round(num(b.get(k), lo, hi, d), 4) for k, (lo, hi, d) in BRUSH_NUMS.items()}
+    out["count"] = int(out["count"])
+    for k in ("pressSize", "pressOpacity", "paintOnly", "vib", "finger"):
+        out[k] = bool(b.get(k))
+    out["range"] = b["range"] if b.get("range") in ("shadows", "mid", "high") else "mid"
+    out["sponge"] = "sat" if b.get("sponge") == "sat" else "desat"
+    stamp = str(b.get("stamp") or "")
+    out["stamp"] = stamp if stamp in engine.PATTERN_KINDS or (stamp.startswith("img:") and (UPLOADS / Path(stamp[4:]).name).is_file()) else ""
+    out["contiguous"] = b.get("contiguous", True) is not False
+    out["color"] = b["color"] if isinstance(b.get("color"), str) and HEX_RE.fullmatch(b["color"]) else "#000000"
+    out["color2"] = b["color2"] if isinstance(b.get("color2"), str) and HEX_RE.fullmatch(b["color2"]) else "#FFFFFF"
+    tip = str(b.get("tip") or "round")
+    out["tip"] = tip if tip == "round" or (tip.startswith("img:") and (UPLOADS / Path(tip[4:]).name).is_file()) else "round"
+    out["tex"] = b["tex"] if b.get("tex") in engine.TEX_KINDS else ""
+    out["pattern"] = b["pattern"] if b.get("pattern") in engine.PATTERN_KINDS else ""
+    out["dual"] = bool(b.get("dual"))
+    return out
+
+
+def clean_paint(p, hidden=None):
+    """Boya darbeleri; toplam nokta sayısı sınırlı. Gizliyse çizilmez."""
+    if not isinstance(p, dict) or (isinstance(hidden, list) and "paint" in hidden):
+        return {}
+    out, budget = [], 200000
+    for st in (p.get("strokes") if isinstance(p.get("strokes"), list) else [])[:3000]:
+        if not isinstance(st, dict) or st.get("tool") not in engine.PAINT_TOOLS or not isinstance(st.get("pts"), list):
+            continue
+        pts = []
+        for q in st["pts"][:min(budget, 6000)]:
+            if isinstance(q, list) and len(q) >= 2:
+                pts.append([round(num(q[0], -0.5, 1.5), 5), round(num(q[1], -0.5, 1.5), 5), round(num(q[2] if len(q) > 2 else 1.0, 0.0, 1.0, 1.0), 3)])
+        if pts:
+            s = {"tool": st["tool"], "pts": pts, "seed": int(num(st.get("seed"), 0, 2**31 - 1)), "b": clean_brush(st.get("b"))}
+            if isinstance(st.get("src"), list) and len(st["src"]) == 2:  # rötuş: kaynak kaydırması
+                s["src"] = [round(num(st["src"][0], -1.5, 1.5), 5), round(num(st["src"][1], -1.5, 1.5), 5)]
+            if st.get("mode") == "extend":
+                s["mode"] = "extend"
+            out.append(s)
+            budget -= len(pts)
+        if budget <= 0:
+            break
+    return {"strokes": out} if out else {}
+
+
+def load_tip(pid):
+    """Özel fırça ucu: şeffaf PNG'de alfa, değilse koyu yerler boya olur."""
+    def make():
+        with Image.open(photo_path(pid)) as im:
+            rgba = ImageOps.exif_transpose(im).convert("RGBA")
+        a = rgba.getchannel("A")
+        if a.getextrema()[0] < 250:
+            return a
+        return ImageOps.invert(rgba.convert("L"))
+    return _lru(TIPS, pid, make, 16)
+
+
+def load_stamp(pid):
+    """Desen damgası görseli: şeffaf yerler beyaz olur."""
+    def make():
+        with Image.open(photo_path(pid)) as im:
+            rgba = ImageOps.exif_transpose(im).convert("RGBA")
+        bg = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+        return Image.alpha_composite(bg, rgba).convert("RGB")
+    return _lru(TIPS, "rgb:" + pid, make, 16)
+
+
+TIPS = {}
+engine.TIP_LOADER = load_tip
+engine.STAMP_LOADER = load_stamp
+engine.INPAINT_FN = _InpaintHook()
+
+
+def brush_thumb(d):
+    """Hazır ayar kutucuğu: açık zeminde örnek darbe."""
+    W, H = 320, 88
+    b = {**clean_brush(d.get("b")), "color": "#1E1E22", "color2": "#8A8A92"}
+    b["size"] = min(b["size"], 0.42) if d.get("real") else max(0.14, min(0.42, b["size"] * 6))
+    tool = d.get("tool") if d.get("tool") in engine.PAINT_TOOLS else "brush"
+    xs = np.linspace(0.08, 0.92, 80)
+    pts = [[float(x), float(0.5 + 0.24 * np.sin((x - 0.08) * 7.5)), float(0.25 + 0.75 * np.sin((x - 0.08) / 0.84 * np.pi))] for x in xs]
+    base = Image.new("RGBA", (W, H), (242, 242, 244, 255))
+    out = engine.apply_paint(base, base, {"strokes": [{"tool": "pencil" if tool == "pencil" else "brush", "pts": pts, "seed": 7, "b": b}]})
+    buf = io.BytesIO()
+    out.convert("RGB").save(buf, "PNG")
+    return {"image": "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()}
+
+
+def clean_slices(ls):
+    """Dilimler: tuvale göre 0..1 kutular; en fazla 200."""
+    out = []
+    for s in (ls if isinstance(ls, list) else [])[:200]:
+        if not isinstance(s, dict):
+            continue
+        x, y = num(s.get("x"), 0.0, 1.0), num(s.get("y"), 0.0, 1.0)
+        w, h = min(num(s.get("w"), 0.0, 1.0), 1 - x), min(num(s.get("h"), 0.0, 1.0), 1 - y)
+        if w > 0.002 and h > 0.002:
+            out.append({"x": x, "y": y, "w": w, "h": h, "name": Path(safe_name(str(s.get("name") or "") + ".x")).stem[:30] if s.get("name") else ""})
+    return out
 
 
 def clean_layers(ls, hidden=None):
     """Görsel katmanları (birleştirme). Gizlenenler ve dosyası olmayanlar atlanır."""
     hidden = set(hidden) if isinstance(hidden, list) else set()
     out = []
-    for ly in (ls if isinstance(ls, list) else [])[:20]:
+    for ly in (ls if isinstance(ls, list) else [])[:40]:
         if not isinstance(ly, dict) or f"img:{ly.get('id')}" in hidden:
             continue
+        kind = ly.get("kind") if ly.get("kind") in layerfx.GENERATED + ("adjust",) else None
         pid = Path(str(ly.get("photo") or "")).name
-        if not pid or not (UPLOADS / pid).is_file():
+        if not kind and (not pid or not (UPLOADS / pid).is_file()):
             continue
-        out.append({"photo": pid, "x": num(ly.get("x"), -2.0, 3.0, 0.5), "y": num(ly.get("y"), -2.0, 3.0, 0.5),
-                    "w": num(ly.get("w"), 0.01, 5.0, 0.4), "rot": num(ly.get("rot"), -360.0, 360.0, 0.0),
-                    "opacity": num(ly.get("opacity"), 0.0, 1.0, 1.0), "flipH": bool(ly.get("flipH")),
-                    "cutout": bool(ly.get("cutout"))})
+        c = {"id": str(ly.get("id") or ""), "photo": pid, "x": num(ly.get("x"), -2.0, 3.0, 0.5), "y": num(ly.get("y"), -2.0, 3.0, 0.5),
+             "w": num(ly.get("w"), 0.01, 5.0, 0.4), "rot": num(ly.get("rot"), -360.0, 360.0, 0.0),
+             "opacity": num(ly.get("opacity"), 0.0, 1.0, 1.0), "flipH": bool(ly.get("flipH")),
+             "cutout": bool(ly.get("cutout")), "sy": num(ly.get("sy"), 0.02, 20.0, 1.0), "blend": bool(ly.get("blend")),
+             "clip": bool(ly.get("clip")), "defringe": round(num(ly.get("defringe"), 0.0, 1.0), 3)}
+        c.update(clean_deform(ly))
+        c.update(clean_layer_extra(ly, kind))
+        out.append(c)
+    return out
+
+
+def clean_layer_extra(ly, kind):
+    """Katman türü, karışım kipi, dolgu opaklığı ve stiller; varsayılanlar yazılmaz (eski projeler aynı kalır)."""
+    out = {}
+    if ly.get("mode") in layerfx.MODES and ly["mode"] != "normal":
+        out["mode"] = ly["mode"]
+    fill = round(num(ly.get("fill"), 0.0, 1.0, 1.0), 3)
+    if fill < 1:
+        out["fill"] = fill
+    st = layerfx.clean_styles(ly.get("styles"))
+    if st:
+        out["styles"] = st
+    if kind:
+        out["kind"] = kind
+        out["ar"] = round(num(ly.get("ar"), 0.01, 50.0, 1.0), 4)
+        hx = lambda v, d: v.upper() if isinstance(v, str) and HEX_RE.fullmatch(v) else d
+        if kind == "text":
+            t = ly.get("textDef") if isinstance(ly.get("textDef"), dict) else {}
+            out["textDef"] = {"value": str(t.get("value") or "Metin")[:2000], "family": clean_font(t.get("family")), "color": hx(t.get("color"), "#FFFFFF"),
+                              "align": t.get("align") if t.get("align") in ("left", "center", "right") else "center", "bold": bool(t.get("bold"))}
+        elif kind == "shape":
+            t = ly.get("shapeDef") if isinstance(ly.get("shapeDef"), dict) else {}
+            out["shapeDef"] = {"type": t.get("type") if t.get("type") in ("rect", "ellipse", "triangle", "star", "hexagon") else "rect", "color": hx(t.get("color"), "#E0314A"),
+                               "stroke": hx(t.get("stroke"), "#FFFFFF"), "strokeW": round(num(t.get("strokeW"), 0.0, 0.5), 3), "radius": round(num(t.get("radius"), 0.0, 1.0), 3)}
+        elif kind == "fill":
+            t = ly.get("fillDef") if isinstance(ly.get("fillDef"), dict) else {}
+            out["fillDef"] = {"type": t.get("type") if t.get("type") in ("color", "gradient", "pattern") else "color", "color": hx(t.get("color"), "#808080"), "color2": hx(t.get("color2"), "#FFFFFF"),
+                              "angle": num(t.get("angle"), -180.0, 180.0, 90.0), "pattern": t.get("pattern") if t.get("pattern") in layerfx.PATTERNS else "dots", "scale": round(num(t.get("scale"), 0.005, 0.5, 0.03), 3)}
+        elif kind == "adjust":
+            out["adjust"] = clean_color(ly.get("adjust"))
+    if kind == "blank":
+        out["paint"] = clean_paint(ly.get("paint"))
+    return out
+
+
+def clean_deform(ly):
+    """Katman bozma alanları: geçersiz ya da etkisiz olanlar atılır."""
+    def grid(q, n):
+        if not (isinstance(q, list) and len(q) == n and all(isinstance(p, list) and len(p) == 2 for p in q)):
+            return None
+        return [[round(num(p[0], -3.0, 4.0), 4), round(num(p[1], -3.0, 4.0), 4)] for p in q]
+    out = {}
+    for key, n in (("corners", 4), ("warp", 16), ("pwarp", 6)):
+        g = grid(ly.get(key), n)
+        if g and (key != "corners" or any(v for p in g for v in p)):
+            out[key] = g
+    pins = []
+    for q in (ly.get("pins") if isinstance(ly.get("pins"), list) else [])[:24]:
+        if isinstance(q, dict) and grid([q.get("p"), q.get("q")], 2):
+            a, b = grid([q["p"], q["q"]], 2)
+            pins.append({"p": a, "q": b})
+    if pins:
+        out["pins"] = pins
+    mk = ly.get("mask")
+    if isinstance(mk, dict):
+        ops = [o for o in clean_select_ops(mk.get("ops")) if o["kind"] == "brush"]
+        if ops or mk.get("invert"):
+            out["mask"] = {"ops": ops, "invert": bool(mk.get("invert")), "off": bool(mk.get("off"))}
+            d, f = round(num(mk.get("density"), 0.0, 1.0, 1.0), 3), round(num(mk.get("feather"), 0.0, 1.0), 3)
+            if d < 1:
+                out["mask"]["density"] = d
+            if f:
+                out["mask"]["feather"] = f
+    v = ly.get("vector")
+    if isinstance(v, dict):
+        if v.get("kind") in ("rect", "ellipse") and grid([v.get("box", [])[:2], v.get("box", [])[2:]], 2):
+            a, b = grid([v["box"][:2], v["box"][2:]], 2)
+            out["vector"] = {"kind": v["kind"], "box": a + b}
+        elif v.get("kind") == "path" and isinstance(v.get("pts"), list) and 3 <= len(v["pts"]) <= 400 and grid(v["pts"], len(v["pts"])):
+            out["vector"] = {"kind": "path", "pts": grid(v["pts"], len(v["pts"]))}
     return out
 
 
@@ -426,6 +863,46 @@ def layer_loader(full=False):
             return img
         return _lru(LAYER_IMG, key, make, 8)
     return load
+
+
+def _item_canvas(item, path):
+    geo = item["geo"]
+    if geo is None:
+        return W, H
+    return engine.canvas_plan(geo, engine.geo_plan(geo, *get_src(path)["size"])["size"])[0]
+
+
+def layers_merge(d):
+    """Seçili (ya da görünen) katmanları tek şeffaf görsele çizer; yeni dosya bilgisini döndürür."""
+    raw = d.get("item") or {}
+    item = clean_item(raw)
+    ids = set(str(i) for i in d.get("ids") or [])
+    chosen = [ly for ly in item["layers"] if (not ids or ly["id"] in ids) and ly.get("kind") != "adjust"]
+    if not chosen:
+        raise ValueError("Birleştirilecek katman yok.")
+    cw, ch = _item_canvas(item, photo_path(raw["id"]))
+    f = min(1.0, 4096 / max(cw, ch))
+    size = (max(1, round(cw * f)), max(1, round(ch * f)))
+    out = engine.place_layers(Image.new("RGBA", size, (0, 0, 0, 0)), chosen, layer_loader(True))
+    buf = io.BytesIO()
+    out.save(buf, "PNG")
+    return save_photo("birlesik.png", buf.getvalue())
+
+
+def layers_flatten(d):
+    """Görüntüyü düzleştir: fotoğraf, efektler, katmanlar ve yazı tek görsel olur (filigran hariç)."""
+    raw = d.get("item") or {}
+    item = clean_item(raw)
+    path = photo_path(raw["id"])
+    attach_matte(item["fx"], path, item["geo"])
+    tmp = UPLOADS / f".flat_{uuid.uuid4().hex[:8]}.png"
+    try:
+        engine.render_one(CFG, path, item["text"], item["tone"], item["accent"], tmp, styles=item["styles"], fx=item["fx"], block=item["block"],
+                          offsets=item["offsets"], geo=item["geo"], wm=None, font=item["font"], textfx=item["textfx"], fmt="png", quality=95,
+                          keep_exif=False, color="rgb", dpi=None, layers=item["layers"], loader=layer_loader(True))
+        return save_photo("duzlestirilmis.png", tmp.read_bytes())
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def clean_font(f):
@@ -473,7 +950,7 @@ def clean_geo(g):
     return {"aspect": aspect, "crop": crop, "rotate": int(num(g.get("rotate"), 0, 270)) // 90 * 90,
             "flipH": bool(g.get("flipH")), "flipV": bool(g.get("flipV")),
             "straighten": round(num(g.get("straighten"), -45.0, 45.0), 2), **out, "canvas": clean_canvas(g.get("canvas")),
-            "persp": clean_persp(g.get("persp")), "fit": "content" if g.get("fit") == "content" else None}
+            "persp": clean_persp(g.get("persp")), "fit": "content" if g.get("fit") == "content" else None, "ca": bool(g.get("ca"))}
 
 
 def clean_persp(q):
@@ -542,7 +1019,10 @@ def geo_image(path, geo, target):
 
 def fx_key(fx):
     return (fx["bw"], round(fx["grain"], 2), round(fx["vignette"], 2), fx["preset"],
-            round(fx["amount"], 2), json.dumps([fx["adjust"], fx["texture"], fx["frame"], fx["masks"], fx.get("background")], sort_keys=True))
+            round(fx["amount"], 2), json.dumps([fx["adjust"], fx["texture"], fx["frame"], fx["masks"], fx.get("background"), fx.get("paint"), fx.get("retouch"), fx.get("color"), fx.get("filters")], sort_keys=True))
+
+
+GRADED = {}
 
 
 def get_base(path, fx, geo=None, want_w=0):
@@ -559,12 +1039,18 @@ def get_base(path, fx, geo=None, want_w=0):
     if key in BASE:
         BASE[key] = BASE.pop(key)
         return BASE[key], size if geo is None else engine.canvas_plan(geo, size)[0], f
+    paint_key = (key[0], key[1], fx_key({**fx, "paint": None}), key[3])
+
+    def graded(make):  # yeni fırça darbesinde renk işleme tekrar çalışmasın
+        return _lru(GRADED, paint_key, make, 3) if fx.get("paint") else make()
+
     if geo is None:
-        base = engine.grade_base(CFG, get_crop(path), path, fx)
+        crop = get_crop(path)
+        base = engine.finish_base(graded(lambda: engine.grade_base(CFG, crop, path, fx)), crop, fx, None, 1.0, paint_key)
     else:
         target = (max(1, round(size[0] * f)), max(1, round(size[1] * f)))
         img = geo_image(path, geo, target)
-        base = engine.extend_canvas(engine.grade_base(CFG, img, path, fx, engine.canvas_scale(*size) * f), geo, f)
+        base = engine.finish_base(graded(lambda: engine.grade_base(CFG, img, path, fx, engine.canvas_scale(*size) * f)), img, fx, geo, f, paint_key)
     BASE[key] = base
     while len(BASE) > 6:
         BASE.pop(next(iter(BASE)))
@@ -631,6 +1117,106 @@ def auto_enhance(d):
     graded = engine.grade(img, CFG, 0, fx, engine.canvas_scale(*img.size))
     arr = np.asarray(graded, dtype=np.float32) / 255.0
     return {"adjust": looks.auto_adjust(arr, bw=fx["bw"])}
+
+
+def color_auto(d):
+    """Otomatik Ton / Kontrast / Renk: seviyeler hariç işlenmiş küçük görselden düzenlenebilir seviye değerleri."""
+    kind = d.get("kind") if d.get("kind") in ("tone", "contrast", "color") else "tone"
+    path = photo_path(d["photo"])
+    geo = clean_geo(d.get("geo"))
+    fx = clean_fx(d.get("fx") or {})
+    fx = {**fx, "grain": 0.0, "vignette": 0.0, "texture": {}, "frame": {}, "background": {}, "color": {k: v for k, v in fx["color"].items() if k != "levels"}}
+    with LOCK:
+        if geo is None:
+            img = get_crop(path).resize((432, 540), Image.BILINEAR)
+        else:
+            size = engine.geo_plan(geo, *get_src(path)["size"])["size"]
+            f = 480 / max(size)
+            img = geo_image(path, geo, (max(1, round(size[0] * f)), max(1, round(size[1] * f))))
+    arr = np.asarray(engine.grade(img, CFG, 0, fx, engine.canvas_scale(*img.size)), np.float32) / 255.0
+    return {"levels": adjustments.auto_levels(arr, kind)}
+
+
+STATS = {}
+
+
+def photo_stats(pid):
+    """Renk Eşleştirme kaynağının renk istatistiği (küçük görselden)."""
+    def make():
+        with Image.open(photo_path(pid)) as im:
+            im = ImageOps.exif_transpose(im).convert("RGB")
+            im.thumbnail((256, 256))
+            return adjustments.color_stats(np.asarray(im, np.float32) / 255.0)
+    return _lru(STATS, pid, make, 16)
+
+
+def filter_image(pid):
+    def make():
+        with Image.open(photo_path(pid)) as im:
+            return ImageOps.exif_transpose(im).convert("RGB")
+    return _lru(STATS, "img:" + pid, make, 16)
+
+
+filters.IMAGE_LOADER = filter_image
+adjustments.PHOTO_STATS = photo_stats
+adjustments.LUT_LOADER = lambda pid: (PRESETS.get(pid) or {}).get("look")
+
+
+def layers_auto_align(d):
+    """Otomatik hizala: seçili katmanları içeriklerine göre hizalar (tek katmansa fotoğrafa, birden çoksa en alttakine)."""
+    raw = d.get("item") or {}
+    item = clean_item(raw)
+    ids = [str(i) for i in d.get("ids") or []]
+    sel = [ly for ly in item["layers"] if ly["id"] in ids and ly.get("photo")]
+    if not sel:
+        raise ValueError("Önce hizalanacak katmanı seç.")
+    path = photo_path(raw["id"])
+    attach_matte(item["fx"], path, item["geo"])
+    with LOCK:
+        base = get_base(path, item["fx"], item["geo"], 0)[0].copy()
+    base.thumbnail((512, 512), Image.BILINEAR)
+    W, H = base.size
+    load = layer_loader()
+    if len(sel) > 1:
+        ref = np.asarray(engine.place_layers(Image.new("RGBA", (W, H), (0, 0, 0, 0)), [{**sel[0], "opacity": 1.0, "blend": False}], load), np.float32) / 255.0
+        moving = sel[1:]
+    else:
+        ref = np.asarray(base.convert("RGBA"), np.float32) / 255.0
+        moving = sel
+    gray, mask = ref[..., :3] @ looks.LUMA, ref[..., 3] > 0.9
+    out = {}
+    for ly in moving:
+        r = engine.auto_align_layer(gray, mask, ly, load, W, H)
+        if r:
+            out[ly["id"]] = r
+    return {"layers": out, "tried": len(moving)}
+
+
+def geo_auto(d):
+    """Otomatik düzelt: straighten (eğim), upright (perspektif), trim (düz renkli kenarlar)."""
+    path = photo_path(d["photo"])
+    geo = clean_geo(d.get("geo")) or {"aspect": "4:5"}
+    kind = d.get("kind")
+    base = {**geo, "crop": None, "aspect": "original", "fit": None, "ca": False}
+    if kind in ("straighten", "upright"):
+        base["straighten"] = 0
+    if kind == "upright":
+        base["persp"] = None
+    with LOCK:
+        src = get_src(path)
+        plan = engine.geo_plan(base, *src["size"])
+        small = src["proxy"].copy()
+        small.thumbnail((900, 900), Image.BILINEAR)
+        img, box = engine.orient(small, plan)
+    arr = np.asarray(img.crop(tuple(round(v) for v in box)), np.float32) / 255.0
+    if kind == "straighten":
+        return {"straighten": round(max(-45.0, min(45.0, engine.auto_straighten(arr))), 2)}
+    if kind == "upright":
+        v, h = engine.auto_upright(arr)
+        return {"v": round(v, 3), "h": round(h, 3)}
+    if kind == "trim":
+        return {"crop": engine.trim_box(arr)}
+    raise ValueError("Geçersiz işlem")
 
 
 def geo_source(d):
@@ -704,6 +1290,22 @@ FX_SAMPLES = {
 FX_THUMBS = {}
 
 
+FILTER_THUMBS = {}
+# Galeride etkisi belli olsun diye bazı filtrelerin örnek ayarları güçlendirilir
+THUMB_PARAMS = {"radial": {"amount": 30}, "motion": {"d": 90}, "tilt": {"focus": 8, "trans": 12}, "iris": {"rx": 25, "ry": 25}, "shake": {"len": 8}, "lenscor": {"dist": 70, "ca": 60}, "liquify": {"strokes": [{"tool": "cw", "size": 0.7, "rate": 0.9, "pts": [[0.5, 0.5]] * 16}]},
+                "lens": {"r": 22}, "smartsharp": {"amount": 300}, "unsharp": {"amount": 300, "r": 4}, "field": {"pins": [[0.15, 0.2, 0], [0.8, 0.85, 45]]}, "wave": {"h": 40, "v": 40}, "ripple": {"amount": 220}, "dustscr": {"r": 8, "thr": 4}, "custom": {"kernel": [0, 0, 0, 0, 0, 0, -2, -1, 0, 0, 0, -1, 1, 1, 0, 0, 0, 1, 2, 0, 0, 0, 0, 0, 0]}}
+
+
+def filter_thumbs():
+    """Filtre galerisi: her filtre aynı örnek görselde, kare önizleme."""
+    if not FILTER_THUMBS:
+        img = sample_image()
+        for kind in filters.SPEC:
+            fx = clean_fx({"preset": "b:original", "bw": False, "grain": 0, "vignette": 0, "filters": [{"kind": kind, **THUMB_PARAMS.get(kind, {})}]})
+            FILTER_THUMBS[kind] = _data_url(engine.grade(img, CFG, 7, {**fx, "_filter_k": 0.45}, engine.canvas_scale(*img.size) * 2.5))
+    return {"thumbs": FILTER_THUMBS}
+
+
 def fx_thumbs():
     """Efekt ve çerçeve kutucukları: her biri aynı örnek görselde."""
     if not FX_THUMBS:
@@ -731,7 +1333,7 @@ def save_preset(d):
     if not name:
         raise ValueError("Hazır ayara bir ad ver")
     fx = clean_fx(d.get("fx") or {})
-    recipe = {"base": fx["preset"], "amount": fx["amount"], "adjust": fx["adjust"], "bw": fx["bw"]}
+    recipe = {"base": fx["preset"], "amount": fx["amount"], "adjust": fx["adjust"], "bw": fx["bw"], "color": fx["color"]}
     saved = looks.save_recipe(USER_PRESETS, name, recipe)
     PRESETS = looks.load_all(USER_PRESETS)
     return looks.meta(PRESETS[saved["id"]])
@@ -954,6 +1556,15 @@ def prune_uploads():
             for it in data["items"]:
                 keep.add(Path(str(it.get("id", ""))).name)
                 keep.update(Path(str(ly.get("photo", ""))).name for ly in it.get("layers") or [] if isinstance(ly, dict))
+                keep.add(Path(str((((it.get("fx") or {}).get("color") or {}).get("match") or {}).get("photo", ""))).name)
+                keep.update(Path(str(f.get("photo") or "")).name for f in (it.get("fx") or {}).get("filters") or [] if isinstance(f, dict))
+                for st in (it.get("paint") or {}).get("strokes") or []:  # özel fırça uçları
+                    for field in ("tip", "stamp"):
+                        tip = str((st.get("b") or {}).get(field) or "")
+                        if tip.startswith("img:"):
+                            keep.add(Path(tip[4:]).name)
+            for t in ((data.get("settings") or {}).get("brushes") or {}).get("tips") or []:
+                keep.add(Path(str(t.get("photo", ""))).name)
     except Exception:
         return  # bir proje okunamıyorsa hiçbir şeye dokunma
     if not UPLOADS.is_dir():
@@ -1159,12 +1770,17 @@ def run_job(jid, d):
                     name, n = f"{stem}_{n}", n + 1
                 used.add(name.lower())
                 out = out_dir / f"{name}.{ex['format']}"
-                engine.render_one(CFG, path, item["text"], item["tone"], item["accent"], out,
+                slices = item["slices"] if d.get("slices") else None
+                result = engine.render_one(CFG, path, item["text"], item["tone"], item["accent"], out,
                                   styles=item["styles"], fx=item["fx"], block=item["block"],
                                   offsets=item["offsets"], geo=item["geo"], wm=WATERMARK,
                                   font=item["font"], textfx=item["textfx"],
                                   fmt=ex["format"], quality=ex["quality"], keep_exif=ex["exif"],
-                                  color=ex["color"], dpi=ex["dpi"], layers=item["layers"], loader=layer_loader(True))
+                                  color=ex["color"], dpi=ex["dpi"], layers=item["layers"], loader=layer_loader(True), slices=slices)
+                if slices:
+                    job["files"].extend({"name": p.name, "text": item["text"]} for p in result)
+                    job["done"] = i
+                    continue
                 with Image.open(out) as done:
                     out_size = list(done.size)
                 manifest.append({
@@ -1297,18 +1913,30 @@ class Handler(BaseHTTPRequestHandler):
             if c == "/api/watermark" and m == "PUT":
                 return self._json(save_watermark(json.loads(self._body())))
             if c == "/api/ai/status" and m == "GET":
-                return self._json(ai.status(HERE))
+                model = ai_model(q.get("model", ["isnet"])[0])
+                if model == "lama" and ai.installed(HERE, "lama"):  # panel açılınca model ısınsın: ilk dolgu beklemesin
+                    threading.Thread(target=ai.warm, args=(HERE, "lama"), daemon=True).start()
+                return self._json(ai.status(HERE, model))
             if c == "/api/ai/install" and m == "POST":
-                if ai.STATE["state"] != "downloading" and not ai.installed(HERE):
-                    ai.STATE.update(state="downloading", done=0, error="")
-                    threading.Thread(target=ai.download, args=(HERE,), daemon=True).start()
-                return self._json(ai.status(HERE))
+                model = ai_model(json.loads(self._body() or b"{}").get("model"))
+                if ai.STATES[model]["state"] != "downloading" and not ai.installed(HERE, model):
+                    ai.STATES[model].update(state="downloading", done=0, error="")
+                    threading.Thread(target=ai.download, args=(HERE, model), daemon=True).start()
+                return self._json(ai.status(HERE, model))
             if c == "/api/mask/view" and m == "POST":
                 return self._json(mask_view(json.loads(self._body())))
             if c == "/api/fonts" and m == "GET":
                 return self._json(font_list())
+            if c == "/api/color/auto" and m == "POST":
+                return self._json(color_auto(json.loads(self._body())))
             if c == "/api/auto" and m == "POST":
                 return self._json(auto_enhance(json.loads(self._body())))
+            if c == "/api/brush/thumb" and m == "POST":
+                return self._json(brush_thumb(json.loads(self._body())))
+            if c == "/api/layers/autoalign" and m == "POST":
+                return self._json(layers_auto_align(json.loads(self._body())))
+            if c == "/api/geo/auto" and m == "POST":
+                return self._json(geo_auto(json.loads(self._body())))
             if c == "/api/geo/source" and m == "POST":
                 return self._json(geo_source(json.loads(self._body())))
             if c == "/api/signature" and m == "PUT":
@@ -1355,6 +1983,16 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(preset_list())
             if c == "/api/presets/thumbs" and m == "GET":
                 return self._json(preset_thumbs())
+            if c == "/api/layers/spec" and m == "GET":
+                return self._json({"styles": layerfx.STYLES, "modes": layerfx.MODES})
+            if c == "/api/layers/merge" and m == "POST":
+                return self._json(layers_merge(json.loads(self._body())))
+            if c == "/api/layers/flatten" and m == "POST":
+                return self._json(layers_flatten(json.loads(self._body())))
+            if c == "/api/filters/spec" and m == "GET":
+                return self._json(filters.spec_json())
+            if c == "/api/filters/thumbs" and m == "GET":
+                return self._json(filter_thumbs())
             if c == "/api/fx/thumbs" and m == "GET":
                 return self._json(fx_thumbs())
             if c == "/api/presets/save" and m == "POST":
@@ -1469,7 +2107,7 @@ def open_window(url):
 
 
 def busy():
-    return UPDATE["state"] in ("downloading", "installing") or ai.STATE["state"] == "downloading" or any(not j.get("finished") for j in JOBS.values())
+    return UPDATE["state"] in ("downloading", "installing") or ai.downloading() or any(not j.get("finished") for j in JOBS.values())
 
 
 def watchdog():

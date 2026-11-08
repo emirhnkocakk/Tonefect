@@ -24,7 +24,7 @@ export function usePreview(item: Item | undefined, width: number, wm: Watermark 
     ? ""
     : original
     ? JSON.stringify([item.id, item.geo ?? null, width, "original"])
-    : JSON.stringify([item.id, item.text, item.tone, item.accent, item.styles, item.block, item.offsets, item.fx, item.geo ?? null, item.font ?? null, item.textFx ?? null, item.layers ?? [], width, wm])
+    : JSON.stringify([item.id, item.text, item.tone, item.accent, item.styles, item.block, item.offsets, item.fx, item.geo ?? null, item.font ?? null, item.textFx ?? null, item.layers ?? [], item.paint ?? null, width, wm])
 
   async function pump() {
     if (running.current) return
@@ -57,7 +57,7 @@ export function usePreview(item: Item | undefined, width: number, wm: Watermark 
     }
     pending.current = {
       photo: item.id, text: item.text, tone: item.tone, accent: item.accent, styles: item.styles,
-      block: item.block, offsets: item.offsets, fx: item.fx, geo: item.geo ?? null, font: item.font ?? null, textfx: item.textFx ?? null, layers: item.layers ?? [], wm, w: width, original,
+      block: item.block, offsets: item.offsets, fx: item.fx, geo: item.geo ?? null, font: item.font ?? null, textfx: item.textFx ?? null, layers: item.layers ?? [], paint: item.paint ?? null, wm, w: width, original,
     }
     const t = setTimeout(pump, 30)
     return () => clearTimeout(t)
@@ -90,4 +90,16 @@ export function useFit(ref: RefObject<HTMLElement>, ratio: number, pad = 0) {
     return () => ro.disconnect()
   }, [ratio, pad, ref])
   return size
+}
+
+let lastIntent = 0
+/** Üst menü / araç kutusundan gelen komutu bir kez çalıştırır (panel yeniden açılınca eski komut tekrarlanmaz).
+ *  prefix: panel yalnızca kendi komutunu alır; sekme değişirken kapanmakta olan panel başkasının komutunu tüketmesin. */
+export function useIntent(intent: { cmd: string; n: number } | null | undefined, prefix: string, run: (cmd: string) => void) {
+  useEffect(() => {
+    if (!intent || intent.n <= lastIntent || !intent.cmd.startsWith(prefix)) return
+    lastIntent = intent.n
+    run(intent.cmd)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [intent])
 }

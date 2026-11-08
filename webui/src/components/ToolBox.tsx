@@ -1,39 +1,37 @@
 import { useEffect, useRef, useState } from "react"
 import {
-  ChevronsLeft, ChevronsRight, Circle, Crop, Expand, Frame, Image as ImageIcon, ImagePlus, Move, Palette, RotateCw, Scaling,
-  Scissors, SlidersHorizontal, Sparkles, Spline, SquareSplitVertical, Type, User, Wand2,
+  ChevronsLeft, ChevronsRight, Circle, Crop, Eraser, Frame, ImagePlus, Move, Paintbrush, Palette,
+  Scissors, SlidersHorizontal, Sparkles, SquareDashed, SquareSplitVertical, Type,
 } from "lucide-react"
+import { SELECT_TOOLS } from "@/lib/selection"
+import { CROP_TOOLS } from "@/lib/crop"
+import { XFORM_TOOLS } from "@/lib/transform"
+import { BRUSH_TOOLS } from "@/lib/brushes"
+import { ERASE_TOOLS } from "@/lib/erase"
+import { RETOUCH_ICON, RETOUCH_TOOLS } from "@/lib/retouch"
+import { COLOR_TOOLS } from "@/lib/color"
+import { FILTER_TOOLS, FX_ICON } from "@/lib/filters"
 import { cn } from "@/lib/utils"
 
 // Photoshop'taki gibi sol araç kutusu: küçük simgeler; grubu olan aracın köşesinde üçgen var,
 // üzerine gelince (ya da sağ tıklayınca) gruptaki diğer araçlar açılır. cmd'ler App.command'a gider.
-type Tool = { cmd: string; label: string; icon: typeof Move; key?: string }
-type Group = { id: string; tab: string; tools: Tool[] }
+// sticky: false -> tek seferlik komut; simgeye sonraki tıklama onu tekrarlamaz. head: açılır listedeki başlık.
+type Tool = { cmd: string; label: string; icon: typeof Move; key?: string; en?: string; head?: string; sticky?: boolean }
+type Group = { id: string; tab: string; also?: string; tools: Tool[]; label?: string; icon?: typeof Move }
 
 const GROUPS: Group[] = [
-  { id: "move", tab: "design", tools: [{ cmd: "tool:design", label: "Taşı ve katmanlar", icon: Move, key: "V" }] },
-  { id: "select", tab: "local", tools: [
-    { cmd: "mask:select", label: "Akıllı seçim", icon: Wand2, key: "W" },
-    { cmd: "mask:subject", label: "Konuyu seç (yapay zekâ)", icon: User },
-    { cmd: "mask:background", label: "Arka planı seç (yapay zekâ)", icon: ImageIcon },
+  { id: "move", tab: "design", label: "Taşıma ve Dönüştürme", icon: Move, tools: XFORM_TOOLS.map((t) => ({ cmd: t.cmd, label: t.label, en: t.en, icon: t.icon, key: t.key, head: t.section, sticky: !!t.mode })) },
+  { id: "select", tab: "select", label: "Selection Tool", icon: SquareDashed, tools: SELECT_TOOLS.map((t) => ({ cmd: `sel:${t.id}`, label: t.label, en: t.en, icon: t.icon, key: t.key, head: t.section, sticky: !!t.draw })) },
+  { id: "brush", tab: "brush", label: "Fırça ve Çizim", icon: Paintbrush, tools: BRUSH_TOOLS.map((t) => ({ cmd: t.cmd, label: t.label, en: t.en, icon: t.icon, key: t.key, head: t.section, sticky: !!t.tool })) },
+  { id: "erase", tab: "erase", label: "Silme ve Arka Plan", icon: Eraser, tools: ERASE_TOOLS.map((t) => ({ cmd: t.cmd, label: t.label, en: t.en, icon: t.icon, key: t.key, head: t.section, sticky: false })) },
+  { id: "retouch", tab: "retouch", label: "Rötuş ve Onarım", icon: RETOUCH_ICON, tools: RETOUCH_TOOLS.map((t) => ({ cmd: t.cmd, label: t.label, en: t.en, icon: t.icon, key: t.key, head: t.section, sticky: !!t.tool })) },
+  { id: "local", tab: "local", tools: [
     { cmd: "mask:linear", label: "Degrade maske", icon: SquareSplitVertical },
     { cmd: "mask:radial", label: "Daire maske", icon: Circle },
   ] },
-  { id: "crop", tab: "crop", tools: [
-    { cmd: "tool:crop:ratio", label: "Kırp", icon: Crop, key: "C" },
-    { cmd: "tool:crop:persp", label: "Perspektif kırpma", icon: Spline },
-    { cmd: "tool:crop:straighten", label: "Eğim düzelt", icon: RotateCw },
-    { cmd: "tool:crop:size", label: "Görüntü boyutu", icon: Scaling },
-    { cmd: "tool:crop:canvas", label: "Tuval boyutu", icon: Expand },
-  ] },
-  { id: "color", tab: "color", tools: [
-    { cmd: "tool:color:library", label: "Renk görünümleri", icon: Palette },
-    { cmd: "tool:color:adjust", label: "Işık ve renk", icon: SlidersHorizontal },
-  ] },
-  { id: "fx", tab: "fx", tools: [
-    { cmd: "tool:fx:effects", label: "Efektler", icon: Sparkles },
-    { cmd: "tool:fx:background", label: "Arka plan (yapay zekâ)", icon: Scissors },
-  ] },
+  { id: "crop", tab: "crop", also: "slice", label: "Kırpma ve Dilimleme", icon: Crop, tools: CROP_TOOLS.map((t) => ({ cmd: t.cmd, label: t.label, en: t.en, icon: t.icon, key: t.key, head: t.section })) },
+  { id: "color", tab: "color", label: "Renk ve Işık", icon: Palette, tools: COLOR_TOOLS.map((t) => ({ cmd: t.cmd, label: t.label, en: t.en, icon: t.icon, head: t.section, sticky: false })) },
+  { id: "fx", tab: "fx", label: "Efekt ve Filtreler", icon: FX_ICON, tools: [{ cmd: "filter:gallery", label: "Filtre Galerisi", en: "Filter Gallery", icon: FX_ICON, head: "Galeri", sticky: false }, ...FILTER_TOOLS.filter((t) => t.cmd !== "filter:gallery").map((t) => ({ cmd: t.cmd, label: t.label, en: t.en, icon: t.icon, head: t.section, sticky: false }))] },
   { id: "frame", tab: "frame", tools: [{ cmd: "tool:frame", label: "Çerçeve", icon: Frame }] },
   { id: "text", tab: "text", tools: [{ cmd: "tool:text", label: "Metin", icon: Type, key: "T" }] },
   { id: "image", tab: "", tools: [{ cmd: "addImage", label: "Görsel ekle", icon: ImagePlus }] },
@@ -61,7 +59,7 @@ export function ToolBox({ active, onCommand }: Props) {
   }, [wide])
 
   function run(g: Group, i: number) {
-    setChosen((c) => ({ ...c, [g.id]: i }))
+    if (g.tools[i].sticky !== false) setChosen((c) => ({ ...c, [g.id]: i }))
     window.clearTimeout(timer.current) // bekleyen açılma, tıklamadan sonra listeyi yeniden açmasın
     setFly(null)
     onCommand(g.tools[i].cmd)
@@ -92,6 +90,18 @@ export function ToolBox({ active, onCommand }: Props) {
     timer.current = window.setTimeout(() => setFly(id), delay)
   }
 
+  const item = (g: Group, x: Tool, i: number) => {
+    const I = x.icon
+    return (
+      <button key={x.cmd} role="menuitem" title={x.en} onClick={() => run(g, i)} className="flex w-full items-center gap-2.5 rounded-md px-2 py-1 text-left hover:bg-accent">
+        <span className="w-2 text-primary">{x.sticky !== false && (chosen[g.id] ?? 0) === i ? "■" : ""}</span>
+        <I className="h-4 w-4 text-muted-foreground" strokeWidth={1.8} />
+        <span className="flex-1 whitespace-nowrap">{x.label}</span>
+        {x.key && <span className="text-[10px] text-muted-foreground">{x.key}</span>}
+      </button>
+    )
+  }
+
   return (
     <nav className="relative z-40 flex shrink-0 flex-col items-center border-r bg-card/70 py-1.5" aria-label="Araçlar">
       <button
@@ -105,8 +115,9 @@ export function ToolBox({ active, onCommand }: Props) {
       <div className={cn("grid gap-0.5 px-1", wide ? "grid-cols-2" : "grid-cols-1")}>
         {GROUPS.map((g) => {
           const t = g.tools[chosen[g.id] ?? 0]
-          const Icon = t.icon
-          const on = !!g.tab && g.tab === active
+          const Icon = g.icon ?? t.icon
+          const name = g.label ?? t.label
+          const on = !!g.tab && (g.tab === active || g.also === active)
           return (
             <div
               key={g.id}
@@ -121,8 +132,8 @@ export function ToolBox({ active, onCommand }: Props) {
                   e.preventDefault()
                   open(g.id)
                 }}
-                title={`${t.label}${t.key ? ` (${t.key})` : ""}`}
-                aria-label={t.label}
+                title={g.label ?? `${t.label}${t.key ? ` (${t.key})` : ""}`}
+                aria-label={name}
                 aria-pressed={on}
                 className={cn(
                   "relative grid h-8 w-8 place-items-center rounded-md transition-colors",
@@ -136,22 +147,31 @@ export function ToolBox({ active, onCommand }: Props) {
               </button>
               {fly === g.id && (
                 <div
-                  className="absolute left-full top-0 z-50 ml-1.5 min-w-[210px] rounded-lg border bg-popover p-1 text-[12px] shadow-xl"
+                  ref={(el) => {
+                    // uzun liste ekrandan taşmasın
+                    if (!el) return
+                    el.style.top = "0px"
+                    const over = el.getBoundingClientRect().bottom - (window.innerHeight - 8)
+                    if (over > 0) el.style.top = `${-over}px`
+                  }}
+                  className={cn("absolute left-full top-0 z-50 ml-1.5 rounded-lg border bg-popover p-1 text-[12px] shadow-xl", g.tools.length > 48 ? "w-[900px]" : g.tools.length > 28 ? "w-[680px]" : g.tools.length > 16 ? "w-[452px]" : "min-w-[230px]")}
                   onPointerEnter={() => open(g.id)}
                   onPointerLeave={() => open(null, 150)}
                   role="menu"
                 >
-                  {g.tools.map((x, i) => {
-                    const I = x.icon
-                    return (
-                      <button key={x.cmd} role="menuitem" onClick={() => run(g, i)} className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left hover:bg-accent">
-                        <span className="w-2 text-primary">{(chosen[g.id] ?? 0) === i ? "■" : ""}</span>
-                        <I className="h-4 w-4 text-muted-foreground" strokeWidth={1.8} />
-                        <span className="flex-1 whitespace-nowrap">{x.label}</span>
-                        {x.key && <span className="text-[10px] text-muted-foreground">{x.key}</span>}
-                      </button>
-                    )
-                  })}
+                  {g.label && <p className="px-2 pb-0.5 pt-1 text-[10px] font-semibold tracking-wider text-muted-foreground">{g.label}</p>}
+                  {g.tools.some((x) => x.head) ? (
+                    <div className={g.tools.length > 48 ? "columns-4 gap-1" : g.tools.length > 28 ? "columns-3 gap-1" : g.tools.length > 16 ? "columns-2 gap-1" : undefined}>
+                      {[...new Set(g.tools.map((x) => x.head))].map((sec) => (
+                        <div key={sec} className="break-inside-avoid">
+                          <p className="px-2 pb-0.5 pt-1.5 text-[10px] text-muted-foreground/80">{sec}</p>
+                          {g.tools.map((x, i) => x.head === sec && item(g, x, i))}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    g.tools.map((x, i) => item(g, x, i))
+                  )}
                 </div>
               )}
             </div>

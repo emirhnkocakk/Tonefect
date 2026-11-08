@@ -13,6 +13,7 @@ const LIGHT: [Num, string][] = [
   ["contrast", "Kontrast"],
   ["highlights", "Parlak alanlar"],
   ["shadows", "Gölgeler"],
+  ["midtones", "Orta tonlar"],
   ["whites", "Beyazlar"],
   ["blacks", "Siyahlar"],
   ["fade", "Soldurma"],
@@ -45,9 +46,9 @@ const HSL_PARTS: [number, string][] = [
   [1, "Parlaklık"],
 ]
 
-function Row({ label, value, min = -100, onChange }: { label: string; value: number; min?: number; onChange: (v: number) => void }) {
+function Row({ id, label, value, min = -100, onChange }: { id?: string; label: string; value: number; min?: number; onChange: (v: number) => void }) {
   return (
-    <div className="space-y-1.5">
+    <div id={id} className="space-y-1.5">
       <div className="flex justify-between text-xs">
         <span className="cursor-default text-muted-foreground" onDoubleClick={() => onChange(0)} title="Çift tıkla: sıfırla">
           {label}
@@ -100,13 +101,13 @@ export function AdjustPanel({ adjust, setAdjust }: Props) {
           </div>
         )}
         {LIGHT.map(([k, label]) => (
-          <Row key={k} label={label} value={pct(k)} min={k === "fade" ? 0 : -100} onChange={(v) => set(k, v)} />
+          <Row key={k} id={`sec-adj-${k}`} label={label} value={pct(k)} min={k === "fade" ? 0 : -100} onChange={(v) => set(k, v)} />
         ))}
       </Section>
 
       <Section title="Renk" dirty={COLOR.some(([k]) => adjust[k])} onReset={() => clear(COLOR.map(([k]) => k))}>
         {COLOR.map(([k, label]) => (
-          <Row key={k} label={label} value={pct(k)} onChange={(v) => set(k, v)} />
+          <Row key={k} id={`sec-adj-${k}`} label={label} value={pct(k)} onChange={(v) => set(k, v)} />
         ))}
       </Section>
 
