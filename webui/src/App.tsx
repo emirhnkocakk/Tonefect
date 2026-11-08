@@ -531,6 +531,10 @@ export default function App() {
   }
   const openLayer = (l: Layer, additive = false) => {
     if (l.tool === "settings") return setCog(true)
+    if (l.part && l.layerId) {
+      setLayerSel([l.layerId])
+      return setTab(l.tool)
+    }
     if (l.layerId && additive) return setLayerSel(layerSel.includes(l.layerId) ? layerSel.filter((x) => x !== l.layerId) : withLinks([...layerSel, l.layerId]))
     // Photoshop gibi: katman seçmek açık aracı değiştirmez
     if (l.layerId && tab) return setLayerSel(withLinks([l.layerId]))

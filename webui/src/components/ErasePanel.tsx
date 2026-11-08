@@ -162,7 +162,7 @@ export function ErasePanel({ item, setFx, setMasks, maskSel, layers, setLayers, 
         <Label>Katman Maskeleri</Label>
         <>
             <div className="space-y-1">
-              {[...layers].reverse().map((l) => (
+              {layers.map((l) => (
                 <button key={l.id} onClick={() => setSel([l.id])} className={cn("flex w-full items-center gap-2 rounded-lg border px-2 py-1 text-left text-xs transition-colors hover:border-primary/60", l.id === cur?.id ? "border-primary/70 bg-primary/15" : "text-muted-foreground")}>
                   {l.photo ? <img src={thumbUrl(l.photo)} alt="" className="h-6 w-6 rounded object-cover" draggable={false} /> : <span className="grid h-6 w-6 place-items-center rounded bg-muted text-[9px] text-muted-foreground">{l.name.slice(0, 1)}</span>}
                   <span className="flex-1 truncate">{l.name}</span>

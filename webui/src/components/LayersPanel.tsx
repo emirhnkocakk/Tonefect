@@ -69,17 +69,23 @@ export function LayersPanel({ item, presets, wm, tool, maskSel, sel, open, toggl
   const dragRef = useRef<{ row: Layer; y0: number; active: boolean; id: number } | null>(null)
   const [drop, setDrop] = useState<{ gap: number; top: number; into?: string } | null>(null)
   const canDrag = (l: Layer) => !filtering && (l.kind === "text" || l.kind === "group" || (l.kind === "image" && !l.layer?.locked))
+  // Liste yukarıdan aşağıya arkadan öne: araya bırakılan öğe üstündeki satırın önüne geçer
+  const movable = (r?: Layer) => !!r && (r.kind === "image" || r.kind === "text" || r.kind === "group")
   const placeOf = (y: number): { gap: number; top: number; into?: string } | null => {
     const list = listRef.current
     if (!list) return null
     const els = [...list.querySelectorAll<HTMLElement>("[data-row]")]
-    const first = rows.findIndex((r) => r.kind !== "watermark")
     const photo = rows.findIndex((r) => r.kind === "photo")
-    if (first < 0 || photo < 0) return null
+    if (photo < 0) return null
+    let first = photo + 1
+    while (first < rows.length && !movable(rows[first]) && rows[first].kind !== "watermark") first++
+    const wm = rows.findIndex((r) => r.kind === "watermark")
+    const last = wm < 0 ? rows.length : wm
     const base = list.getBoundingClientRect().top - list.scrollTop
-    let gap = photo
+    let gap = last
     let into: string | undefined
-    for (let i = first; i <= photo; i++) {
+    for (let i = first; i < last; i++) {
+      if (rows[i].part) continue
       const r = els[i].getBoundingClientRect()
       if (rows[i].kind === "group" && dragRef.current?.row.kind !== "group" && dragRef.current?.row.kind !== "text" && y > r.top + r.height * 0.25 && y < r.bottom - r.height * 0.25) {
         gap = i
@@ -91,17 +97,26 @@ export function LayersPanel({ item, presets, wm, tool, maskSel, sel, open, toggl
         break
       }
     }
-    return { gap, top: els[gap].getBoundingClientRect().top - base - 1, into }
+    const top = gap < rows.length ? els[gap].getBoundingClientRect().top : els[gap - 1].getBoundingClientRect().bottom + 4
+    return { gap, top: top - base - 1, into }
   }
   const finishDrag = (place: { gap: number; into?: string }, row: Layer) => {
     const members = (g?: string) => (item?.layers ?? []).filter((l) => l.group === g)
     const topOf = (g?: string) => members(g).slice(-1)[0]?.id ?? BASE_ID
+    const stackNow = item ? stackIds(item) : []
     const moving = row.kind === "group" ? members(row.groupId).map((l) => l.id) : row.kind === "text" ? [TEXT_ID] : sel.includes(row.layerId!) ? sel.filter((x) => x !== BASE_ID) : [row.layerId!]
-    const below = rows[place.gap]
     const above = rows[place.gap - 1]
-    const groupAbove = above?.kind === "group" ? above.groupId : above?.layer?.group
-    const inside = !!groupAbove && groupAbove === below.layer?.group
-    const target = place.into || (below.kind === "group" ? topOf(below.groupId) : inside && row.kind === "group" ? topOf(groupAbove) : below.kind === "photo" ? BASE_ID : below.kind === "text" ? TEXT_ID : below.layerId!)
+    const below = rows[place.gap]
+    const rowGroup = (r?: Layer) => (r?.kind === "group" ? r.groupId : r?.layerId ? item?.layers?.find((l) => l.id === r.layerId)?.group : undefined)
+    const headerOpen = above?.kind === "group" && above.open
+    const groupAbove = headerOpen ? above.groupId : above?.kind === "group" ? undefined : rowGroup(above)
+    const inside = !!groupAbove && (headerOpen || (rowGroup(below) === groupAbove && below?.kind !== "group"))
+    let target: string
+    if (place.into) target = topOf(place.into)
+    else if (inside && row.kind === "group") target = topOf(groupAbove)
+    else if (above?.kind === "group") target = headerOpen ? stackNow[stackNow.indexOf(members(above.groupId)[0].id) - 1] : topOf(above.groupId)
+    else if (above?.kind === "text") target = TEXT_ID
+    else target = above?.layerId ?? BASE_ID
     reorder(moving, target, row.kind === "image" ? (place.into ?? (inside ? groupAbove! : null)) : undefined)
   }
   // Canva'daki Öne Getir / Arkaya Gönder: satırdaki oklar ve sağ tık menüsü
@@ -170,7 +185,7 @@ export function LayersPanel({ item, presets, wm, tool, maskSel, sel, open, toggl
         <button aria-label="Katmanları süz" title="Katman Filtreleme (Layer Filtering)" onClick={() => setFilterOpen(!filterOpen)} className={cn("rounded p-0.5 hover:text-foreground", filterOpen ? "text-primary" : "text-muted-foreground")}><Search className="h-3.5 w-3.5" /></button>
       </div>
       {!item ? (
-        <p className="px-4 pt-4 text-sm text-muted-foreground">Bir fotoğraf açınca katmanlar burada görünür. Üstteki katman önde durur, sürükleyerek sırasını değiştirebilirsin.</p>
+        <p className="px-4 pt-4 text-sm text-muted-foreground">Bir fotoğraf açınca katmanlar burada görünür. En üstteki satır en arkada, en alttaki en önde durur; sürükleyerek sırasını değiştirebilirsin.</p>
       ) : (
         <>
           {filterOpen && (
@@ -209,7 +224,7 @@ export function LayersPanel({ item, presets, wm, tool, maskSel, sel, open, toggl
               const ly = l.layer
               const Icon = (ly?.kind && TYPE_ICON[ly.kind]) || ICON[l.kind]
               const off = hidden.has(l.key)
-              const picked = !!l.layerId && sel.includes(l.layerId)
+              const picked = !!l.layerId && !l.part && sel.includes(l.layerId)
               const active = picked || (l.kind === "mask" ? tool === l.tool && maskSel === l.maskId : !l.layerId && l.tool === tool && l.kind !== "photo" && l.kind !== "group")
               const color = labelColor(ly?.label)
               const editing = renaming && (renaming === l.layerId || renaming === l.groupId)
@@ -225,13 +240,13 @@ export function LayersPanel({ item, presets, wm, tool, maskSel, sel, open, toggl
                   }}
                   onClick={(e) => (l.kind === "group" ? toggleGroup(l.groupId!) : open(l, e.ctrlKey || e.metaKey || e.shiftKey))}
                   onDoubleClick={() => (l.layerId || l.groupId) && setRenaming(l.layerId ?? l.groupId!)}
-                  style={l.depth ? { marginLeft: 14 } : undefined}
+                  style={l.depth ? { marginLeft: 14 * l.depth } : undefined}
                   className={cn(
                     "group relative flex cursor-pointer items-center gap-2 rounded-lg border px-2 py-1.5 transition-colors",
                     active ? "border-primary/60 bg-primary/10" : "border-transparent hover:bg-accent/70",
                     canDrag(l) && "active:cursor-grabbing",
                     drop?.into && drop.into === l.groupId && "border-primary",
-                    l.kind === "photo" && "mt-2 border-dashed border-border"
+                    l.kind === "photo" && !active && "border-dashed border-border"
                   )}
                 >
                   {color && <span className="absolute inset-y-1 left-0.5 w-0.5 rounded" style={{ background: color }} />}
@@ -264,8 +279,8 @@ export function LayersPanel({ item, presets, wm, tool, maskSel, sel, open, toggl
                   {ly?.locked && <Lock className="h-3 w-3 shrink-0 text-muted-foreground" aria-label="Kilitli" />}
                   {canDrag(l) && (
                     <span className="hidden shrink-0 flex-col group-hover:flex">
-                      <button aria-label={`${l.label} bir üste`} title="Bir Üste" disabled={!canStep(l, true)} onClick={(e) => { e.stopPropagation(); step(l, true) }} className="text-muted-foreground hover:text-foreground disabled:opacity-30"><ChevronUp className="h-3 w-3" /></button>
-                      <button aria-label={`${l.label} bir alta`} title="Bir Alta" disabled={!canStep(l, false)} onClick={(e) => { e.stopPropagation(); step(l, false) }} className="text-muted-foreground hover:text-foreground disabled:opacity-30"><ChevronDown className="h-3 w-3" /></button>
+                      <button aria-label={`${l.label} bir arkaya`} title="Bir Arkaya (listede yukarı)" disabled={!canStep(l, false)} onClick={(e) => { e.stopPropagation(); step(l, false) }} className="text-muted-foreground hover:text-foreground disabled:opacity-30"><ChevronUp className="h-3 w-3" /></button>
+                      <button aria-label={`${l.label} bir öne`} title="Bir Öne (listede aşağı)" disabled={!canStep(l, true)} onClick={(e) => { e.stopPropagation(); step(l, true) }} className="text-muted-foreground hover:text-foreground disabled:opacity-30"><ChevronDown className="h-3 w-3" /></button>
                     </span>
                   )}
                   {l.removable && !ly?.locked && (
@@ -322,10 +337,16 @@ export function LayersPanel({ item, presets, wm, tool, maskSel, sel, open, toggl
       )}
       {ctx && (
         <div className="fixed inset-0 z-50" onPointerDown={() => setCtx(null)} onContextMenu={(e) => { e.preventDefault(); setCtx(null) }}>
-          <div role="menu" className="fixed w-44 rounded-md border bg-popover p-1 text-xs shadow-xl" style={{ left: Math.min(ctx.x, window.innerWidth - 184), top: Math.min(ctx.y, window.innerHeight - 124) }} onPointerDown={(e) => e.stopPropagation()}>
-            {([["En Üste Getir", ArrowUpToLine, () => toEnd(ctx.row, true)], ["Bir Üste", ChevronUp, () => step(ctx.row, true)], ["Bir Alta", ChevronDown, () => step(ctx.row, false)], ["En Alta Gönder", ArrowDownToLine, () => toEnd(ctx.row, false)]] as const).map(([label, I, run_]) => (
+          <div role="menu" className="fixed w-44 rounded-md border bg-popover p-1 text-xs shadow-xl" style={{ left: Math.min(ctx.x, window.innerWidth - 184), top: Math.min(ctx.y, window.innerHeight - 160) }} onPointerDown={(e) => e.stopPropagation()}>
+            {([["En Arkaya Gönder", ArrowUpToLine, () => toEnd(ctx.row, false)], ["Bir Arkaya", ChevronUp, () => step(ctx.row, false)], ["Bir Öne", ChevronDown, () => step(ctx.row, true)], ["En Öne Getir", ArrowDownToLine, () => toEnd(ctx.row, true)]] as const).map(([label, I, run_]) => (
               <button key={label} role="menuitem" className="flex w-full items-center gap-2 rounded-sm px-2 py-1 text-left hover:bg-accent" onClick={() => { run_(); setCtx(null) }}><I className="h-3.5 w-3.5 text-muted-foreground" /> {label}</button>
             ))}
+            {ctx.row.kind === "image" && (
+              <>
+                <div className="my-1 h-px bg-border" />
+                <button role="menuitem" title="Clipping Mask: nesne yalnızca bir önceki nesnenin dolu yerlerinde görünür" className="flex w-full items-center gap-2 rounded-sm px-2 py-1 text-left hover:bg-accent" onClick={() => { put(ctx.row.layerId!, { clip: !ctx.row.layer?.clip }); setCtx(null) }}><Layers className="h-3.5 w-3.5 text-muted-foreground" /> {ctx.row.layer?.clip ? "İçinden Çıkar" : "Önceki Nesnenin İçine Al"}</button>
+              </>
+            )}
           </div>
         </div>
       )}

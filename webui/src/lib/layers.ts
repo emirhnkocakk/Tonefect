@@ -23,6 +23,21 @@ export type Layer = {
   groupId?: string
   depth?: number
   open?: boolean
+  part?: "filters" | "color" | "mask" | "vector" | "styles" // nesnenin içindeki düzenleme
+}
+
+/** Bir nesnenin içindeki düzenlemeler: listede nesnenin altında, bir çentik içeride görünür. */
+function partsOf(l: ImgLayer, depth: number): Layer[] {
+  const row = (part: NonNullable<Layer["part"]>, kind: LayerKind, label: string, sub: string, tool: string): Layer => ({ key: `part:${l.id}:${part}`, kind, label, sub, tool, layerId: l.id, part, depth, hideable: false, removable: true })
+  const out: Layer[] = []
+  const flt = (l.fx?.filters ?? []).filter((f) => !f.off)
+  if (flt.length) out.push(row("filters", "filters", "Filtreler", flt.map((f) => filterLabel(f.kind)).join(", "), "fx"))
+  const edits = colorSummary(l.fx?.color)
+  if (edits.length || l.fx?.bw || Object.keys(l.fx?.adjust ?? {}).length || (l.fx?.preset && l.fx.preset !== "b:original")) out.push(row("color", "colorfx", "Renk Ayarları", edits.join(", ") || "ışık ve renk", "color"))
+  if (l.styles && Object.values(l.styles).some((s) => s.on)) out.push(row("styles", "bloom", "Katman Stilleri", "gölge, kontur", "layers"))
+  if (l.mask?.ops?.length) out.push(row("mask", "mask", "Katman Maskesi", l.mask.off ? "kapalı" : "", "erase"))
+  if (l.vector) out.push(row("vector", "mask", "Vektör Maske", "", "erase"))
+  return out
 }
 
 export const BASE_ID = "base"
@@ -100,7 +115,7 @@ export function buildLayers(item: Item, presets: PresetMeta[], wm: Watermark | n
   const seen = new Set<string>()
   const TYPE: Record<string, string> = { blank: "boş katman", text: "metin", shape: "şekil", fill: "dolgu", adjust: "ayar" }
   const byId = new Map((item.layers ?? []).map((l) => [l.id, l]))
-  ;[...stackIds(item)].reverse().forEach((sid) => {
+  stackIds(item).forEach((sid) => {
     if (sid === BASE_ID) return
     if (sid === TEXT_ID) return void out.push({ key: "text", kind: "text", label: "Yazı", sub: item.text, tool: "text", hideable: true, removable: true })
     const l: ImgLayer = byId.get(sid)!
@@ -110,13 +125,16 @@ export function buildLayers(item: Item, presets: PresetMeta[], wm: Watermark | n
       out.push({ key: `group:${g.id}`, kind: "group", label: g.name, sub: "grup", tool: "design", groupId: g.id, open: g.open, hideable: true, removable: true })
     }
     if (g && !g.open) return
-    const bits = [l.kind ? TYPE[l.kind] : l.smart ? "akıllı nesne" : "görsel", l.cutout ? "kesilmiş" : "", l.fx && (l.fx.filters?.length || l.fx.bw || Object.keys(l.fx.color ?? {}).length || Object.keys(l.fx.adjust ?? {}).length || (l.fx.preset && l.fx.preset !== "b:original")) ? "düzenlendi" : "", l.opacity < 1 ? pct(l.opacity) : "", l.styles && Object.values(l.styles).some((s) => s.on) ? "fx" : ""]
-    out.push({ key: `img:${l.id}`, kind: "image", label: l.name.replace(/\.(png|jpe?g|webp)$/i, ""), sub: bits.filter(Boolean).join(" · "), tool: l.kind ? "layers" : "design", layerId: l.id, layer: l, depth: g ? 1 : 0, hideable: true, removable: true })
+    const depth = (g ? 1 : 0) + (l.clip ? 1 : 0)
+    const bits = [l.kind ? TYPE[l.kind] : l.smart ? "akıllı nesne" : "görsel", l.clip ? "içeride" : "", l.cutout ? "kesilmiş" : "", l.fx && (l.fx.filters?.length || l.fx.bw || Object.keys(l.fx.color ?? {}).length || Object.keys(l.fx.adjust ?? {}).length || (l.fx.preset && l.fx.preset !== "b:original")) ? "düzenlendi" : "", l.opacity < 1 ? pct(l.opacity) : "", l.styles && Object.values(l.styles).some((s) => s.on) ? "fx" : ""]
+    out.push({ key: `img:${l.id}`, kind: "image", label: l.name.replace(/\.(png|jpe?g|webp)$/i, ""), sub: bits.filter(Boolean).join(" · "), tool: l.kind ? "layers" : "design", layerId: l.id, layer: l, depth, hideable: true, removable: true })
+    out.push(...partsOf(l, depth + 1))
   })
   // Arka Plan ve ona uygulanan düzenlemeler en altta; düzenlemeler fotoğrafın altında girintili görünür
   const base = item.layers?.find((l) => l.id === BASE_ID)
   out.push({ key: `img:${BASE_ID}`, kind: "photo", label: base?.name ?? "Arka Plan", sub: item.name, tool: "design", layerId: base ? BASE_ID : undefined, layer: base, hideable: true, removable: false })
   const attachedFrom = out.length
+  if (base) out.push(...partsOf(base, 1))
   if (item.paint?.strokes.length) {
     const fix = item.paint.strokes.filter((s) => RETOUCH_STROKES.has(s.tool)).length
     out.push({ key: "paint", kind: "paint", label: fix === item.paint.strokes.length ? "Rötuş Fırçaları" : fix ? "Boya ve Rötuş" : "Boya", sub: `${item.paint.strokes.length} darbe`, tool: fix === item.paint.strokes.length ? "retouch" : "brush", hideable: true, removable: true })
@@ -145,7 +163,10 @@ export function buildLayers(item: Item, presets: PresetMeta[], wm: Watermark | n
     out.push({ key: "look", kind: "look", label: preset?.name ?? "Renk görünümü", sub: `renk görünümü · ${pct(fx.amount ?? 1)}${fx.bw ? " · S/B" : ""}`, tool: "color", hideable: true, removable: true })
   else if (fx.bw) out.push({ key: "look", kind: "look", label: "Siyah-beyaz", sub: "renk görünümü", tool: "fx", hideable: true, removable: true })
   for (let i = attachedFrom; i < out.length; i++) out[i].depth = 1
-  return out
+  // liste yukarıdan aşağıya: en arkadaki Arka Plan en üstte, en öndeki en altta
+  const photoAt = attachedFrom - 1
+  const global = out.filter((r) => r.kind === "watermark")
+  return [...out.slice(photoAt), ...out.slice(global.length, photoAt), ...global]
 }
 
 /** Gizli katmanlar çıkarılmış kopya (önizleme ve dışa aktarma için). */
@@ -187,6 +208,18 @@ export function psdItem(item: Item): Item {
 
 /** Katmanı kaldırır (gizleme değil, ayarı sıfırlar). */
 export function removeLayer(item: Item, layer: Layer): Item {
+  if (layer.part) {
+    const clear = (l: ImgLayer): ImgLayer => {
+      switch (layer.part) {
+        case "filters": return { ...l, fx: { ...l.fx, filters: [] } }
+        case "color": return { ...l, fx: { ...l.fx, color: {}, adjust: {}, preset: "b:original", bw: false, amount: 1 } }
+        case "styles": return { ...l, styles: undefined }
+        case "mask": return { ...l, mask: undefined }
+        default: return { ...l, vector: undefined }
+      }
+    }
+    return { ...item, layers: (item.layers ?? []).map((l) => (l.id === layer.layerId ? clear(l) : l)) }
+  }
   const fx = { ...item.fx, texture: { ...(item.fx.texture ?? {}) }, adjust: { ...(item.fx.adjust ?? {}) } }
   const a = fx.adjust as Record<string, unknown>
   switch (layer.kind) {
