@@ -486,8 +486,40 @@ export default function App() {
     setMaskSel(m.id)
     setTabRaw("select")
   }
-  const setMask = (p: Partial<Mask>) =>
+  // Çerçeve ve kement: çizilen alan hemen ayrı bir nesne (katman) olur; Shift/Alt ile birleştirirken ya da Nesne Yap kapalıyken seçim kalır
+  const keepSelection = useRef(false)
+  const setMask = (p: Partial<Mask>, drawn = false) => {
     update((it) => ({ ...it, fx: { ...it.fx, masks: (it.fx.masks ?? []).map((m) => (m.id === maskSel ? { ...m, ...p } : m)) } }))
+    if (!drawn || !curMask || !item || p.ops?.length !== 1) return
+    const keep = keepSelection.current
+    keepSelection.current = false
+    const kind = p.ops[0].kind
+    if (keep || selTool.noObject || selTool.combine !== "add" || !(kind === "rect" || kind === "ellipse" || kind === "poly" || kind === "magnetic") || Object.keys(curMask.adjust ?? {}).length) return
+    void objectFromSelection({ ...curMask, ...p })
+  }
+  const objectFromSelection = async (m: Mask) => {
+    if (!item) return
+    const owner = item.id
+    const cut = !!selTool.cutObject
+    try {
+      const snap: Item = { ...item, fx: { ...item.fx, masks: (item.fx.masks ?? []).map((x) => (x.id === m.id ? m : x)) } }
+      const r = await api.extractSelection({ item: effectiveItem(snap), maskId: m.id })
+      const n = item.layers?.length ?? 1
+      const ly: ImgLayer = { id: newId(), photo: r.id, name: `Nesne ${n}`, x: r.x, y: r.y, w: r.w, ar: r.height / r.width, rot: 0, opacity: 1, flipH: false, cutout: false }
+      const fresh: Mask | null = cut && (item.fx.masks?.length ?? 0) < MAX_MASKS ? { id: newId(), type: "select", ops: [], feather: 0, invert: false, adjust: {} } : null
+      hist.current.skip = true // seçim ile nesne tek geri alma adımı
+      setItems((a) => a.map((i) => {
+        if (i.id !== owner) return i
+        const masks = (i.fx.masks ?? []).map((x) => (x.id !== m.id ? x : cut ? { ...x, fill: true } : { ...x, ops: [] }))
+        return { ...i, layers: [...(i.layers ?? []), ly], fx: { ...i.fx, masks: fresh ? [...masks, fresh] : masks } }
+      }))
+      setLayerSel([ly.id])
+      if (fresh) setMaskSel(fresh.id)
+      else if (cut) setMaskSel(null)
+    } catch (e: any) {
+      toast.error(e.message)
+    }
+  }
   useEffect(() => setMaskSel(null), [currentId])
   const curMask = tab === "local" || tab === "select" ? item?.fx.masks?.find((m) => m.id === maskSel && (m.type === "select") === (tab === "select")) : undefined
 
@@ -1066,6 +1098,7 @@ export default function App() {
       const m = sels.find((x) => x.id === maskSel) ?? sels[sels.length - 1]
       if (m) return void selectionToLayer(true, m.id)
       toast("Önce taşımak istediğin alanı seç")
+      keepSelection.current = true
       setTabRaw("select")
       return setIntent({ cmd: "sel:lasso", n: ++intentSeq })
     }
@@ -1090,6 +1123,10 @@ export default function App() {
     if (cmd === "slice:draw" || cmd === "slice:select") {
       setSliceTool(cmd === "slice:draw" ? "draw" : "select")
       return setTabRaw("slice")
+    }
+    if (cmd === "sel:lasso:keep") {
+      keepSelection.current = true
+      return command("sel:lasso")
     }
     if (cmd.startsWith("sel:")) {
       setTabRaw("select")

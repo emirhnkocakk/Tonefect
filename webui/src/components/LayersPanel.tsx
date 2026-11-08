@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react"
-import { Bandage, ChevronDown, ChevronRight, Contrast, ImagePlus, Link2, Lock, Paintbrush, Aperture, CircleDashed, Scissors, Copyright, Crop, Droplet, Eye, EyeOff, Film, Folder, FolderPlus, Frame, Image, Layers, PaintBucket, Palette, Plus, Search, Shapes, SlidersHorizontal, Sparkle, Sparkles, SquareDashed, Sun, Trash2, Type, Wind, X } from "lucide-react"
+import { ArrowDownToLine, ArrowUpToLine, Bandage, ChevronDown, ChevronRight, ChevronUp, GripVertical, Contrast, ImagePlus, Link2, Lock, Paintbrush, Aperture, CircleDashed, Scissors, Copyright, Crop, Droplet, Eye, EyeOff, Film, Folder, FolderPlus, Frame, Image, Layers, PaintBucket, Palette, Plus, Search, Shapes, SlidersHorizontal, Sparkle, Sparkles, SquareDashed, Sun, Trash2, Type, Wind, X } from "lucide-react"
 import { thumbUrl } from "@/lib/api"
-import { BASE_ID, buildLayers, TEXT_ID, type Layer, type LayerKind } from "@/lib/layers"
+import { BASE_ID, buildLayers, stackIds, TEXT_ID, type Layer, type LayerKind } from "@/lib/layers"
 import { BLEND_GROUPS, labelColor } from "@/lib/layerops"
 import { cn } from "@/lib/utils"
 import type { ImgLayer, Item, PresetMeta, Watermark } from "@/types"
@@ -104,6 +104,38 @@ export function LayersPanel({ item, presets, wm, tool, maskSel, sel, open, toggl
     const target = place.into || (below.kind === "group" ? topOf(below.groupId) : inside && row.kind === "group" ? topOf(groupAbove) : below.kind === "photo" ? BASE_ID : below.kind === "text" ? TEXT_ID : below.layerId!)
     reorder(moving, target, row.kind === "image" ? (place.into ?? (inside ? groupAbove! : null)) : undefined)
   }
+  // Canva'daki Öne Getir / Arkaya Gönder: satırdaki oklar ve sağ tık menüsü
+  const [ctx, setCtx] = useState<{ x: number; y: number; row: Layer } | null>(null)
+  const stack = item ? stackIds(item) : []
+  const groupOf = (id: string) => item?.layers?.find((l) => l.id === id)?.group
+  const groupTop = (g: string) => (item?.layers ?? []).filter((l) => l.group === g).slice(-1)[0]?.id ?? BASE_ID
+  const movingOf = (l: Layer) => l.kind === "group" ? (item?.layers ?? []).filter((x) => x.group === l.groupId).map((x) => x.id) : l.kind === "text" ? [TEXT_ID] : sel.length > 1 && sel.includes(l.layerId!) ? sel.filter((x) => x !== BASE_ID) : [l.layerId!]
+  const span = (m: string[]) => [Math.min(...m.map((i) => stack.indexOf(i))), Math.max(...m.map((i) => stack.indexOf(i)))]
+  const canStep = (l: Layer, up: boolean) => {
+    const [lo, hi] = span(movingOf(l))
+    return up ? hi < stack.length - 1 || (l.kind === "image" && !!l.layer?.group) : lo > 1 || (l.kind === "image" && !!l.layer?.group)
+  }
+  const step = (l: Layer, up: boolean) => {
+    const m = movingOf(l)
+    const [lo, hi] = span(m)
+    const own = l.kind === "image" ? l.layer?.group : undefined
+    const self = l.kind === "group" ? l.groupId : own
+    const next = up ? stack[hi + 1] : stack[lo - 1]
+    const nextGroup = next && next !== TEXT_ID ? groupOf(next) : undefined
+    if (own && nextGroup !== own) return reorder(m, stack[lo - 1], null) // grubun kenarında: önce gruptan çıkar
+    if (up) {
+      if (!next) return
+      return reorder(m, nextGroup && nextGroup !== self ? groupTop(nextGroup) : next)
+    }
+    if (!next || next === BASE_ID) return
+    if (nextGroup && nextGroup !== self) return reorder(m, stack[stack.findIndex((id) => id !== TEXT_ID && groupOf(id) === nextGroup) - 1])
+    reorder(m, stack[lo - 2])
+  }
+  const toEnd = (l: Layer, top: boolean) => {
+    const m = movingOf(l)
+    const target = top ? stack[stack.length - 1] : BASE_ID
+    reorder(m, target, l.kind === "image" ? null : undefined)
+  }
   const rowDown = (l: Layer) => (e: React.PointerEvent) => {
     if (e.button === 0 && canDrag(l)) dragRef.current = { row: l, y0: e.clientY, active: false, id: e.pointerId }
   }
@@ -186,6 +218,11 @@ export function LayersPanel({ item, presets, wm, tool, maskSel, sel, open, toggl
                   key={l.key}
                   data-row={rowIndex}
                   onPointerDown={rowDown(l)}
+                  onContextMenu={(e) => {
+                    if (!canDrag(l)) return
+                    e.preventDefault()
+                    setCtx({ x: e.clientX, y: e.clientY, row: l })
+                  }}
                   onClick={(e) => (l.kind === "group" ? toggleGroup(l.groupId!) : open(l, e.ctrlKey || e.metaKey || e.shiftKey))}
                   onDoubleClick={() => (l.layerId || l.groupId) && setRenaming(l.layerId ?? l.groupId!)}
                   style={l.depth ? { marginLeft: 14 } : undefined}
@@ -198,6 +235,7 @@ export function LayersPanel({ item, presets, wm, tool, maskSel, sel, open, toggl
                   )}
                 >
                   {color && <span className="absolute inset-y-1 left-0.5 w-0.5 rounded" style={{ background: color }} />}
+                  {canDrag(l) && <GripVertical className="-mx-1 h-3.5 w-3.5 shrink-0 cursor-grab text-muted-foreground/60" aria-hidden />}
                   {l.kind === "group" && (l.open ? <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" /> : <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground" />)}
                   <div className={cn("grid h-8 w-8 shrink-0 place-items-center overflow-hidden rounded-md bg-muted", off && "opacity-40")}>
                     {ly?.photo ? <img src={thumbUrl(ly.photo)} alt="" className="h-full w-full object-cover" draggable={false} /> : <Icon className="h-4 w-4" />}
@@ -224,6 +262,12 @@ export function LayersPanel({ item, presets, wm, tool, maskSel, sel, open, toggl
                   </div>
                   {ly?.link && <Link2 className="h-3 w-3 shrink-0 text-muted-foreground" aria-label="Bağlı" />}
                   {ly?.locked && <Lock className="h-3 w-3 shrink-0 text-muted-foreground" aria-label="Kilitli" />}
+                  {canDrag(l) && (
+                    <span className="hidden shrink-0 flex-col group-hover:flex">
+                      <button aria-label={`${l.label} bir üste`} title="Bir Üste" disabled={!canStep(l, true)} onClick={(e) => { e.stopPropagation(); step(l, true) }} className="text-muted-foreground hover:text-foreground disabled:opacity-30"><ChevronUp className="h-3 w-3" /></button>
+                      <button aria-label={`${l.label} bir alta`} title="Bir Alta" disabled={!canStep(l, false)} onClick={(e) => { e.stopPropagation(); step(l, false) }} className="text-muted-foreground hover:text-foreground disabled:opacity-30"><ChevronDown className="h-3 w-3" /></button>
+                    </span>
+                  )}
                   {l.removable && !ly?.locked && (
                     <button
                       aria-label={`${l.label} katmanını kaldır`}
@@ -275,6 +319,15 @@ export function LayersPanel({ item, presets, wm, tool, maskSel, sel, open, toggl
             )}
           </div>
         </>
+      )}
+      {ctx && (
+        <div className="fixed inset-0 z-50" onPointerDown={() => setCtx(null)} onContextMenu={(e) => { e.preventDefault(); setCtx(null) }}>
+          <div role="menu" className="fixed w-44 rounded-md border bg-popover p-1 text-xs shadow-xl" style={{ left: Math.min(ctx.x, window.innerWidth - 184), top: Math.min(ctx.y, window.innerHeight - 124) }} onPointerDown={(e) => e.stopPropagation()}>
+            {([["En Üste Getir", ArrowUpToLine, () => toEnd(ctx.row, true)], ["Bir Üste", ChevronUp, () => step(ctx.row, true)], ["Bir Alta", ChevronDown, () => step(ctx.row, false)], ["En Alta Gönder", ArrowDownToLine, () => toEnd(ctx.row, false)]] as const).map(([label, I, run_]) => (
+              <button key={label} role="menuitem" className="flex w-full items-center gap-2 rounded-sm px-2 py-1 text-left hover:bg-accent" onClick={() => { run_(); setCtx(null) }}><I className="h-3.5 w-3.5 text-muted-foreground" /> {label}</button>
+            ))}
+          </div>
+        </div>
       )}
     </aside>
   )

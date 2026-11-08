@@ -63,7 +63,7 @@ export function ErasePanel({ item, setFx, setMasks, maskSel, layers, setLayers, 
   const fillSel = () => {
     if (!target) {
       toast("Önce doldurulacak alanı seç")
-      return run("sel:lasso")
+      return run("sel:lasso:keep")
     }
     setMasks((item.fx.masks ?? []).map((m) => (m.id === target.id ? { ...m, fill: true } : m)))
     toast.success("Seçili alan çevresinden dolduruluyor")

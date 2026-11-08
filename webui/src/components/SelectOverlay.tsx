@@ -10,7 +10,7 @@ type Props = {
   photo: string
   geo: Geo | null
   tool: SelectTool
-  onChange: (p: Partial<Mask>) => void
+  onChange: (p: Partial<Mask>, drawn?: boolean) => void
 }
 type Pt = [number, number]
 type Drag = { start: Pt; end: Pt; combo: Combo }
@@ -70,7 +70,9 @@ export function SelectOverlay({ mask, w, h, photo, geo, tool, onChange }: Props)
     const r = boxRef.current!.getBoundingClientRect()
     return [clamp((e.clientX - r.left) / r.width), clamp((e.clientY - r.top) / r.height)]
   }
-  const push = (op: SelectOp) => onChange({ ops: [...ops, op] })
+  // Shift ya da Alt basılıyken seçim birleştiriliyor demektir: nesneye dönüşmez
+  const held = useRef(false)
+  const push = (op: SelectOp) => onChange({ ops: [...ops, op] }, !held.current)
   // Photoshop kısayolları: Shift ekler, Alt çıkarır, ikisi birden kesiştirir
   const combo = (e: React.PointerEvent): Combo => comboOf(e.shiftKey && e.altKey ? "intersect" : e.altKey ? "sub" : e.shiftKey ? "add" : tool.combine)
   const r = tool.size * Math.min(w, h) // fırça yarıçapı (ekran px)
@@ -99,6 +101,7 @@ export function SelectOverlay({ mask, w, h, photo, geo, tool, onChange }: Props)
   useEffect(() => setPoly(null), [mode])
 
   const down = (e: React.PointerEvent) => {
+    held.current = e.shiftKey || e.altKey
     if (e.button !== 0) return
     e.stopPropagation()
     e.preventDefault()

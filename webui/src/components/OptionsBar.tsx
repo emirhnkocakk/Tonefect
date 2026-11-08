@@ -123,6 +123,13 @@ export function OptionsBar(p: Props) {
         {usesTol && <Num label="Tolerans" min={1} max={100} v={pct(t.tol)} set={(x) => p.setSelTool({ ...t, tol: x / 100 })} />}
         {t.mode === "wand" && <Chip on={t.contiguous} onClick={() => p.setSelTool({ ...t, contiguous: !t.contiguous })}>Bitişik</Chip>}
         {usesBrush && <Num label="Boyut" unit="%" min={1} max={30} v={pct(t.size)} set={(x) => p.setSelTool({ ...t, size: x / 100 })} />}
+        {(t.mode === "rect" || t.mode === "ellipse" || t.mode === "lasso" || t.mode === "poly" || t.mode === "magnetic") && (
+          <>
+            <Chip on={!t.noObject} title="Açıkken çizdiğin alan hemen ayrı bir katman olur. Kapalıyken seçim olarak kalır." onClick={() => p.setSelTool({ ...t, noObject: !t.noObject })}>Nesne Yap</Chip>
+            {!t.noObject && <Chip on={!!t.cutObject} title="Alanı kopyalamak yerine fotoğraftan alır, boşluğu çevreden doldurur" onClick={() => p.setSelTool({ ...t, cutObject: !t.cutObject })}>Yerinden Kes</Chip>}
+            <Sep />
+          </>
+        )}
         <Chip onClick={() => p.run("sel:subject")}>Konuyu Seç</Chip>
         <Chip onClick={() => p.run("sel:refine")}>Seç ve Maskele</Chip>
       </>

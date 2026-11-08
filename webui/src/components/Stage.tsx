@@ -74,7 +74,7 @@ type Props = {
   localMode: boolean // Yerel sekmesi: yazı etkileşimi kapalı, maske tutamaçları açık
   mask?: Mask
   maskShow: boolean
-  setMask: (p: Partial<Mask>) => void
+  setMask: (p: Partial<Mask>, drawn?: boolean) => void
   selTool: SelectTool
 }
 

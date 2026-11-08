@@ -50,6 +50,8 @@ export type SelectTool = {
   hard: number
   combine: SelectCombo
   amt: number // Seçimi Düzenle miktarı (px)
+  noObject?: boolean // çerçeve ve kement çizimi nesneye dönüşmesin, seçim olarak kalsın
+  cutObject?: boolean // nesne yerinden kesilsin, boşluk çevreden dolsun
   focus: number
 }
 export type SavedSelection = { id: string; name: string; ops: SelectOp[]; feather: number; refine?: Mask["refine"] }

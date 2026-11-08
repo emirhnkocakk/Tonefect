@@ -1,16 +1,12 @@
 ## What's new / Yenilikler
 
-- ✏️ **Every drawing is an object** – each Brush or Pencil stroke becomes its own image layer, cropped to what you drew. Move it, transform it, reorder it or mask it like any picture.
-  / **Her çizim bir nesne** – Fırça ya da Kurşun Kalem ile çizdiğin her çizgi, sadece kendi sınırlarını kaplayan ayrı bir görsel katman olur. Bir fotoğraf gibi taşı, dönüştür, sırala ya da maskele.
-- 🎨 **Color and filters on the selected layer** – adjustments and filters now apply to the selected object; the panel shows what you are editing. Select the Background to edit the photo.
-  / **Seçili katmana renk ve filtre** – ayarlamalar ve filtreler artık seçili nesneye uygulanır; panel neyi düzenlediğini gösterir. Fotoğrafı düzenlemek için Arka Plan'ı seç.
-- 🖱️ **Move picks the right object** – drawings no longer cover the whole canvas, so clicking selects the object you see. Text can be dragged with the Move tool too.
-  / **Taşıma doğru nesneyi tutar** – çizimler artık tüm tuvali kaplamaz, tıkladığın nesne seçilir. Yazı da Taşıma aracıyla sürüklenebilir.
-- 🗂️ **Selecting a layer keeps your tool** – clicking a layer in the Layers panel no longer switches the open tool.
-  / **Katman seçmek aracı değiştirmez** – Katmanlar panelinde bir katmana tıklamak artık açık aracı değiştirmez.
+- ⬚ **Selections become objects** – draw with Rectangle, Ellipse or any Lasso and the area instantly becomes its own layer you can move. Turn off "Make Object" in the options bar to keep a classic selection, or turn on "Cut Out" to lift the area and fill the gap.
+  / **Seçimler nesneye dönüşür** – Dikdörtgen, Elips ya da herhangi bir Kement ile çizdiğin alan anında taşıyabileceğin ayrı bir katman olur. Klasik seçim için seçenekler çubuğundan "Nesne Yap"ı kapat; alanı fotoğraftan alıp boşluğu doldurmak için "Yerinden Kes"i aç.
+- ↕️ **Easier layer ordering** – every layer now has a drag handle, up and down arrows on hover, and a right-click menu: Bring to Top, Up One, Down One, Send to Bottom.
+  / **Daha kolay katman sıralama** – her katmanda artık tutamak, üzerine gelince yukarı ve aşağı okları ve sağ tık menüsü var: En Üste Getir, Bir Üste, Bir Alta, En Alta Gönder.
 
-Good to know: drawings made before this version stay attached to the Background. To collect several strokes on one layer, create a New Layer first and keep it selected.
-/ Bilmende fayda var: bu sürümden önce yapılan çizimler Arka Plan'a bağlı kalır. Birden fazla çizgiyi tek katmanda toplamak için önce Yeni Katman aç ve seçili bırak.
+Good to know: objects are always taken from the Background photo. Hold Shift or Alt while drawing to combine selections instead of making an object.
+/ Bilmende fayda var: nesneler her zaman Arka Plan fotoğrafından alınır. Nesne yapmak yerine seçimleri birleştirmek için çizerken Shift ya da Alt'a bas.
 
 Your existing projects and settings are kept.
 / Mevcut projelerin ve ayarların korunur.
