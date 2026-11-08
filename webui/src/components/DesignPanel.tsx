@@ -28,6 +28,7 @@ type Props = {
   intent?: { cmd: string; n: number } | null
   item: Item
   setFx: (p: Partial<Fx>) => void
+  run: (cmd: string) => void
   mode: XformMode
   setMode: (m: XformMode) => void
   delta: XformDelta | null
@@ -58,7 +59,7 @@ function Icon({ label, onClick, disabled, children }: { label: string; onClick: 
 }
 
 /** Taşıma ve Dönüştürme: fotoğrafın kendisi ya da eklenen katmanlar seçilir, dönüştürülür ve hizalanır. */
-export function DesignPanel({ layers, setLayers, sel, setSel, canvas: [W, H], intent, item, setFx, mode, setMode, delta }: Props) {
+export function DesignPanel({ layers, setLayers, sel, setSel, canvas: [W, H], intent, item, setFx, run, mode, setMode, delta }: Props) {
   const [aligning, setAligning] = useState(false)
   const selected = layers.filter((l) => sel.includes(l.id))
   const again = () => {
@@ -114,17 +115,7 @@ export function DesignPanel({ layers, setLayers, sel, setSel, canvas: [W, H], in
       setSel(added.map((l) => l.id))
     }
   }
-  const lowest = layers[0]?.id === BASE_ID ? 1 : 0 // Arka Plan hep en altta
   const isBase = cur?.id === BASE_ID
-  const order = (dir: 1 | -1) => {
-    if (!cur || isBase) return
-    const i = layers.indexOf(cur)
-    const j = i + dir
-    if (j < lowest || j >= layers.length) return
-    const a = [...layers]
-    ;[a[i], a[j]] = [a[j], a[i]]
-    setLayers(a)
-  }
   const duplicate = () => {
     if (!cur) return
     const c = { ...cur, id: newId(), name: isBase ? `${cur.name} kopya` : cur.name, x: cur.x + 0.03, y: cur.y + 0.03 }
@@ -235,8 +226,8 @@ export function DesignPanel({ layers, setLayers, sel, setSel, canvas: [W, H], in
       {cur && (
         <div className="space-y-4 rounded-lg border p-3">
           <div className="grid grid-cols-6 gap-1">
-            <Icon label="Öne getir" onClick={() => order(1)} disabled={isBase || layers.indexOf(cur) === layers.length - 1}><ArrowUp className="h-4 w-4" /></Icon>
-            <Icon label="Arkaya gönder" onClick={() => order(-1)} disabled={isBase || layers.indexOf(cur) <= lowest}><ArrowDown className="h-4 w-4" /></Icon>
+            <Icon label="Öne getir" onClick={() => run("layer:forward")} disabled={isBase}><ArrowUp className="h-4 w-4" /></Icon>
+            <Icon label="Arkaya gönder" onClick={() => run("layer:backward")} disabled={isBase}><ArrowDown className="h-4 w-4" /></Icon>
             <Icon label="Yatay çevir" onClick={() => set({ flipH: !cur.flipH })}><FlipHorizontal2 className="h-4 w-4" /></Icon>
             <Icon label="Tuvali doldur" onClick={fill}><Maximize className="h-4 w-4" /></Icon>
             <Icon label="Çoğalt" onClick={duplicate}><Copy className="h-4 w-4" /></Icon>

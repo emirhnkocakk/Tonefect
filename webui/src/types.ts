@@ -225,6 +225,7 @@ export type Item = {
   layers?: ImgLayer[] // fotoğrafın üstündeki görseller (yazının altında)
   groups?: LayerGroup[]
   comps?: LayerComp[]
+  textAfter?: string // yazının hemen altındaki katman; yoksa en üstte
   paths?: VPath[] // Kalem ile çizilen yollar; çıktıda görünmez
   selections?: SavedSelection[] // Selection Tool: kaydedilen seçimler
   slices?: Slice[] // dilimleme

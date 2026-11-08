@@ -2754,20 +2754,24 @@ def auto_align_layer(ref, ref_mask, ly, loader, W, H):
 
 
 def compose(cfg, base, text, tone, accent_word="", styles=None, block=(0, 0), offsets=None,
-            k=None, wm=None, font=None, textfx=None, layers=None, loader=None):
+            k=None, wm=None, font=None, textfx=None, layers=None, loader=None, text_at=None):
     """Hazir zemine gorsel katmanlarini, yaziyi ve filigrani ekle. (gorsel, yerlesim) dondurur; yazi yoksa yerlesim None.
     k: yazi olcegi (varsayilan tuval boyutundan), wm: filigran (varsayilan marka imzasi)."""
     W, H = base.size
     k = canvas_scale(W, H) if k is None else k
-    layout, img = None, place_layers(base, layers, loader)
+    # text_at: yazinin altinda kalan katman sayisi; None = en ustte
+    below, above = (layers, None) if text_at is None or not layers else (layers[:text_at], layers[text_at:])
+    layout, img = None, place_layers(base, below, loader)
     if text.strip():
         specs = build_specs(text, accent_word, styles, cfg["tones"][tone]["uppercase"])
         tfx = textfx or {}
         layout = layout_text(cfg, tone, specs, W, H, k, font, float(tfx.get("tracking") or 0), float(tfx.get("leading") or 1.0))
         layer = draw_layout(cfg, layout, W, H, block, offsets, float(tfx.get("outline") or 0), tfx.get("outlineColor"))
         shadow = float(tfx["shadow"]) if "shadow" in tfx else 0.65
-        img = Image.alpha_composite(img, add_shadow(layer, radius=14 * k, strength=shadow) if shadow > 0 else layer)
-    img = Image.alpha_composite(img, watermark_layer(cfg, W, H, k, wm))
+        img = Image.alpha_composite(img.convert("RGBA"), add_shadow(layer, radius=14 * k, strength=shadow) if shadow > 0 else layer)
+    if above:
+        img = place_layers(img, above, loader, source=base)
+    img = Image.alpha_composite(img.convert("RGBA"), watermark_layer(cfg, W, H, k, wm))
     return img, layout
 
 
@@ -2837,7 +2841,7 @@ def save_image(img, out_path, fmt="jpg", quality=95, exif=None, color="rgb", dpi
         img.save(out_path, "JPEG", quality=int(quality), subsampling=0 if quality >= 90 else 2, **kw)
 
 
-def psd_stack(cfg, base, layers, loader, text_layer, wm_layer):
+def psd_stack(cfg, base, layers, loader, text_layer, wm_layer, text_at=None):
     """PSD icin katmanlar (alttan uste). Ayar katmani ve otomatik harman PSD'de karsiliksiz: o noktaya kadarki birlesik goruntu piksel katmani olur."""
     W, H = base.size
     blank = Image.new("RGBA", (W, H), (0, 0, 0, 0))
@@ -2845,7 +2849,10 @@ def psd_stack(cfg, base, layers, loader, text_layer, wm_layer):
     if not any(ly.get("id") == "base" for ly in layers):
         out.append({"name": "Arka Plan", "image": base.convert("RGBA")})
     shown = []
-    for ly in layers:
+    for i, ly in enumerate(layers):
+        if text_layer is not None and i == text_at:
+            out.append({"name": "Yazı", "image": text_layer})
+            text_layer = None
         off = bool(ly.get("off"))
         name = ly.get("name") or "Katman"
         if not off:
@@ -2866,7 +2873,7 @@ def psd_stack(cfg, base, layers, loader, text_layer, wm_layer):
 def render_one(cfg, image_path, text, tone, accent_word, out_path,
                styles=None, fx=None, block=(0, 0), offsets=None, geo=None, wm=None,
                fmt="jpg", quality=95, keep_exif=False, font=None, textfx=None, color="rgb", dpi=None,
-               layers=None, loader=None, slices=None):
+               layers=None, loader=None, slices=None, text_at=None):
     """slices verilirse tam gorsel yerine her dilim ayri dosya olur ve yollarin listesi doner."""
     out_path = Path(out_path)
     if fmt == "psd" and slices:  # dilimler tek katmanli parcalardir
@@ -2875,8 +2882,10 @@ def render_one(cfg, image_path, text, tone, accent_word, out_path,
     # gizli katmanlar yalnizca PSD'ye yazilir, cizime girmez (gizli Arka Plan tuvali bos birakir)
     visible = [({**ly, "opacity": 0.0} if ly.get("id") == "base" else ly) if ly.get("off") else ly for ly in (layers or [])]
     visible = [ly for ly in visible if not ly.get("off") or ly.get("id") == "base"]
+    # gizli katmanlar sayilmaz: yazinin yeri gorunenlere gore
+    shown_at = None if text_at is None else sum(1 for ly in (layers or [])[:text_at] if not ly.get("off") or ly.get("id") == "base")
     img, layout = compose(cfg, base, text, tone, accent_word, styles, block, offsets, wm=wm, font=font, textfx=textfx,
-                          layers=visible, loader=loader)
+                          layers=visible, loader=loader, text_at=shown_at)
     size = layout["size"] if layout else 0
     out_path.parent.mkdir(parents=True, exist_ok=True)
     if fmt == "psd":
@@ -2884,7 +2893,7 @@ def render_one(cfg, image_path, text, tone, accent_word, out_path,
         blank = Image.new("RGBA", (W, H), (0, 0, 0, 0))
         text_layer = compose(cfg, blank, text, tone, accent_word, styles, block, offsets, wm={"enabled": False}, font=font, textfx=textfx)[0] if text.strip() else None
         mark = watermark_layer(cfg, W, H, canvas_scale(W, H), wm)
-        psdfile.write(out_path, W, H, psd_stack(cfg, base, layers or [], loader, text_layer, mark if mark.getbbox() else None), img, dpi)
+        psdfile.write(out_path, W, H, psd_stack(cfg, base, layers or [], loader, text_layer, mark if mark.getbbox() else None, text_at), img, dpi)
         return size
     if slices:
         W, H = img.size

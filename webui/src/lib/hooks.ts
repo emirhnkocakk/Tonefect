@@ -24,7 +24,7 @@ export function usePreview(item: Item | undefined, width: number, wm: Watermark 
     ? ""
     : original
     ? JSON.stringify([item.id, item.geo ?? null, width, "original"])
-    : JSON.stringify([item.id, item.text, item.tone, item.accent, item.styles, item.block, item.offsets, item.fx, item.geo ?? null, item.font ?? null, item.textFx ?? null, item.layers ?? [], item.paint ?? null, width, wm])
+    : JSON.stringify([item.id, item.text, item.tone, item.accent, item.styles, item.block, item.offsets, item.fx, item.geo ?? null, item.font ?? null, item.textFx ?? null, item.layers ?? [], item.textAfter ?? null, item.paint ?? null, width, wm])
 
   async function pump() {
     if (running.current) return
@@ -57,7 +57,7 @@ export function usePreview(item: Item | undefined, width: number, wm: Watermark 
     }
     pending.current = {
       photo: item.id, text: item.text, tone: item.tone, accent: item.accent, styles: item.styles,
-      block: item.block, offsets: item.offsets, fx: item.fx, geo: item.geo ?? null, font: item.font ?? null, textfx: item.textFx ?? null, layers: item.layers ?? [], paint: item.paint ?? null, wm, w: width, original,
+      block: item.block, offsets: item.offsets, fx: item.fx, geo: item.geo ?? null, font: item.font ?? null, textfx: item.textFx ?? null, layers: item.layers ?? [], textAfter: item.textAfter ?? null, paint: item.paint ?? null, wm, w: width, original,
     }
     const t = setTimeout(pump, 30)
     return () => clearTimeout(t)

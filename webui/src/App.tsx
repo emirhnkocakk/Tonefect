@@ -38,7 +38,7 @@ import { api } from "@/lib/api"
 import { mergeStyle, naturalSort, remap, words } from "@/lib/text"
 import { legacyGeo, naturalSize, canvasSize, photoRect } from "@/lib/geo"
 import { applyTheme, isLightTheme } from "@/lib/themes"
-import { BASE_ID, effectiveItem, psdItem, removeLayer, withBase, type Layer } from "@/lib/layers"
+import { BASE_ID, effectiveItem, keepTextAnchor, moveInStack, psdItem, removeLayer, stackIds, withBase, type Layer } from "@/lib/layers"
 import type { PenTool, VPath, BrushSettings, BrushTool, CloneSource, FilterItem, MaskPaintTool, Stroke, Config, ExportOpts, Geo, ImgLayer, Item, Job, Mask, Mode, SelectTool, PresetMeta, Settings, Slice, Style, XformMode, UpdateInfo, Watermark } from "@/types"
 
 // Yeni fotoğraflar olduğu gibi açılır; görünüm ve efektleri kullanıcı kendisi seçer.
@@ -315,7 +315,11 @@ export default function App() {
   useEffect(() => setSelected((s) => (s.some((i) => i >= wordCount) ? s.filter((i) => i < wordCount) : s)), [wordCount])
 
   const update = useCallback(
-    (fn: (it: Item) => Item) => setItems((a) => a.map((i) => (i.id === currentId ? fn(withBase(i)) : i))),
+    (fn: (it: Item) => Item) => setItems((a) => a.map((i) => {
+      if (i.id !== currentId) return i
+      const before = withBase(i)
+      return keepTextAnchor(before, fn(before))
+    })),
     [currentId]
   )
 
@@ -390,16 +394,28 @@ export default function App() {
     setArmedSource(false)
   }, [currentId])
   const addSpecial = (t: "fillgaps" | "colorkey") => addStroke({ tool: t, pts: [[0.5, 0.5, 1]], seed: 0, b: brush })
-  const addStroke = (s: Stroke) => update((it) => {
-    // boş katman seçiliyken boya o katmana gider
-    const ly = tab === "brush" ? it.layers?.find((l) => l.id === layerSel[0] && l.kind === "blank") : undefined
+  const addStroke = (s: Stroke) => {
+    // Fırça ve Kalem yeni katmana boyar; aynı boya katmanı seçili kaldıkça darbeler oraya eklenir. Rötuş araçları fotoğrafın kendisinde çalışır.
+    const drawing = tab === "brush" || tab === "paths"
+    const has = drawing && !!item?.layers?.some((l) => l.id === layerSel[0] && l.kind === "blank")
+    let fresh: ImgLayer | null = null
+    if (drawing && !has && item && (s.tool === "brush" || s.tool === "pencil")) {
+      const [W, H] = canvasSize(item.geo, item.src) ?? [1080, 1350]
+      const n = item.layers?.length ?? 1
+      fresh = { ...createLayer("blank", W, H, n), name: `Boya ${n}` }
+      setLayerSel([fresh.id])
+    }
+    update((prev) => {
+    const it = fresh ? { ...prev, layers: [...(prev.layers ?? []), fresh] } : prev
+    const ly = fresh ?? (drawing ? it.layers?.find((l) => l.id === layerSel[0] && l.kind === "blank") : undefined)
     if (!ly) return { ...it, paint: { strokes: [...(it.paint?.strokes ?? []), s] } }
     const [W, H] = canvasSize(it.geo, it.src) ?? [1080, 1350]
     const lw = ly.w * W
     const lh = lw * ly.ar * (ly.sy ?? 1)
     const st: Stroke = { ...s, b: { ...s.b, size: (s.b.size * Math.min(W, H)) / Math.min(lw, lh) }, pts: s.pts.map(([x, y, p]) => [...layerUV(ly, W, H, x * W, y * H), p] as [number, number, number]) }
     return { ...it, layers: it.layers!.map((l) => (l.id === ly.id ? { ...l, paint: { strokes: [...(l.paint?.strokes ?? []), st] } } : l)) }
-  })
+    })
+  }
   const [xform, setXform] = useState<XformMode>("move")
   const [lastXform, setLastXform] = useState<XformDelta | null>(null)
   const [sliceTool, setSliceTool] = useState<"draw" | "select">("draw")
@@ -624,20 +640,22 @@ export default function App() {
       return void layerCommand("layer:dup")
     }
     if (op === "front" || op === "back" || op === "forward" || op === "backward") {
-      const floor = all[0]?.id === BASE_ID ? 1 : 0
-      const moving = chosen.filter((l) => l.id !== BASE_ID)
+      const moving = chosen.filter((l) => l.id !== BASE_ID).map((l) => l.id)
       if (!moving.length) return void toast("Arka Plan her zaman en altta kalır")
-      const rest = all.filter((l) => !moving.includes(l))
-      const low = all.indexOf(moving[0])
-      const high = all.indexOf(moving[moving.length - 1])
-      const at = op === "front" ? rest.length : op === "back" ? floor : op === "forward" ? Math.min(rest.length, high - moving.length + 2) : Math.max(floor, low - 1)
-      return setLayers([...rest.slice(0, at), ...moving, ...rest.slice(at)])
+      const stack = stackIds(item)
+      const places = moving.map((id) => stack.indexOf(id))
+      const top = stack[stack.length - 1]
+      const target = op === "front" ? top : op === "back" ? BASE_ID : op === "forward" ? stack[Math.min(stack.length - 1, Math.max(...places) + 1)] : stack[Math.max(0, Math.min(...places) - 2)]
+      return update((it) => moveInStack(it, moving, target))
     }
     const map = (fn: (l: ImgLayer) => ImgLayer) => setLayers(all.map((l) => (picked.includes(l.id) ? fn(l) : l)))
     if (op === "new") {
       if (all.length >= 200) return void toast("En fazla 200 katman eklenebilir")
-      const ly = createLayer(arg as "blank", W, H, all.length + 1)
-      setLayers([...all, ly])
+      // Photoshop gibi: seçili katmanın hemen üstüne; seçim Arka Plan ise en üste
+      const made = createLayer(arg as "blank", W, H, all.length + 1)
+      const over = [...all].reverse().find((l) => layerSel.includes(l.id) && l.id !== BASE_ID)
+      const ly = over ? { ...made, group: over.group } : made
+      setLayers(over ? [...all.slice(0, all.indexOf(over) + 1), ly, ...all.slice(all.indexOf(over) + 1)] : [...all, ly])
       setLayerSel([ly.id])
       return setTabRaw(arg === "blank" ? "design" : "layers")
     }
@@ -1436,7 +1454,7 @@ export default function App() {
                 <>
                   {showPanel && <div role="separator" aria-orientation="horizontal" title="Sürükleyerek boyutlandır" data-h={layersH} onPointerDown={startResize} className="h-1.5 shrink-0 cursor-row-resize border-y bg-background hover:bg-primary/30" />}
                   <div className={showPanel ? "shrink-0" : "min-h-0 flex-1"} style={showPanel ? { height: layersH } : undefined}>
-                    <LayersPanel item={item} presets={presets} wm={wm} tool={tab} maskSel={maskSel} sel={layerSel} open={openLayer} toggle={toggleLayer} remove={removeLayerFx} run={command} put={putLayerSafe} toggleGroup={toggleGroup} renameGroup={renameGroup} renaming={renaming} setRenaming={setRenaming} filterOpen={filterOpen} setFilterOpen={setFilterOpen} />
+                    <LayersPanel item={item} presets={presets} wm={wm} tool={tab} maskSel={maskSel} sel={layerSel} open={openLayer} toggle={toggleLayer} remove={removeLayerFx} run={command} put={putLayerSafe} reorder={(moving, above, group) => update((it) => moveInStack(it, moving, above, group))} toggleGroup={toggleGroup} renameGroup={renameGroup} renaming={renaming} setRenaming={setRenaming} filterOpen={filterOpen} setFilterOpen={setFilterOpen} />
                   </div>
                 </>
               )}

@@ -26,9 +26,9 @@ export type Layer = {
 }
 
 export const BASE_ID = "base"
+export const TEXT_ID = "__text"
 
-/** Ana fotoğraf her zaman en altta bir katmandır: tüm katman araçları ona da çalışır. */
-export function withBase(item: Item): Item {
+function ensureBase(item: Item): Item {
   const [W, H] = canvasSize(item.geo, item.src) ?? [1080, 1350]
   const ar = H / W
   const all = item.layers ?? []
@@ -36,6 +36,54 @@ export function withBase(item: Item): Item {
   if (cur && cur.photo === item.id && Math.abs(cur.ar - ar) < 1e-6) return item
   if (cur) return { ...item, layers: all.map((l) => (l === cur ? { ...l, photo: item.id, ar } : l)) }
   return { ...item, layers: [{ id: BASE_ID, base: true, photo: item.id, name: "Arka Plan", x: 0.5, y: 0.5, w: 1, ar, rot: 0, opacity: 1, flipH: false, cutout: false }, ...all] }
+}
+
+/** Ana fotoğraf her zaman en altta bir katmandır. Yazı da katman sırasında yerini korur: yeni öğeler üstüne gelir. */
+export function withBase(item: Item): Item {
+  const it = ensureBase(item)
+  const layers = it.layers ?? []
+  if (!it.text.trim()) return it.textAfter ? { ...it, textAfter: undefined } : it
+  if (it.textAfter && layers.some((l) => l.id === it.textAfter)) return it
+  return { ...it, textAfter: layers[layers.length - 1]?.id }
+}
+
+/** Yazının altındaki katman silindiyse yazı yerinde kalsın: bir alttaki katmana bağlanır. */
+export function keepTextAnchor(before: Item, after: Item): Item {
+  const a = before.textAfter
+  const now = after.layers ?? []
+  if (!a || after.textAfter !== a || now.some((l) => l.id === a)) return after
+  const old = before.layers ?? []
+  for (let i = old.findIndex((l) => l.id === a) - 1; i >= 0; i--) if (now.some((l) => l.id === old[i].id)) return { ...after, textAfter: old[i].id }
+  return { ...after, textAfter: now[0]?.id }
+}
+
+/** Alttan üste sıra: katmanlar ve yazı. */
+export function stackIds(item: Item): string[] {
+  const ids = (item.layers ?? []).map((l) => l.id)
+  if (item.text.trim()) {
+    const i = item.textAfter ? ids.indexOf(item.textAfter) : -1
+    ids.splice(i >= 0 ? i + 1 : ids.length, 0, TEXT_ID)
+  }
+  return ids
+}
+
+/** Katmanları (ya da yazıyı) above öğesinin hemen üstüne taşır. group: undefined değiştirmez, null gruptan çıkarır. */
+export function moveInStack(item: Item, moving: string[], above: string, group?: string | null): Item {
+  if (moving.includes(above) || moving.includes(BASE_ID)) return item
+  const stack = stackIds(item)
+  const rest = stack.filter((id) => !moving.includes(id))
+  const at = rest.indexOf(above)
+  if (at < 0) return item
+  const ordered = stack.filter((id) => moving.includes(id))
+  const next = [...rest.slice(0, at + 1), ...ordered, ...rest.slice(at + 1)]
+  const byId = new Map((item.layers ?? []).map((l) => [l.id, l]))
+  const layers = next.filter((id) => id !== TEXT_ID).map((id) => {
+    const l = byId.get(id)!
+    return group !== undefined && moving.includes(id) ? { ...l, group: group ?? undefined } : l
+  })
+  const t = next.indexOf(TEXT_ID)
+  const used = new Set(layers.map((l) => l.group).filter(Boolean))
+  return { ...item, layers, textAfter: t > 0 ? next[t - 1] : item.textAfter, groups: item.groups?.filter((g) => used.has(g.id)) }
 }
 
 const DETAIL_KEYS = ["sharpen", "clarity", "denoise"] as const
@@ -49,14 +97,13 @@ export function buildLayers(item: Item, presets: PresetMeta[], wm: Watermark | n
   const adj = fx.adjust ?? {}
   const out: Layer[] = []
   if (wm?.enabled && wm.text) out.push({ key: "watermark", kind: "watermark", label: "Filigran", sub: `${wm.text} · tüm fotoğraflar`, tool: "settings", hideable: false, removable: true, global: true })
-  if (item.text.trim()) out.push({ key: "text", kind: "text", label: "Yazı", sub: item.text, tool: "text", hideable: true, removable: true })
-  if (item.paint?.strokes.length) {
-    const fix = item.paint.strokes.filter((s) => RETOUCH_STROKES.has(s.tool)).length
-    out.push({ key: "paint", kind: "paint", label: fix === item.paint.strokes.length ? "Rötuş Fırçaları" : fix ? "Boya ve Rötuş" : "Boya", sub: `${item.paint.strokes.length} darbe`, tool: fix === item.paint.strokes.length ? "retouch" : "brush", hideable: true, removable: true })
-  }
   const seen = new Set<string>()
   const TYPE: Record<string, string> = { blank: "boş katman", text: "metin", shape: "şekil", fill: "dolgu", adjust: "ayar" }
-  ;[...(item.layers ?? [])].filter((l) => l.id !== BASE_ID).reverse().forEach((l: ImgLayer) => {
+  const byId = new Map((item.layers ?? []).map((l) => [l.id, l]))
+  ;[...stackIds(item)].reverse().forEach((sid) => {
+    if (sid === BASE_ID) return
+    if (sid === TEXT_ID) return void out.push({ key: "text", kind: "text", label: "Yazı", sub: item.text, tool: "text", hideable: true, removable: true })
+    const l: ImgLayer = byId.get(sid)!
     const g = l.group ? item.groups?.find((x) => x.id === l.group) : undefined
     if (g && !seen.has(g.id)) {
       seen.add(g.id)
@@ -66,6 +113,14 @@ export function buildLayers(item: Item, presets: PresetMeta[], wm: Watermark | n
     const bits = [l.kind ? TYPE[l.kind] : l.smart ? "akıllı nesne" : "görsel", l.cutout ? "kesilmiş" : "", l.opacity < 1 ? pct(l.opacity) : "", l.styles && Object.values(l.styles).some((s) => s.on) ? "fx" : ""]
     out.push({ key: `img:${l.id}`, kind: "image", label: l.name.replace(/\.(png|jpe?g|webp)$/i, ""), sub: bits.filter(Boolean).join(" · "), tool: l.kind ? "layers" : "design", layerId: l.id, layer: l, depth: g ? 1 : 0, hideable: true, removable: true })
   })
+  // Arka Plan ve ona uygulanan düzenlemeler en altta; düzenlemeler fotoğrafın altında girintili görünür
+  const base = item.layers?.find((l) => l.id === BASE_ID)
+  out.push({ key: `img:${BASE_ID}`, kind: "photo", label: base?.name ?? "Arka Plan", sub: item.name, tool: "design", layerId: base ? BASE_ID : undefined, layer: base, hideable: true, removable: false })
+  const attachedFrom = out.length
+  if (item.paint?.strokes.length) {
+    const fix = item.paint.strokes.filter((s) => RETOUCH_STROKES.has(s.tool)).length
+    out.push({ key: "paint", kind: "paint", label: fix === item.paint.strokes.length ? "Rötuş Fırçaları" : fix ? "Boya ve Rötuş" : "Boya", sub: `${item.paint.strokes.length} darbe`, tool: fix === item.paint.strokes.length ? "retouch" : "brush", hideable: true, removable: true })
+  }
   if (fx.frame) out.push({ key: "frame", kind: "frame", label: "Çerçeve", sub: { solid: "Düz", polaroid: "Polaroid", film: "Film şeridi", line: "İnce çizgi" }[fx.frame.style], tool: "frame", hideable: true, removable: true })
   if (fx.background?.mode)
     out.push({ key: "background", kind: "background", label: "Arka plan", sub: { remove: "kaldırıldı · şeffaf", color: `renk · ${fx.background.color ?? "#FFFFFF"}`, blur: "bulanık" }[fx.background.mode], tool: "fx", hideable: true, removable: true })
@@ -89,8 +144,7 @@ export function buildLayers(item: Item, presets: PresetMeta[], wm: Watermark | n
   if (fx.preset !== "b:original")
     out.push({ key: "look", kind: "look", label: preset?.name ?? "Renk görünümü", sub: `renk görünümü · ${pct(fx.amount ?? 1)}${fx.bw ? " · S/B" : ""}`, tool: "color", hideable: true, removable: true })
   else if (fx.bw) out.push({ key: "look", kind: "look", label: "Siyah-beyaz", sub: "renk görünümü", tool: "fx", hideable: true, removable: true })
-  const base = item.layers?.find((l) => l.id === BASE_ID)
-  out.push({ key: `img:${BASE_ID}`, kind: "photo", label: base?.name ?? "Arka Plan", sub: item.name, tool: "design", layerId: base ? BASE_ID : undefined, layer: base, hideable: true, removable: false })
+  for (let i = attachedFrom; i < out.length; i++) out[i].depth = 1
   return out
 }
 
@@ -111,11 +165,17 @@ export function effectiveItem(item: Item): Item {
   const layers = (item.layers ?? [])
     .filter((l) => l.id === BASE_ID || (!h.has(`img:${l.id}`) && !(l.group && h.has(`group:${l.group}`))))
     .map((l) => (l.id === BASE_ID && h.has(`img:${l.id}`) ? { ...l, opacity: 0 } : l))
+  // yazının altındaki katman gizliyse yazı en yakın görünen katmana bağlanır
+  let textAfter = item.textAfter
+  if (textAfter && !layers.some((l) => l.id === textAfter)) {
+    const all = item.layers ?? []
+    for (let i = all.findIndex((l) => l.id === textAfter) - 1; i >= 0; i--) if (layers.some((l) => l.id === all[i].id)) { textAfter = all[i].id; break }
+  }
   const a = fx.adjust as Record<string, unknown>
   if (h.has("detail")) for (const k of DETAIL_KEYS) delete a[k]
   if (h.has("adjust")) for (const k of Object.keys(a)) if (!(DETAIL_KEYS as readonly string[]).includes(k)) delete a[k]
   if (h.has("look")) Object.assign(fx, { preset: "b:original", amount: 1, bw: false })
-  return { ...item, fx, layers, paint: h.has("paint") ? undefined : item.paint, text: h.has("text") ? "" : item.text }
+  return { ...item, fx, layers, textAfter, paint: h.has("paint") ? undefined : item.paint, text: h.has("text") ? "" : item.text }
 }
 
 /** PSD için: gizli katmanlar da gider, dosyada gizli olarak durur. Diğer gizlemeler (efektler) normal uygulanır. */

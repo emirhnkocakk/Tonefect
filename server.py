@@ -631,6 +631,7 @@ def clean_item(d):
         "geo": clean_geo(d.get("geo")),
         "font": clean_font(d.get("font")), "textfx": clean_textfx(d.get("textfx")),
         "layers": name_groups(clean_layers(d.get("layers"), d.get("hidden")), d.get("groups")),
+        "textAt": text_index(d),
         "slices": clean_slices(d.get("slices")),
     }
 
@@ -792,6 +793,18 @@ def _base_untouched(c):
         and near(c["rot"], 0.0) and near(c["opacity"], 1.0) and not (c["flipH"] or c["blend"] or c["clip"] or c["defringe"])
 
 
+def text_index(d):
+    """Yazının altında kalan katman sayısı (çizime giren katmanlara göre); None: en üstte."""
+    anchor, raw = d.get("textAfter"), d.get("layers")
+    if not anchor or not isinstance(raw, list):
+        return None
+    ids = [str(ly.get("id")) for ly in raw[:MAX_LAYERS] if isinstance(ly, dict)]
+    if anchor not in ids:
+        return None
+    below = set(ids[:ids.index(anchor) + 1])
+    return sum(1 for c in clean_layers(raw, d.get("hidden")) if c["id"] in below)
+
+
 def name_groups(layers, groups):
     """PSD'ye yazılacak grup adları."""
     names = {str(g.get("id")): str(g.get("name") or "Grup")[:120] for g in (groups if isinstance(groups, list) else []) if isinstance(g, dict)}
@@ -945,7 +958,7 @@ def layers_flatten(d):
     try:
         engine.render_one(CFG, path, item["text"], item["tone"], item["accent"], tmp, styles=item["styles"], fx=item["fx"], block=item["block"],
                           offsets=item["offsets"], geo=item["geo"], wm=None, font=item["font"], textfx=item["textfx"], fmt="png", quality=95,
-                          keep_exif=False, color="rgb", dpi=None, layers=item["layers"], loader=layer_loader(True))
+                          keep_exif=False, color="rgb", dpi=None, layers=item["layers"], loader=layer_loader(True), text_at=item["textAt"])
         with Image.open(tmp) as im:  # sonuç yeni fotoğraf olur: şeffaf yerler (Photoshop'taki gibi) beyaz
             rgba = im.convert("RGBA")
         flat = Image.new("RGB", rgba.size, (255, 255, 255))
@@ -1139,7 +1152,7 @@ def render_preview(d):
                                          styles=item["styles"], block=item["block"], offsets=item["offsets"],
                                          k=k * f, wm=clean_wm(d["wm"]) if isinstance(d.get("wm"), dict) else WATERMARK,
                                          font=item["font"], textfx=item["textfx"],
-                                         layers=item["layers"], loader=layer_loader())
+                                         layers=item["layers"], loader=layer_loader(), text_at=item["textAt"])
     out_w = max(200, min(want, max(1600, base.width)))
     out_h = max(1, round(out_w * base.height / base.width))
     if img.mode == "RGBA" and img.getchannel("A").getextrema()[0] < 255:
@@ -1867,7 +1880,7 @@ def render_file(d):
                           offsets=item["offsets"], geo=item["geo"], wm=WATERMARK,
                           font=item["font"], textfx=item["textfx"],
                           fmt=ex["format"], quality=ex["quality"], keep_exif=ex["exif"],
-                          color=ex["color"], dpi=ex["dpi"], layers=item["layers"], loader=layer_loader(True))
+                          color=ex["color"], dpi=ex["dpi"], layers=item["layers"], loader=layer_loader(True), text_at=item["textAt"])
         return tmp.read_bytes(), ex["format"]
     finally:
         tmp.unlink(missing_ok=True)
@@ -1901,7 +1914,7 @@ def run_job(jid, d):
                                   offsets=item["offsets"], geo=item["geo"], wm=WATERMARK,
                                   font=item["font"], textfx=item["textfx"],
                                   fmt=ex["format"], quality=ex["quality"], keep_exif=ex["exif"],
-                                  color=ex["color"], dpi=ex["dpi"], layers=item["layers"], loader=layer_loader(True), slices=slices)
+                                  color=ex["color"], dpi=ex["dpi"], layers=item["layers"], loader=layer_loader(True), text_at=item["textAt"], slices=slices)
                 if slices:
                     job["files"].extend({"name": p.name, "text": item["text"]} for p in result)
                     job["done"] = i

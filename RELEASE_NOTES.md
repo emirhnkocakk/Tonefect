@@ -1,18 +1,13 @@
 ## What's new / Yenilikler
 
-- 🖥️ **Familiar professional layout** – standard menus (File, Edit, Image, Layer, Type, Select, Filter, View, Window, Help), a single-column toolbar with letter shortcuts, a tool options bar, a right-hand panel dock, document tabs and a status bar. Press F1 for the shortcut list.
-  / **Tanıdık profesyonel düzen** – standart menüler (Dosya, Düzenle, Görüntü, Katman, Yazı, Seçim, Filtre, Görünüm, Pencere, Yardım), harf kısayollu tek sıra araç kutusu, araç seçenekleri çubuğu, sağda panel yuvası, belge sekmeleri ve durum çubuğu. Kısayol listesi için F1.
-- 📂 **PSD files** – open and save layered Photoshop documents with layer names, groups, blend modes, opacity, hidden layers and clipping masks.
-  / **PSD dosyaları** – katmanlı Photoshop belgelerini katman adları, gruplar, karışım kipleri, opaklık, gizli katmanlar ve kırpma maskeleriyle aç ve kaydet.
-- ▶️ **Actions and batch** – record your edits and replay them on one photo or all open photos, with optional export afterwards.
-  / **Eylemler ve toplu işlem** – düzenlemelerini kaydet; tek fotoğrafa ya da açık fotoğrafların hepsine uygula, istersen ardından dışa aktar.
-- ✒️ **Pen and Paths** – draw Bezier paths and turn them into selections, vector masks, fills or brush strokes.
-  / **Kalem ve Yollar** – Bezier yollar çiz; seçime, vektör maskeye, dolguya ya da fırça konturuna çevir.
-- 🕘 **History panel and new tools** – jump back to any step; eyedropper, hand and zoom tools, grid, select all, deselect, layer ordering and merge down.
-  / **Geçmiş paneli ve yeni araçlar** – istediğin adıma dön; damlalık, el ve yakınlaştırma araçları, ızgara, tümünü seç, seçimi kaldır, katman sıralama ve aşağı birleştir.
-
-Good to know: Photoshop adjustment layers and layer styles are not imported from PSD files; a warning tells you how many were skipped. PSB, Lab and Indexed files cannot be opened, and Photoshop `.atn` action files are not supported. The photo strip is now off by default; turn it on from the Window menu.
-/ Bilmende fayda var: PSD dosyalarındaki Photoshop ayar katmanları ve katman stilleri aktarılmaz; kaç tanesinin atlandığını uyarı söyler. PSB, Lab ve Indexed dosyalar açılmaz, Photoshop `.atn` eylem dosyaları desteklenmez. Fotoğraf şeridi artık varsayılan olarak kapalı; Pencere menüsünden açabilirsin.
+- 🗂️ **Drag to reorder layers** – drag any layer in the Layers panel and it moves above or below the others on the canvas. Works with multiple selected layers and groups.
+  / **Katmanları sürükleyerek sırala** – Katmanlar panelinde bir katmanı sürükle, tuvalde de diğerlerinin altına ya da üstüne geçsin. Birden çok seçili katman ve gruplarla da çalışır.
+- 🔤 **Text is a layer in the stack** – the main text can now sit below or above other layers instead of always being on top.
+  / **Yazı artık sıradaki bir katman** – ana yazı her zaman en üstte kalmak yerine diğer katmanların altına ya da üstüne alınabilir.
+- 🖌️ **New items get their own layer** – Brush and Pencil paint on their own layer, and new layers appear above the Background or directly above the selected layer.
+  / **Yeni öğeler kendi katmanında** – Fırça ve Kurşun Kalem kendi katmanına boyar; yeni katmanlar Arka Plan'ın ya da seçili katmanın hemen üstüne gelir.
+- 📋 **Clearer Layers panel** – edits applied to the photo itself (color, filters, retouching, frame) are now listed under the Background layer.
+  / **Daha düzenli Katmanlar paneli** – fotoğrafın kendisine yapılan düzenlemeler (renk, filtre, rötuş, çerçeve) artık Arka Plan katmanının altında listelenir.
 
 Your existing projects and settings are kept.
 / Mevcut projelerin ve ayarların korunur.
