@@ -896,7 +896,7 @@ def clean_layer_extra(ly, kind):
         out["tint"] = ly["tint"]
     if kind:
         out["kind"] = kind
-        out["ar"] = round(num(ly.get("ar"), 0.01, 50.0, 1.0), 4)
+        out["ar"] = round(num(ly.get("ar"), 0.001, 50.0, 1.0), 5 if num(ly.get("ar"), 0.001, 50.0, 1.0) < 0.01 else 4)
         hx = lambda v, d: v.upper() if isinstance(v, str) and HEX_RE.fullmatch(v) else d
         if kind == "text":
             t = ly.get("textDef") if isinstance(ly.get("textDef"), dict) else {}
@@ -911,6 +911,11 @@ def clean_layer_extra(ly, kind):
             t = ly.get("fillDef") if isinstance(ly.get("fillDef"), dict) else {}
             out["fillDef"] = {"type": t.get("type") if t.get("type") in ("color", "gradient", "pattern") else "color", "color": hx(t.get("color"), "#808080"), "color2": hx(t.get("color2"), "#FFFFFF"),
                               "angle": num(t.get("angle"), -180.0, 180.0, 90.0), "pattern": t.get("pattern") if t.get("pattern") in layerfx.PATTERNS else "dots", "scale": round(num(t.get("scale"), 0.005, 0.5, 0.03), 3)}
+            pt = lambda v: [round(num(v[0], -2.0, 3.0), 5), round(num(v[1], -2.0, 3.0), 5)] if isinstance(v, list) and len(v) >= 2 else None
+            if pt(t.get("from")) and pt(t.get("to")):  # Degrade aracı: sürüklemenin uçları
+                out["fillDef"].update({"from": pt(t["from"]), "to": pt(t["to"])})
+                if t.get("radial"):
+                    out["fillDef"]["radial"] = True
         elif kind == "adjust":
             out["adjust"] = clean_color(ly.get("adjust"))
     if kind == "blank":
@@ -1037,6 +1042,40 @@ def layers_flatten(d):
         return save_photo("duzlestirilmis.png", buf.getvalue())
     finally:
         tmp.unlink(missing_ok=True)
+
+
+def layer_bucket(d):
+    """Boya Kovası: tıklanan yerdeki benzer renkli alanı (görünen görüntüye göre) düz renkle doldurur, sonucu kırpılmış görsel olarak verir."""
+    raw = d.get("item") or {}
+    item = clean_item(raw)
+    path = photo_path(raw["id"])
+    attach_matte(item["fx"], path, item["geo"])
+    color = d["color"] if isinstance(d.get("color"), str) and HEX_RE.fullmatch(d["color"]) else "#000000"
+    p = d.get("p") if isinstance(d.get("p"), list) and len(d["p"]) >= 2 else [0.5, 0.5]
+    tmp = UPLOADS / f".kova_{uuid.uuid4().hex[:8]}.png"
+    try:
+        engine.render_one(CFG, path, item["text"], item["tone"], item["accent"], tmp, styles=item["styles"], fx=item["fx"], block=item["block"],
+                          offsets=item["offsets"], geo=item["geo"], wm=None, font=item["font"], textfx=item["textfx"], fmt="png", quality=95,
+                          keep_exif=False, color="rgb", dpi=None, layers=item["layers"], loader=layer_loader(True), text_at=item["textAt"])
+        with Image.open(tmp) as im:
+            rgba = im.convert("RGBA")
+    finally:
+        tmp.unlink(missing_ok=True)
+    flat = Image.new("RGB", rgba.size, (255, 255, 255))
+    flat.paste(rgba, mask=rgba.getchannel("A"))
+    flat.thumbnail((3000, 3000), Image.LANCZOS)
+    src = np.asarray(flat, np.float32) / 255.0
+    m = engine.wand_region(src, {"p": [num(p[0], 0.0, 1.0, 0.5), num(p[1], 0.0, 1.0, 0.5)], "tol": num(d.get("tol"), 0.0, 1.0, 0.3), "contiguous": d.get("contiguous") is not False})
+    a = np.clip(engine.gauss(m, 0.8) * 1.7, 0, 1)  # kenar yumuşak ve bir piksel taşkın: arada çizgi kalmaz
+    ys, xs = np.nonzero(a > 0.02)
+    if not len(xs):
+        return {"empty": True}
+    x0, x1, y0, y1 = int(xs.min()), int(xs.max()) + 1, int(ys.min()), int(ys.max()) + 1
+    h, w = y1 - y0, x1 - x0
+    rgb = np.broadcast_to(np.array(engine.hex_to_rgb(color), np.uint8), (h, w, 3))
+    out = Image.fromarray(np.dstack([rgb, (a[y0:y1, x0:x1] * 255 + 0.5).astype(np.uint8)]), "RGBA")
+    rec = save_photo("boya.png", _png(out))
+    return {**rec, "x": (x0 + w / 2) / flat.width, "y": (y0 + h / 2) / flat.height, "w": w / flat.width, "ar": h / w}
 
 
 def clean_font(f):
@@ -2182,6 +2221,8 @@ class Handler(BaseHTTPRequestHandler):
             if c == "/api/session" and m == "PUT":
                 save_session(self._body())
                 return self._json({"ok": True})
+            if c == "/api/layers/bucket" and m == "POST":
+                return self._json(layer_bucket(json.loads(self._body())))
             if c == "/api/layers/from-strokes" and m == "POST":
                 return self._json(layer_from_strokes(json.loads(self._body())))
             if c == "/api/photos/psd" and m == "POST":

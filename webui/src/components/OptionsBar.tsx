@@ -6,6 +6,7 @@ import { selectEntry } from "@/lib/selection"
 import { XFORM_MODES } from "@/lib/transform"
 import { TOOLS } from "@/lib/tools"
 import { PEN_TOOLS } from "@/lib/paths"
+import { drawEntry, type DrawTool } from "@/lib/draw"
 import { cn } from "@/lib/utils"
 import type { BrushSettings, BrushTool, CloneSource, Geo, ImgLayer, Item, MaskPaintTool, Mode, PenTool, SelectTool, XformMode } from "@/types"
 
@@ -39,6 +40,9 @@ type Props = {
   setTextColor: (c: string | undefined) => void
   penTool: PenTool
   setPenTool: (t: PenTool) => void
+  drawTool: DrawTool
+  lineW: number
+  setLineW: (n: number) => void
 }
 
 function Num({ label, v, min, max, unit = "", set, slider = true, title }: { label: string; v: number; min: number; max: number; unit?: string; set: (x: number) => void; slider?: boolean; title?: string }) {
@@ -212,7 +216,28 @@ export function OptionsBar(p: Props) {
       </>
     )
   } else if (tab === "eyedrop") body = <><Name>Damlalık</Name><Sep /><Hint>Görüntüye tıkla: renk ön plan rengi olur.</Hint></>
-  else if (tab === "hand") body = <><Name>El</Name><Sep /><Chip onClick={() => p.run("view:100")}>%100</Chip><Chip onClick={() => p.run("view:fit")}>Ekrana Sığdır</Chip><Sep /><Hint>Yakınlaştırılmış görüntüyü sürükleyerek gez.</Hint></>
+  else if (tab === "draw") {
+    const d = drawEntry(p.drawTool)
+    const sw = (label: string, value: string, set: (c: string) => void) => (
+      <label className="flex items-center gap-1 text-[11px] text-muted-foreground">{label}
+        <span className="relative h-5 w-5 overflow-hidden rounded-sm border" style={{ background: value }}>
+          <input aria-label={label} type="color" value={value.toLowerCase()} onChange={(e) => set(e.target.value.toUpperCase())} className="absolute inset-0 cursor-pointer opacity-0" />
+        </span>
+      </label>
+    )
+    body = (
+      <>
+        <Name>{d.label}</Name>
+        <Sep />
+        {sw(d.group === "shape" ? "Dolgu" : "Ön Plan", p.brush.color, (color) => p.setBrush({ color }))}
+        {(p.drawTool === "gradient" || p.drawTool === "radial") && sw("Arka Plan", p.brush.color2, (color2) => p.setBrush({ color2 }))}
+        {p.drawTool === "line" && <Num label="Kalınlık" unit="px" min={1} max={200} v={p.lineW} set={p.setLineW} />}
+        {p.drawTool === "bucket" && <><Num label="Tolerans" min={1} max={100} v={pct(p.selTool.tol)} set={(x) => p.setSelTool({ ...p.selTool, tol: x / 100 })} /><Chip on={p.selTool.contiguous} onClick={() => p.setSelTool({ ...p.selTool, contiguous: !p.selTool.contiguous })} title="Contiguous">Bitişik</Chip></>}
+        <Sep />
+        <Hint>{d.hint}</Hint>
+      </>
+    )
+  } else if (tab === "hand") body = <><Name>El</Name><Sep /><Chip onClick={() => p.run("view:100")}>%100</Chip><Chip onClick={() => p.run("view:fit")}>Ekrana Sığdır</Chip><Sep /><Hint>Yakınlaştırılmış görüntüyü sürükleyerek gez.</Hint></>
   else if (tab === "zoom") body = <><Name>Yakınlaştırma</Name><Sep /><Chip onClick={() => p.run("view:100")}>%100</Chip><Chip onClick={() => p.run("view:fit")}>Ekrana Sığdır</Chip><Sep /><Hint>Tıkla: yakınlaştır. Alt+tıkla: uzaklaştır.</Hint></>
   else {
     const t = TOOLS.find(([id]) => id === tab)

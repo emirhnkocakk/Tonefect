@@ -35,6 +35,7 @@ export const api = {
     ),
   actions: () => fetch("/api/actions").then((r) => j<{ actions: import("@/lib/actions").Action[] }>(r)),
   saveActions: (actions: unknown) => fetch("/api/actions", json("PUT", { actions })).then((r) => j(r)),
+  layerBucket: (body: unknown) => fetch("/api/layers/bucket", json("POST", body)).then((r) => j<{ empty?: boolean; id: string; x: number; y: number; w: number; ar: number }>(r)),
   layerFromStrokes: (body: unknown) => fetch("/api/layers/from-strokes", json("POST", body)).then((r) => j<{ empty?: boolean; id: string; x: number; y: number; w: number; ar: number }>(r)),
   importPsd: (file: File) =>
     fetch("/api/photos/psd?name=" + encodeURIComponent(file.name), { method: "POST", headers: H, body: file }).then((r) =>

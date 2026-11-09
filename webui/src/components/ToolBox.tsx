@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react"
-import { ArrowLeftRight, BoxSelect, ChevronsLeft, ChevronsRight, Hand, Move, PaintBucket, Pipette, Shapes, Smile, Type, ZoomIn } from "lucide-react"
+import { ArrowLeftRight, BoxSelect, ChevronsLeft, ChevronsRight, Hand, Move, Pipette, Smile, Type, ZoomIn } from "lucide-react"
 import { SELECT_TOOLS } from "@/lib/selection"
 import { CROP_TOOLS } from "@/lib/crop"
 import { BRUSH_TOOLS } from "@/lib/brushes"
 import { RETOUCH_TOOLS } from "@/lib/retouch"
 import { PEN_TOOLS } from "@/lib/paths"
+import { DRAW_TOOLS } from "@/lib/draw"
 import { TYPING } from "@/lib/shortcuts"
 import { cn } from "@/lib/utils"
 
@@ -36,14 +37,14 @@ const GROUPS: Group[] = [
   { id: "stamp", key: "S", tools: rt("clone", "patstamp") },
   { id: "history", key: "Y", tools: br("history", "arthistory") },
   { id: "eraser", key: "E", tools: br("erase", "bgerase", "magic") },
-  { id: "fill", key: "G", tools: [{ cmd: "layer:new:fill", label: "Dolgu ve Degrade", en: "Fill / Gradient Layer", icon: PaintBucket }] },
+  { id: "fill", key: "G", tools: DRAW_TOOLS.filter((t) => t.group === "fill") },
   { id: "focus", key: "R", tools: rt("blur", "sharpen", "smudge") },
   { id: "tone", key: "O", tools: rt("dodge", "burn", "sponge") },
   { id: "portrait", tools: [...rt("skin", "blemish", "wrinkle", "teeth", "eye", "freq"), { cmd: "retouch:sec:skin", label: "Otomatik Cilt Rötuşu", en: "Skin Retouching", icon: Smile }] },
   { id: "pen", key: "P", sep: true, tools: PEN_TOOLS.filter((t) => t.group === "pen") },
   { id: "type", key: "T", tabs: ["text"], tools: [{ cmd: "tool:text", label: "Yazı Aracı", en: "Type Tool", icon: Type }, { cmd: "layer:new:text", label: "Metin Katmanı", en: "Text Layer", icon: Type }] },
   { id: "pathsel", key: "A", tools: PEN_TOOLS.filter((t) => t.group === "select") },
-  { id: "shape", key: "U", tools: [{ cmd: "layer:new:shape", label: "Şekil Aracı", en: "Shape Tool", icon: Shapes }] },
+  { id: "shape", key: "U", tools: DRAW_TOOLS.filter((t) => t.group === "shape") },
   { id: "hand", key: "H", sep: true, tools: [{ cmd: "tool:hand", label: "El Aracı", en: "Hand Tool", icon: Hand }] },
   { id: "zoom", key: "Z", tools: [{ cmd: "tool:zoom", label: "Yakınlaştırma", en: "Zoom Tool", icon: ZoomIn }] },
 ]

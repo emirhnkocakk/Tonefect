@@ -181,12 +181,13 @@ export type ImgLayer = {
   group?: string
   link?: string
   locked?: boolean
+  lockPos?: boolean // yalnızca konum kilitli: taşınamaz ve dönüştürülemez, ama düzenlenebilir
   label?: string
   smart?: boolean
   paint?: { strokes: Stroke[] }
   textDef?: { value: string; family?: string | null; color: string; align: "left" | "center" | "right"; bold?: boolean }
   shapeDef?: { type: string; pts?: [number, number][]; color: string; stroke: string; strokeW: number; radius: number }
-  fillDef?: { type: "color" | "gradient" | "pattern"; color: string; color2: string; angle: number; pattern: string; scale: number }
+  fillDef?: { type: "color" | "gradient" | "pattern"; color: string; color2: string; angle: number; pattern: string; scale: number; from?: [number, number]; to?: [number, number]; radial?: boolean }
   adjust?: ColorEdits
 }
 export type LayerGroup = { id: string; name: string; open: boolean }

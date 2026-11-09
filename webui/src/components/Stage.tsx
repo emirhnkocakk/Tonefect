@@ -12,6 +12,8 @@ import { LayerMaskOverlay } from "@/components/LayerMaskOverlay"
 import { FULL_QUAD, PerspEditor, type Quad } from "@/components/PerspEditor"
 import { MaskOverlay } from "@/components/MaskOverlay"
 import { PenOverlay } from "@/components/PenOverlay"
+import { DrawOverlay } from "@/components/DrawOverlay"
+import type { DrawTool } from "@/lib/draw"
 import { SelectOverlay } from "@/components/SelectOverlay"
 import { canvasScale, canvasSize, cropOf, innerSize, legacyGeo, lockRatio, photoRect } from "@/lib/geo"
 import { useFit, useIntent, usePreview } from "@/lib/hooks"
@@ -67,6 +69,7 @@ type Props = {
   setSliceSel?: (id: string | null) => void
   setSlices?: (s: Slice[]) => void
   designMode?: boolean
+  draw?: { tool: DrawTool; color: string; color2: string; onDraw: (tool: DrawTool, a: [number, number], b: [number, number]) => void } | null
   colorBar?: { color: string; set: (hex: string | undefined) => void; canClear: boolean } | null
   layerSel?: string[]
   setLayerSel?: (ids: string[]) => void
@@ -126,7 +129,7 @@ function PickOverlay({ image, onPick }: { image: string; onPick: (rgb: [number, 
   return <div className="absolute inset-0 z-40 cursor-crosshair rounded-xl" onPointerDown={click} />
 }
 
-export function Stage({ item, cfg, mode, intent, nav, pen, layerName, textTab, selected, setSelected, update, applyStyle, resetPosition, pickFiles, guides: guidesOn, wm, cropping, geoSrc, setGeo, perspEdit, lineMode, endLine, eraseMode, maskTool, putLayer, brushMode, brushTool, patchMode, filterEdit, pick, onPreview, source, setSource, armed, setArmed, onNeedSource, brush, setBrush, smoothing, onStroke, xform, onXformDone, sliceMode, sliceTool, sliceSel, setSliceSel, setSlices, colorBar, designMode, layerSel, setLayerSel, setLayers, localMode, mask, maskShow, setMask, selTool }: Props) {
+export function Stage({ item, cfg, mode, intent, nav, pen, layerName, textTab, selected, setSelected, update, applyStyle, resetPosition, pickFiles, guides: guidesOn, wm, cropping, geoSrc, setGeo, perspEdit, lineMode, endLine, eraseMode, maskTool, putLayer, brushMode, brushTool, patchMode, filterEdit, pick, onPreview, source, setSource, armed, setArmed, onNeedSource, brush, setBrush, smoothing, onStroke, xform, onXformDone, sliceMode, sliceTool, sliceSel, setSliceSel, setSlices, colorBar, draw, designMode, layerSel, setLayerSel, setLayers, localMode, mask, maskShow, setMask, selTool }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const stageRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef<Drag | null>(null)
@@ -619,6 +622,7 @@ export function Stage({ item, cfg, mode, intent, nav, pen, layerName, textTab, s
             ) : (
               <BrushOverlay w={size.w} h={size.h} tool={brushTool ?? "brush"} brush={brush} smoothing={smoothing ?? 0} setBrush={setBrush} onStroke={onStroke} preview={preview?.image ?? null} source={source} setSource={setSource} armed={armed} setArmed={setArmed} onNeedSource={onNeedSource} />
             ))}
+            {draw && !holdOrig && <DrawOverlay w={size.w} h={size.h} {...draw} />}
             {pen && !holdOrig && <PenOverlay paths={item.paths ?? []} {...pen} w={size.w} h={size.h} />}
             {sliceMode && !holdOrig && setSlices && setSliceSel && (
               <SliceOverlay slices={item.slices ?? []} tool={sliceTool ?? "draw"} sel={sliceSel ?? null} setSel={setSliceSel} onChange={setSlices} w={size.w} h={size.h} />

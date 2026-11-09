@@ -64,10 +64,11 @@ export function LayerOverlay({ layers, sel, setSel, onChange, w, h, mode, onDone
     if (e.shiftKey) ids = sel.includes(ly.id) ? sel.filter((x) => x !== ly.id) : [...sel, ly.id]
     else if (!sel.includes(ly.id)) ids = [ly.id]
     setSel(ids)
+    if (layers.some((l) => ids.includes(l.id) && l.lockPos)) return // konumu kilitli: seçilir ama taşınmaz
     drag.current = { kind: "move", sx: e.clientX, sy: e.clientY, start: layers, snap: ids.length === 1 }
   }
   const downHandle = (ly: ImgLayer, hd: Handle) => (e: React.PointerEvent) => {
-    if (e.button !== 0) return
+    if (e.button !== 0 || ly.lockPos) return
     capture(e)
     drag.current = { kind: "handle", h: hd, id: ly.id, start: ly, p0: local(e), ctrl: e.ctrlKey || e.metaKey }
   }

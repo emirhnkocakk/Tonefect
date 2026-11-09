@@ -90,7 +90,15 @@ def make(ly, w, h, font_fn):
         f = ly.get("fillDef") or {}
         ft = f.get("type", "color")
         c1, c2 = _rgb(f.get("color", "#808080")), _rgb(f.get("color2", "#FFFFFF"))
-        if ft == "gradient":
+        if ft == "gradient" and f.get("from") and f.get("to"):  # Degrade araci: surukleme baslangici ve bitisi
+            y, x = np.mgrid[0:h, 0:w].astype(np.float32)
+            ax, ay = f["from"][0] * w, f["from"][1] * h
+            dx, dy = f["to"][0] * w - ax, f["to"][1] * h - ay
+            d2 = max(dx * dx + dy * dy, 1.0)
+            t = np.hypot(x - ax, y - ay) / math.sqrt(d2) if f.get("radial") else ((x - ax) * dx + (y - ay) * dy) / d2
+            t = np.clip(t, 0, 1)[..., None]
+            a = c1 * (1 - t) + c2 * t
+        elif ft == "gradient":
             t = _ramp(w, h, float(f.get("angle", 90)))[..., None]
             a = c1 * (1 - t) + c2 * t
         elif ft == "pattern":

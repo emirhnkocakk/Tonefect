@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { ArrowDownToLine, ArrowUpToLine, Bandage, ChevronDown, ChevronRight, ChevronUp, GripVertical, Contrast, ImagePlus, Link2, Lock, Paintbrush, Aperture, CircleDashed, Scissors, Copyright, Crop, Droplet, Eye, EyeOff, Film, Folder, FolderPlus, Frame, Image, Layers, PaintBucket, Palette, Plus, Search, Shapes, SlidersHorizontal, Sparkle, Sparkles, SquareDashed, Sun, Trash2, Type, Wind, X } from "lucide-react"
+import { ArrowDownToLine, ArrowUpToLine, Bandage, ChevronDown, ChevronRight, ChevronUp, GripVertical, Contrast, ImagePlus, Link2, Lock, Move, Paintbrush, Aperture, CircleDashed, Scissors, Copyright, Crop, Droplet, Eye, EyeOff, Film, Folder, FolderPlus, Frame, Image, Layers, PaintBucket, Palette, Plus, Search, Shapes, SlidersHorizontal, Sparkle, Sparkles, SquareDashed, Sun, Trash2, Type, Wind, X } from "lucide-react"
 import { thumbUrl } from "@/lib/api"
 import { BASE_ID, buildLayers, stackIds, TEXT_ID, type Layer, type LayerKind } from "@/lib/layers"
 import { BLEND_GROUPS, labelColor } from "@/lib/layerops"
@@ -17,6 +17,9 @@ type Props = {
   toggle: (layer: Layer) => void
   remove: (layer: Layer) => void
   run: (cmd: string) => void
+  runOn: (cmd: string, ids: string[]) => void // sağ tık menüsü: komut o satırdaki katmana uygulanır
+  solo: (layer: Layer) => void
+  canPasteStyle: boolean
   put: (id: string, p: Partial<ImgLayer>) => void
   reorder: (moving: string[], above: string, group?: string | null) => void
   toggleGroup: (id: string) => void
@@ -47,7 +50,7 @@ function passes(l: Layer, kind: string, q: string) {
 }
 
 /** Sağdaki "Katmanlar": üstteki önde görünür; gruplar, kilit, bağ, süzgeç ve hızlı işlemler. */
-export function LayersPanel({ item, presets, wm, tool, maskSel, sel, open, toggle, remove, run, put, reorder, toggleGroup, renameGroup, renaming, setRenaming, filterOpen, setFilterOpen }: Props) {
+export function LayersPanel({ item, presets, wm, tool, maskSel, sel, open, toggle, remove, run, runOn, solo, canPasteStyle, put, reorder, toggleGroup, renameGroup, renaming, setRenaming, filterOpen, setFilterOpen }: Props) {
   const all = item ? buildLayers(item, presets, wm) : []
   const hidden = new Set(item?.hidden ?? [])
   const [kind, setKind] = useState("all")
@@ -216,6 +219,13 @@ export function LayersPanel({ item, presets, wm, tool, maskSel, sel, open, toggl
                   </label>
                 )}
               </div>
+              {cur.id !== BASE_ID && (
+                <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                  Kilitle:
+                  <button aria-label="Konumu kilitle" aria-pressed={!!cur.lockPos} title="Konumu Kilitle (Lock Position): taşınamaz, ama düzenlenebilir" onClick={() => put(cur.id, { lockPos: !cur.lockPos })} className={cn("grid h-6 w-6 place-items-center rounded-sm border hover:border-primary/60", cur.lockPos && "border-primary/70 bg-primary/20 text-foreground")}><Move className="h-3 w-3" /></button>
+                  <button aria-label="Tümünü kilitle" aria-pressed={!!cur.locked} title="Tümünü Kilitle (Lock All): taşınamaz, silinemez, tuvalde seçilemez" onClick={() => put(cur.id, { locked: !cur.locked })} className={cn("grid h-6 w-6 place-items-center rounded-sm border hover:border-primary/60", cur.locked && "border-primary/70 bg-primary/20 text-foreground")}><Lock className="h-3 w-3" /></button>
+                </div>
+              )}
             </div>
           )}
           <div ref={listRef} onPointerMove={listMove} onPointerUp={listUp} onPointerCancel={listUp} className="relative min-h-0 flex-1 space-y-1 overflow-y-auto px-2 py-2">
@@ -234,7 +244,7 @@ export function LayersPanel({ item, presets, wm, tool, maskSel, sel, open, toggl
                   data-row={rowIndex}
                   onPointerDown={rowDown(l)}
                   onContextMenu={(e) => {
-                    if (!canDrag(l)) return
+                    if (!canDrag(l) && !(l.layerId && !l.part && (l.kind === "image" || l.kind === "photo"))) return
                     e.preventDefault()
                     setCtx({ x: e.clientX, y: e.clientY, row: l })
                   }}
@@ -276,7 +286,7 @@ export function LayersPanel({ item, presets, wm, tool, maskSel, sel, open, toggl
                     {l.sub && <p className="truncate text-[10px] text-muted-foreground">{l.sub}</p>}
                   </div>
                   {ly?.link && <Link2 className="h-3 w-3 shrink-0 text-muted-foreground" aria-label="Bağlı" />}
-                  {ly?.locked && <Lock className="h-3 w-3 shrink-0 text-muted-foreground" aria-label="Kilitli" />}
+                  {ly?.locked ? <Lock className="h-3 w-3 shrink-0 text-muted-foreground" aria-label="Kilitli" /> : ly?.lockPos ? <Move className="h-3 w-3 shrink-0 text-muted-foreground" aria-label="Konumu kilitli" /> : null}
                   {canDrag(l) && (
                     <span className="hidden shrink-0 flex-col group-hover:flex">
                       <button aria-label={`${l.label} bir arkaya`} title="Bir Arkaya (listede yukarı)" disabled={!canStep(l, false)} onClick={(e) => { e.stopPropagation(); step(l, false) }} className="text-muted-foreground hover:text-foreground disabled:opacity-30"><ChevronUp className="h-3 w-3" /></button>
@@ -299,9 +309,10 @@ export function LayersPanel({ item, presets, wm, tool, maskSel, sel, open, toggl
                   {l.hideable && (
                     <button
                       aria-label={off ? "Göster" : "Gizle"}
-                      title={off ? "Göster" : "Gizle (dışa aktarmaya da dahil olmaz)"}
+                      title={off ? "Göster" : "Gizle (dışa aktarmaya da dahil olmaz) · Alt+tıkla: yalnızca bu katmanı göster"}
                       onClick={(e) => {
                         e.stopPropagation()
+                        if (e.altKey && l.layerId && !l.part) return solo(l)
                         toggle(l)
                       }}
                       className={cn("rounded p-1 transition-colors", off ? "text-muted-foreground" : "text-foreground/80 hover:text-primary")}
@@ -337,11 +348,42 @@ export function LayersPanel({ item, presets, wm, tool, maskSel, sel, open, toggl
       )}
       {ctx && (
         <div className="fixed inset-0 z-50" onPointerDown={() => setCtx(null)} onContextMenu={(e) => { e.preventDefault(); setCtx(null) }}>
-          <div role="menu" className="fixed w-44 rounded-md border bg-popover p-1 text-xs shadow-xl" style={{ left: Math.min(ctx.x, window.innerWidth - 184), top: Math.min(ctx.y, window.innerHeight - 160) }} onPointerDown={(e) => e.stopPropagation()}>
-            {([["En Arkaya Gönder", ArrowUpToLine, () => toEnd(ctx.row, false)], ["Bir Arkaya", ChevronUp, () => step(ctx.row, false)], ["Bir Öne", ChevronDown, () => step(ctx.row, true)], ["En Öne Getir", ArrowDownToLine, () => toEnd(ctx.row, true)]] as const).map(([label, I, run_]) => (
+          <div role="menu" className="fixed w-52 rounded-md border bg-popover p-1 text-xs shadow-xl" style={{ left: Math.min(ctx.x, window.innerWidth - 216), top: Math.max(4, Math.min(ctx.y, window.innerHeight - 430)) }} onPointerDown={(e) => e.stopPropagation()}>
+            {canDrag(ctx.row) && ([["En Arkaya Gönder", ArrowUpToLine, () => toEnd(ctx.row, false)], ["Bir Arkaya", ChevronUp, () => step(ctx.row, false)], ["Bir Öne", ChevronDown, () => step(ctx.row, true)], ["En Öne Getir", ArrowDownToLine, () => toEnd(ctx.row, true)]] as const).map(([label, I, run_]) => (
               <button key={label} role="menuitem" className="flex w-full items-center gap-2 rounded-sm px-2 py-1 text-left hover:bg-accent" onClick={() => { run_(); setCtx(null) }}><I className="h-3.5 w-3.5 text-muted-foreground" /> {label}</button>
             ))}
-            {ctx.row.kind === "image" && (
+            {ctx.row.layerId && (ctx.row.kind === "image" || ctx.row.kind === "photo") && (() => {
+              // Photoshop'taki katman sağ tık menüsü: komut bu satırdaki katmana (çoklu seçimin parçasıysa hepsine) uygulanır
+              const ids = sel.length > 1 && sel.includes(ctx.row.layerId!) ? sel : [ctx.row.layerId!]
+              const ly = ctx.row.layer
+              const isBase = ctx.row.layerId === BASE_ID
+              const styled = !!ly?.styles && Object.values(ly.styles).some((s) => s.on)
+              const rows: ([string, string, string, boolean?] | null)[] = [
+                ["Katmanı Çoğalt", "layer:dup", "Duplicate Layer"],
+                ["Katmanı Sil", "layer:del", "Delete Layer", isBase || !!ly?.locked],
+                ["Yeniden Adlandır", "layer:rename", "Rename Layer"],
+                null,
+                ["Akıllı Nesneye Dönüştür", "layer:smart", "Convert to Smart Object", isBase || !!ly?.kind || !!ly?.smart],
+                ["Katmanı Rasterleştir", "layer:rasterize", "Rasterize Layer", isBase || !!ly?.locked],
+                ["Aşağı Birleştir", "layer:merge", "Merge Down", isBase],
+                ["Katmanlardan Grup", "layer:group", "Group from Layers", isBase],
+                null,
+                ["Katman Stilleri…", "layer:styles", "Blending Options"],
+                ["Katman Stilini Kopyala", "layer:copystyle", "Copy Layer Style", !styled],
+                ["Katman Stilini Yapıştır", "layer:pastestyle", "Paste Layer Style", !canPasteStyle],
+                ["Katman Stilini Temizle", "layer:clearstyle", "Clear Layer Style", !styled],
+                null,
+                [ly?.lockPos ? "Konum Kilidini Aç" : "Konumu Kilitle", "layer:lockpos", "Lock Position", isBase],
+                [ly?.locked ? "Kilidi Aç" : "Tümünü Kilitle", ly?.locked ? "layer:unlock" : "layer:lock", "Lock All", isBase],
+              ]
+              return (
+                <>
+                  {canDrag(ctx.row) && <div className="my-1 h-px bg-border" />}
+                  {rows.map((r, i) => r ? <button key={r[1]} role="menuitem" title={r[2]} disabled={r[3]} className="flex w-full items-center rounded-sm px-2 py-1 text-left hover:bg-accent disabled:pointer-events-none disabled:opacity-40" onClick={() => { runOn(r[1], ids); setCtx(null) }}>{r[0]}</button> : <div key={i} className="my-1 h-px bg-border" />)}
+                </>
+              )
+            })()}
+            {ctx.row.kind === "image" && canDrag(ctx.row) && (
               <>
                 <div className="my-1 h-px bg-border" />
                 <button role="menuitem" title="Clipping Mask: nesne yalnızca bir önceki nesnenin dolu yerlerinde görünür" className="flex w-full items-center gap-2 rounded-sm px-2 py-1 text-left hover:bg-accent" onClick={() => { put(ctx.row.layerId!, { clip: !ctx.row.layer?.clip }); setCtx(null) }}><Layers className="h-3.5 w-3.5 text-muted-foreground" /> {ctx.row.layer?.clip ? "İçinden Çıkar" : "Önceki Nesnenin İçine Al"}</button>

@@ -35,6 +35,7 @@ import { GenerateDialog } from "@/components/GenerateDialog"
 import { UpdateDialog } from "@/components/UpdateDialog"
 import { SettingsDialog } from "@/components/SettingsDialog"
 import { api } from "@/lib/api"
+import { SHAPE_TYPE, type DrawTool } from "@/lib/draw"
 import { mergeStyle, naturalSort, remap, words } from "@/lib/text"
 import { legacyGeo, naturalSize, canvasSize, photoRect } from "@/lib/geo"
 import { applyTheme, isLightTheme } from "@/lib/themes"
@@ -456,6 +457,56 @@ export default function App() {
     return { ...it, layers: it.layers!.map((l) => (l.id === ly.id ? { ...l, paint: { strokes: [...(l.paint?.strokes ?? []), st] } } : l)) }
     })
   }
+  // Şekil, Çizgi, Degrade ve Boya Kovası: tuvalde çizilen her şey ayrı bir katman olur
+  const [drawTool, setDrawTool] = useState<DrawTool>("rect")
+  const [lineW, setLineW] = useState(6)
+  const [styleClip, setStyleClip] = useState<ImgLayer["styles"] | null>(null)
+  const drawOn = async (t: DrawTool, a: [number, number], b: [number, number]) => {
+    if (!item) return
+    const all = item.layers ?? []
+    if (all.length >= 200) return void toast("En fazla 200 katman eklenebilir")
+    const [W, H] = canvasSize(item.geo, item.src) ?? [1080, 1350]
+    const n = all.length + 1
+    const put = (ly: ImgLayer) => {
+      update((it) => ({ ...it, layers: [...(it.layers ?? []), ly] }))
+      setLayerSel([ly.id])
+    }
+    if (t === "bucket") {
+      try {
+        const r = await api.layerBucket({ item: effectiveItem(item), p: a, tol: selTool.tol, contiguous: selTool.contiguous, color: brush.color })
+        if (r.empty) return void toast("Doldurulacak alan bulunamadı")
+        put({ id: newId(), photo: r.id, name: `Boya ${n}`, x: r.x, y: r.y, w: r.w, ar: r.ar, rot: 0, opacity: 1, flipH: false, cutout: false })
+      } catch (e: any) {
+        toast.error(e.message)
+      }
+      return
+    }
+    const dx = (b[0] - a[0]) * W
+    const dy = (b[1] - a[1]) * H
+    const len = Math.hypot(dx, dy)
+    if (len < 4) return void toast("Çizmek için tuvalde sürükle")
+    if (t === "gradient" || t === "radial") {
+      const made = createLayer("fill", W, H, n)
+      return put({ ...made, name: `Degrade ${n}`, opacity: 1, fillDef: { ...made.fillDef!, type: "gradient", color: brush.color, color2: brush.color2, from: a, to: b, radial: t === "radial" } })
+    }
+    const made = createLayer("shape", W, H, n)
+    const def = { ...made.shapeDef!, color: brush.color }
+    if (t === "line") return put({ ...made, name: `Çizgi ${n}`, x: (a[0] + b[0]) / 2, y: (a[1] + b[1]) / 2, w: len / W, ar: Math.max(0.001, lineW / len), rot: (Math.atan2(dy, dx) * 180) / Math.PI, shapeDef: { ...def, type: "rect", radius: 0 } })
+    if (Math.abs(dx) < 3 || Math.abs(dy) < 3) return void toast("Şekil çok ince; iki yöne de sürükle")
+    const [type, radius] = SHAPE_TYPE[t]
+    put({ ...made, x: (a[0] + b[0]) / 2, y: (a[1] + b[1]) / 2, w: Math.abs(dx) / W, ar: Math.abs(dy) / Math.abs(dx), shapeDef: { ...def, type, radius } })
+  }
+  const soloLayer = (l: Layer) => {
+    if (!l.layerId) return
+    update((it) => {
+      const others = (it.layers ?? []).map((x) => `img:${x.id}`).filter((k) => k !== l.key)
+      const h = new Set(it.hidden ?? [])
+      const alone = others.length > 0 && others.every((k) => h.has(k))
+      others.forEach((k) => (alone ? h.delete(k) : h.add(k)))
+      h.delete(l.key)
+      return { ...it, hidden: [...h] }
+    })
+  }
   const [xform, setXform] = useState<XformMode>("move")
   const [lastXform, setLastXform] = useState<XformDelta | null>(null)
   const [sliceTool, setSliceTool] = useState<"draw" | "select">("draw")
@@ -697,10 +748,10 @@ export default function App() {
       toast.success("Yol ön plan rengiyle dolduruldu")
     }
   }
-  const layerCommand = async (cmd: string) => {
+  const layerCommand = async (cmd: string, ids?: string[]) => {
     if (!item) return
     const all = item.layers ?? []
-    const picked = layerSel.length ? layerSel : [BASE_ID] // seçim yoksa işlem fotoğrafın kendisine
+    const picked = ids?.length ? ids : layerSel.length ? layerSel : [BASE_ID] // seçim yoksa işlem fotoğrafın kendisine
     const chosen = all.filter((l) => picked.includes(l.id))
     const free = chosen.filter((l) => !l.locked && l.id !== BASE_ID)
     const [, op, arg] = cmd.split(":")
@@ -789,6 +840,37 @@ export default function App() {
       }
       return
     }
+    if (op === "rasterize") {
+      // Şekil, metin, dolgu ve stiller piksele döner; opaklık ve karışım kipi katmanda kalır
+      const targets = free.filter((l) => l.kind !== "adjust" && (l.kind || l.smart || l.tint || l.fx || l.vector || l.mask || Object.values(l.styles ?? {}).some((s) => s.on)))
+      if (!targets.length) return void toast("Seçili katman zaten piksel katmanı")
+      try {
+        const done = new Map<string, ImgLayer>()
+        for (const l of targets) {
+          const solo = { ...effectiveItem(item), hidden: [], layers: [{ ...l, opacity: 1, mode: undefined, clip: false }] }
+          const r = await api.layersMerge({ item: solo, ids: [l.id] })
+          done.set(l.id, { id: l.id, photo: r.id, name: l.name, x: 0.5, y: 0.5, w: 1, ar: H / W, rot: 0, opacity: l.opacity, mode: l.mode, clip: l.clip, group: l.group, link: l.link, label: l.label, flipH: false, cutout: false })
+        }
+        update((it) => ({ ...it, layers: (it.layers ?? []).map((l) => done.get(l.id) ?? l) }))
+        toast.success(targets.length > 1 ? `${targets.length} katman rasterleştirildi` : "Katman rasterleştirildi")
+      } catch (e: any) {
+        toast.error(e.message)
+      }
+      return
+    }
+    if (op === "copystyle") {
+      const st = chosen[0]?.styles
+      if (!st || !Object.values(st).some((s) => s.on)) return void toast("Bu katmanda kopyalanacak stil yok")
+      setStyleClip(structuredClone(st))
+      return void toast.success("Katman stili kopyalandı")
+    }
+    if (op === "pastestyle") {
+      if (!styleClip) return void toast("Önce bir katmanın stilini kopyala")
+      map((l) => (l.kind === "adjust" ? l : { ...l, styles: structuredClone(styleClip) }))
+      return void toast.success("Katman stili yapıştırıldı")
+    }
+    if (op === "clearstyle") return map((l) => ({ ...l, styles: undefined }))
+    if (op === "lockpos") return map((l) => (l.id === BASE_ID ? l : { ...l, lockPos: !chosen.every((x) => x.lockPos || x.id === BASE_ID) }))
     if (!layerSel.length) setLayerSel(picked)
     switch (op) {
       case "dup": {
@@ -821,7 +903,7 @@ export default function App() {
         return map((l) => ({ ...l, link: id }))
       }
       case "lock": return map((l) => ({ ...l, locked: true }))
-      case "unlock": return map((l) => ({ ...l, locked: false }))
+      case "unlock": return map((l) => ({ ...l, locked: false, lockPos: false }))
       case "toggle":
         return update((it) => {
           const h = new Set(it.hidden ?? [])
@@ -1060,6 +1142,10 @@ export default function App() {
       return setTabRaw("paths")
     }
     if (cmd.startsWith("path:")) return pathOp(cmd.slice(5))
+    if (cmd.startsWith("draw:")) {
+      setDrawTool(cmd.slice(5) as DrawTool)
+      return setTabRaw("draw")
+    }
     if (cmd.startsWith("view:")) return setIntent({ cmd, n: ++intentSeq })
     if (cmd.startsWith("win:")) {
       if (cmd === "win:layers") setShowLayers((v) => !v)
@@ -1196,7 +1282,7 @@ export default function App() {
       e.preventDefault()
       const [W, H] = canvasSize(item.geo, item.src) ?? [1080, 1350]
       const n = e.shiftKey ? 10 : 1
-      return setLayers((item.layers ?? []).map((l) => (layerSel.includes(l.id) && !l.locked ? { ...l, x: l.x + (dir[0] * n) / W, y: l.y + (dir[1] * n) / H } : l)))
+      return setLayers((item.layers ?? []).map((l) => (layerSel.includes(l.id) && !l.locked && !l.lockPos ? { ...l, x: l.x + (dir[0] * n) / W, y: l.y + (dir[1] * n) / H } : l)))
     }
     // fırça opaklığı: 1 = %10 ... 0 = %100
     if (/^\d$/.test(combo) && (tab === "brush" || tab === "retouch")) return (tab === "brush" ? setBrush : setRetouchBrush)({ opacity: (Number(combo) || 10) / 10 })
@@ -1287,7 +1373,10 @@ export default function App() {
     ...layerPick("layer:group", "layer:ungroup"),
     { label: "Düzenle (Sıralama)", children: [L("Öne Getir", "layer:front", { disabled: noItem }), L("Bir Öne", "layer:forward", { disabled: noItem }), L("Bir Arkaya", "layer:backward", { disabled: noItem }), L("Arkaya Gönder", "layer:back", { disabled: noItem })] },
     { label: "Hizala ve Dağıt", children: xfPick("tool:design:align", "tool:design:align2", "design:autoalign", "design:autoblend") },
-    ...layerPick("layer:link", "layer:lock", "layer:unlock", "layer:toggle"),
+    ...layerPick("layer:link", "layer:lock", "layer:lockpos", "layer:unlock", "layer:toggle"),
+    "sep",
+    ...layerPick("layer:smart", "layer:rasterize"),
+    { label: "Katman Stilini Aktar", children: layerPick("layer:copystyle", "layer:pastestyle", "layer:clearstyle") },
     "sep",
     ...layerPick("layer:merge", "layer:mergevis", "layer:flatten"),
     "sep",
@@ -1363,7 +1452,7 @@ export default function App() {
     { label: "Seçim", items: selectMenu }, { label: "Filtre", items: filterMenu }, { label: "Görünüm", items: viewMenu }, { label: "Pencere", items: windowMenu }, { label: "Yardım", items: helpMenu },
   ]
   // ToolBox'ta hangi araç basılı görünecek
-  const currentTool = tab === "brush" ? `brush:tool:${brushTool}` : tab === "retouch" ? `retouch:tool:${retouchTool}` : tab === "select" ? `sel:${selTool.mode}` : tab === "design" || !tab ? (xform === "free" ? "xf:free" : "xf:move") : tab === "slice" ? `slice:${sliceTool}` : perspEdit ? "crop:persp" : tab === "crop" ? "tool:crop:ratio" : tab === "text" ? "tool:text" : tab === "paths" ? `pen:tool:${penTool}` : `tool:${tab}`
+  const currentTool = tab === "brush" ? `brush:tool:${brushTool}` : tab === "retouch" ? `retouch:tool:${retouchTool}` : tab === "select" ? `sel:${selTool.mode}` : tab === "design" || !tab ? (xform === "free" ? "xf:free" : "xf:move") : tab === "slice" ? `slice:${sliceTool}` : perspEdit ? "crop:persp" : tab === "crop" ? "tool:crop:ratio" : tab === "text" ? "tool:text" : tab === "paths" ? `pen:tool:${penTool}` : tab === "draw" ? `draw:${drawTool}` : `tool:${tab}`
   const historySeq = tab === "history" ? [...hist.current.past, items, ...[...hist.current.future].reverse()] : []
   const history = {
     rows: historySeq.map((snap, i) => (i ? stepName(historySeq[i - 1], snap) : "Açılış")),
@@ -1373,7 +1462,7 @@ export default function App() {
       for (let n = Math.abs(d); n > 0; n--) travel(d < 0 ? "undo" : "redo")
     },
   }
-  const showPanel = !!tab && tab !== "eyedrop" && tab !== "hand" && tab !== "zoom"
+  const showPanel = !!tab && tab !== "eyedrop" && tab !== "hand" && tab !== "zoom" && tab !== "draw"
   const startResize = (e: React.PointerEvent) => {
     const y0 = e.clientY
     const h0 = layersH
@@ -1484,7 +1573,7 @@ export default function App() {
           <OptionsBar
             tab={tab} item={item} run={command} brushTool={brushTool} brush={brush} setBrush={setBrush} retouchTool={retouchTool} retouchBrush={retouchBrush} setRetouchBrush={setRetouchBrush}
             cloneSource={cloneSource} armSource={armSource} selTool={selTool} setSelTool={setSelTool} xform={xform} setXform={setXform} layerSel={layerSel} putLayer={putLayer} setGeo={setGeo}
-            sliceTool={sliceTool} mode={mode} setMode={setMode} eraseMode={eraseMode} maskTool={maskTool} setMaskTool={setMaskTool} penTool={penTool} setPenTool={setPenTool} colorBar={colorBar} textColor={selected.length ? item?.styles[selected[0]]?.color ?? item?.textFx?.color ?? "#FFFFFF" : item?.textFx?.color ?? "#FFFFFF"} setTextColor={setTextColor}
+            sliceTool={sliceTool} mode={mode} setMode={setMode} eraseMode={eraseMode} maskTool={maskTool} setMaskTool={setMaskTool} penTool={penTool} setPenTool={setPenTool} drawTool={drawTool} lineW={lineW} setLineW={setLineW} colorBar={colorBar} textColor={selected.length ? item?.styles[selected[0]]?.color ?? item?.textFx?.color ?? "#FFFFFF" : item?.textFx?.color ?? "#FFFFFF"} setTextColor={setTextColor}
           />
         )}
         <div className="flex min-h-0 flex-1">
@@ -1505,8 +1594,9 @@ export default function App() {
               xform={xform} onXformDone={(a, b) => setLastXform(xformDelta(a, b))}
               pen={tab === "paths" ? { sel: pathSel, setSel: setPathSel, onChange: setPaths, tool: penTool } : null}
               sliceMode={tab === "slice"} sliceTool={sliceTool} sliceSel={sliceSel} setSliceSel={setSliceSel} setSlices={setSlices}
+              draw={tab === "draw" && item ? { tool: drawTool, color: brush.color, color2: brush.color2, onDraw: drawOn } : null}
               colorBar={colorBar} designMode={tab === "design" || !tab} layerSel={layerSel} setLayerSel={setLayerSel} setLayers={changeLayers}
-              localMode={tab === "paths" || tab === "local" || tab === "select" || tab === "slice" || tab === "brush" || tab === "retouch" || (tab === "erase" && !!eraseMode)} mask={curMask} maskShow={maskShow} setMask={setMask} selTool={selTool}
+              localMode={tab === "draw" || tab === "paths" || tab === "local" || tab === "select" || tab === "slice" || tab === "brush" || tab === "retouch" || (tab === "erase" && !!eraseMode)} mask={curMask} maskShow={maskShow} setMask={setMask} selTool={selTool}
             />
             {showStrip && <Filmstrip items={items} currentId={currentId} select={setCurrentId} move={move} remove={removeItem} pickFiles={() => fileRef.current?.click()} uploading={uploading} pasteTo={clip ? pasteFx : undefined} exportOne={(id) => { const it = items.find((i) => i.id === id); if (it) generate(it) }} duplicate={duplicateItem} />}
           </div>
@@ -1537,7 +1627,7 @@ export default function App() {
                 <>
                   {showPanel && <div role="separator" aria-orientation="horizontal" title="Sürükleyerek boyutlandır" data-h={layersH} onPointerDown={startResize} className="h-1.5 shrink-0 cursor-row-resize border-y bg-background hover:bg-primary/30" />}
                   <div className={showPanel ? "shrink-0" : "min-h-0 flex-1"} style={showPanel ? { height: layersH } : undefined}>
-                    <LayersPanel item={item} presets={presets} wm={wm} tool={tab} maskSel={maskSel} sel={layerSel} open={openLayer} toggle={toggleLayer} remove={removeLayerFx} run={command} put={putLayerSafe} reorder={(moving, above, group) => update((it) => moveInStack(it, moving, above, group))} toggleGroup={toggleGroup} renameGroup={renameGroup} renaming={renaming} setRenaming={setRenaming} filterOpen={filterOpen} setFilterOpen={setFilterOpen} />
+                    <LayersPanel item={item} presets={presets} wm={wm} tool={tab} maskSel={maskSel} sel={layerSel} open={openLayer} toggle={toggleLayer} remove={removeLayerFx} run={command} runOn={(cmd, ids) => { setLayerSel(ids); void layerCommand(cmd, ids) }} solo={soloLayer} canPasteStyle={!!styleClip} put={putLayerSafe} reorder={(moving, above, group) => update((it) => moveInStack(it, moving, above, group))} toggleGroup={toggleGroup} renameGroup={renameGroup} renaming={renaming} setRenaming={setRenaming} filterOpen={filterOpen} setFilterOpen={setFilterOpen} />
                   </div>
                 </>
               )}
