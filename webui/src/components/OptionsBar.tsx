@@ -43,6 +43,8 @@ type Props = {
   drawTool: DrawTool
   lineW: number
   setLineW: (n: number) => void
+  gradFade: boolean
+  setGradFade: (v: boolean) => void
 }
 
 function Num({ label, v, min, max, unit = "", set, slider = true, title }: { label: string; v: number; min: number; max: number; unit?: string; set: (x: number) => void; slider?: boolean; title?: string }) {
@@ -219,7 +221,7 @@ export function OptionsBar(p: Props) {
   else if (tab === "draw") {
     const d = drawEntry(p.drawTool)
     const sw = (label: string, value: string, set: (c: string) => void) => (
-      <label className="flex items-center gap-1 text-[11px] text-muted-foreground">{label}
+      <label className="flex shrink-0 items-center gap-1 whitespace-nowrap text-[11px] text-muted-foreground">{label}
         <span className="relative h-5 w-5 overflow-hidden rounded-sm border" style={{ background: value }}>
           <input aria-label={label} type="color" value={value.toLowerCase()} onChange={(e) => set(e.target.value.toUpperCase())} className="absolute inset-0 cursor-pointer opacity-0" />
         </span>
@@ -230,7 +232,13 @@ export function OptionsBar(p: Props) {
         <Name>{d.label}</Name>
         <Sep />
         {sw(d.group === "shape" ? "Dolgu" : "Ön Plan", p.brush.color, (color) => p.setBrush({ color }))}
-        {(p.drawTool === "gradient" || p.drawTool === "radial") && sw("Arka Plan", p.brush.color2, (color2) => p.setBrush({ color2 }))}
+        {(p.drawTool === "gradient" || p.drawTool === "radial") && (
+          <>
+            {!p.gradFade && sw("Arka Plan", p.brush.color2, (color2) => p.setBrush({ color2 }))}
+            <Chip on={p.gradFade} onClick={() => p.setGradFade(true)} title="Foreground to Transparent: alttaki görüntü görünür kalır">Saydama</Chip>
+            <Chip on={!p.gradFade} onClick={() => p.setGradFade(false)} title="Foreground to Background">İki Renk</Chip>
+          </>
+        )}
         {p.drawTool === "line" && <Num label="Kalınlık" unit="px" min={1} max={200} v={p.lineW} set={p.setLineW} />}
         {p.drawTool === "bucket" && <><Num label="Tolerans" min={1} max={100} v={pct(p.selTool.tol)} set={(x) => p.setSelTool({ ...p.selTool, tol: x / 100 })} /><Chip on={p.selTool.contiguous} onClick={() => p.setSelTool({ ...p.selTool, contiguous: !p.selTool.contiguous })} title="Contiguous">Bitişik</Chip></>}
         <Sep />

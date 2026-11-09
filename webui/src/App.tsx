@@ -460,6 +460,7 @@ export default function App() {
   // Şekil, Çizgi, Degrade ve Boya Kovası: tuvalde çizilen her şey ayrı bir katman olur
   const [drawTool, setDrawTool] = useState<DrawTool>("rect")
   const [lineW, setLineW] = useState(6)
+  const [gradFade, setGradFade] = useState(true) // varsayılan: renk saydamlaşır, alttaki görüntü görünür kalır
   const [styleClip, setStyleClip] = useState<ImgLayer["styles"] | null>(null)
   const drawOn = async (t: DrawTool, a: [number, number], b: [number, number]) => {
     if (!item) return
@@ -487,7 +488,33 @@ export default function App() {
     if (len < 4) return void toast("Çizmek için tuvalde sürükle")
     if (t === "gradient" || t === "radial") {
       const made = createLayer("fill", W, H, n)
-      return put({ ...made, name: `Degrade ${n}`, opacity: 1, fillDef: { ...made.fillDef!, type: "gradient", color: brush.color, color2: brush.color2, from: a, to: b, radial: t === "radial" } })
+      const uv = (ly: ImgLayer, p: [number, number]) => layerUV(ly, W, H, p[0] * W, p[1] * H)
+      const def = (ly: ImgLayer) => ({ ...made.fillDef!, type: "gradient" as const, color: brush.color, color2: brush.color2, from: uv(ly, a), to: uv(ly, b), radial: t === "radial", fade: gradFade })
+      const isGrad = (l?: ImgLayer) => !!l && l.kind === "fill" && !!l.fillDef?.from && !l.locked
+      // bağlı nesne ile degradesi birlikte seçilir: ikisi de aynı degradeyi gösterir
+      const picks = all.filter((l) => layerSel.includes(l.id))
+      const sel = picks.length === 1 ? picks[0] : undefined
+      // Seçili katman zaten degradeyse (ya da nesnenin üstünde kendi degradesi varsa) yeni katman eklenmez, degrade yeniden çizilir
+      const above = sel ? all[all.indexOf(sel) + 1] : undefined
+      const again = picks.find(isGrad) ?? (sel && isGrad(above) && above!.clip && !!sel.link && above!.link === sel.link ? above : undefined)
+      if (again) {
+        putLayer(again.id, { fillDef: def(again) })
+        return setLayerSel([again.id])
+      }
+      // Bir nesne seçiliyse degrade yalnızca o nesnenin içine uygulanır ve onunla birlikte taşınır
+      if (sel && sel.id !== BASE_ID && sel.kind !== "adjust" && !sel.locked) {
+        const link = sel.link ?? newId()
+        const ly: ImgLayer = { ...made, name: `${sel.name} Degradesi`, opacity: 1, x: sel.x, y: sel.y, w: sel.w, ar: sel.ar, sy: sel.sy, rot: sel.rot, clip: true, link, group: sel.group }
+        ly.fillDef = def(ly)
+        update((it) => {
+          const ls = (it.layers ?? []).map((l) => (l.id === sel.id ? { ...l, link } : l))
+          const i = ls.findIndex((l) => l.id === sel.id)
+          return { ...it, layers: [...ls.slice(0, i + 1), ly, ...ls.slice(i + 1)] }
+        })
+        return setLayerSel([ly.id])
+      }
+      const ly: ImgLayer = { ...made, name: `Degrade ${n}`, opacity: 1 }
+      return put({ ...ly, fillDef: def(ly) })
     }
     const made = createLayer("shape", W, H, n)
     const def = { ...made.shapeDef!, color: brush.color }
@@ -514,7 +541,18 @@ export default function App() {
   const setSlices = (slices: Slice[]) => update((it) => ({ ...it, slices }))
   const setLayers = (layers: ImgLayer[]) => update((it) => ({ ...it, layers }))
   // önizlemedeki liste gizli katmanları içermez: yalnızca gelenler güncellenir, gizliler kaybolmaz
-  const changeLayers = (next: ImgLayer[]) => update((it) => ({ ...it, layers: (it.layers ?? []).map((l) => next.find((n) => n.id === l.id) ?? l) }))
+  // Nesneye uygulanan degrade: nesnenin hemen üstünde, onun içine kırpılmış ve ona bağlı dolgu katmanı
+  const ownsGrad = (o?: ImgLayer, l?: ImgLayer) => !!o && !!l && !!l.clip && l.kind === "fill" && !!l.fillDef?.from && !!o.link && o.link === l.link && o.kind !== "fill"
+  const gradOwner = (id: string) => {
+    const ls = item?.layers ?? []
+    const i = ls.findIndex((l) => l.id === id)
+    return ownsGrad(ls[i - 1], ls[i]) ? ls[i - 1].id : id
+  }
+  const changeLayers = (next: ImgLayer[]) => update((it) => {
+    const ls = (it.layers ?? []).map((l) => next.find((n) => n.id === l.id) ?? l)
+    // nesne taşınır, döner ya da boyutlanırsa degradesi de onu izler
+    return { ...it, layers: ls.map((l, i) => (ownsGrad(ls[i - 1], l) ? { ...l, x: ls[i - 1].x, y: ls[i - 1].y, w: ls[i - 1].w, ar: ls[i - 1].ar, sy: ls[i - 1].sy, rot: ls[i - 1].rot } : l)) }
+  })
   useEffect(() => {
     setLayerSel([])
     setSliceSel(null)
@@ -1573,7 +1611,7 @@ export default function App() {
           <OptionsBar
             tab={tab} item={item} run={command} brushTool={brushTool} brush={brush} setBrush={setBrush} retouchTool={retouchTool} retouchBrush={retouchBrush} setRetouchBrush={setRetouchBrush}
             cloneSource={cloneSource} armSource={armSource} selTool={selTool} setSelTool={setSelTool} xform={xform} setXform={setXform} layerSel={layerSel} putLayer={putLayer} setGeo={setGeo}
-            sliceTool={sliceTool} mode={mode} setMode={setMode} eraseMode={eraseMode} maskTool={maskTool} setMaskTool={setMaskTool} penTool={penTool} setPenTool={setPenTool} drawTool={drawTool} lineW={lineW} setLineW={setLineW} colorBar={colorBar} textColor={selected.length ? item?.styles[selected[0]]?.color ?? item?.textFx?.color ?? "#FFFFFF" : item?.textFx?.color ?? "#FFFFFF"} setTextColor={setTextColor}
+            sliceTool={sliceTool} mode={mode} setMode={setMode} eraseMode={eraseMode} maskTool={maskTool} setMaskTool={setMaskTool} penTool={penTool} setPenTool={setPenTool} drawTool={drawTool} lineW={lineW} setLineW={setLineW} gradFade={gradFade} setGradFade={setGradFade} colorBar={colorBar} textColor={selected.length ? item?.styles[selected[0]]?.color ?? item?.textFx?.color ?? "#FFFFFF" : item?.textFx?.color ?? "#FFFFFF"} setTextColor={setTextColor}
           />
         )}
         <div className="flex min-h-0 flex-1">
@@ -1595,7 +1633,7 @@ export default function App() {
               pen={tab === "paths" ? { sel: pathSel, setSel: setPathSel, onChange: setPaths, tool: penTool } : null}
               sliceMode={tab === "slice"} sliceTool={sliceTool} sliceSel={sliceSel} setSliceSel={setSliceSel} setSlices={setSlices}
               draw={tab === "draw" && item ? { tool: drawTool, color: brush.color, color2: brush.color2, onDraw: drawOn } : null}
-              colorBar={colorBar} designMode={tab === "design" || !tab} layerSel={layerSel} setLayerSel={setLayerSel} setLayers={changeLayers}
+              colorBar={colorBar} designMode={tab === "design" || !tab} layerSel={layerSel} setLayerSel={(ids) => setLayerSel([...new Set(ids.map(gradOwner))])} setLayers={changeLayers}
               localMode={tab === "draw" || tab === "paths" || tab === "local" || tab === "select" || tab === "slice" || tab === "brush" || tab === "retouch" || (tab === "erase" && !!eraseMode)} mask={curMask} maskShow={maskShow} setMask={setMask} selTool={selTool}
             />
             {showStrip && <Filmstrip items={items} currentId={currentId} select={setCurrentId} move={move} remove={removeItem} pickFiles={() => fileRef.current?.click()} uploading={uploading} pasteTo={clip ? pasteFx : undefined} exportOne={(id) => { const it = items.find((i) => i.id === id); if (it) generate(it) }} duplicate={duplicateItem} />}

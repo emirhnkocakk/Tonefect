@@ -15,8 +15,8 @@ export const DRAW_TOOLS: DrawEntry[] = [
   add("polygon", "Çokgen Aracı", "Polygon Tool", Hexagon, "shape"),
   add("star", "Yıldız Aracı", "Custom Shape Tool", Star, "shape"),
   add("line", "Çizgi Aracı", "Line Tool", Minus, "shape", "Sürükleyerek çiz. Shift: 45° açılara oturur."),
-  add("gradient", "Degrade Aracı", "Gradient Tool", Blend, "fill", "Sürükle: başladığın yer ön plan, bıraktığın yer arka plan rengi olur. Shift: 45° açılar."),
-  add("radial", "Dairesel Degrade", "Radial Gradient", CircleDot, "fill", "Merkezden dışarı sürükle: merkez ön plan, kenar arka plan rengi olur."),
+  add("gradient", "Degrade Aracı", "Gradient Tool", Blend, "fill", "Sürükle: başladığın yerde ön plan rengi, bıraktığın yere doğru saydamlaşır. Nesne seçiliyse yalnızca o nesneye uygulanır. Yeniden sürükle: degradeyi düzeltir."),
+  add("radial", "Dairesel Degrade", "Radial Gradient", CircleDot, "fill", "Merkezden dışarı sürükle. Nesne seçiliyse yalnızca o nesneye uygulanır. Yeniden sürükle: degradeyi düzeltir."),
   add("bucket", "Boya Kovası", "Paint Bucket Tool", PaintBucket, "fill", "Tıkla: benzer renkteki alan ön plan rengiyle dolar ve ayrı bir nesne olur."),
 ]
 export const drawEntry = (id: DrawTool) => DRAW_TOOLS.find((t) => t.id === id)!

@@ -90,6 +90,7 @@ def make(ly, w, h, font_fn):
         f = ly.get("fillDef") or {}
         ft = f.get("type", "color")
         c1, c2 = _rgb(f.get("color", "#808080")), _rgb(f.get("color2", "#FFFFFF"))
+        alpha = np.ones((h, w), np.float32)
         if ft == "gradient" and f.get("from") and f.get("to"):  # Degrade araci: surukleme baslangici ve bitisi
             y, x = np.mgrid[0:h, 0:w].astype(np.float32)
             ax, ay = f["from"][0] * w, f["from"][1] * h
@@ -106,7 +107,9 @@ def make(ly, w, h, font_fn):
             a = c1 * m + c2 * (1 - m)
         else:
             a = np.broadcast_to(c1, (h, w, 3))
-        rgba = np.dstack([np.clip(a, 0, 1), np.ones((h, w), np.float32)])
+        if ft == "gradient" and f.get("fade"):  # on plandan saydama: renk sabit, gorunurluk azalir
+            a, alpha = np.broadcast_to(c1, (h, w, 3)), 1 - t[..., 0]
+        rgba = np.dstack([np.clip(a, 0, 1), alpha])
         return Image.fromarray((rgba * 255 + 0.5).astype(np.uint8), "RGBA")
     if kind == "shape":
         return _shape(ly.get("shapeDef") or {}, w, h)

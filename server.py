@@ -916,6 +916,8 @@ def clean_layer_extra(ly, kind):
                 out["fillDef"].update({"from": pt(t["from"]), "to": pt(t["to"])})
                 if t.get("radial"):
                     out["fillDef"]["radial"] = True
+            if t.get("fade"):
+                out["fillDef"]["fade"] = True
         elif kind == "adjust":
             out["adjust"] = clean_color(ly.get("adjust"))
     if kind == "blank":

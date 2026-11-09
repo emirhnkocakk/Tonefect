@@ -159,7 +159,7 @@ export function LayerPropsPanel({ item, items, layers, sel, setLayers, patchItem
               <Chips value={fill.type} set={(type) => put({ fillDef: { ...fill, type: type as "color" } })} options={[["color", "Düz Renk"], ["gradient", "Degrade"], ["pattern", "Desen"]]} />
               <Swatch label="Renk 1" value={fill.color} set={(color) => put({ fillDef: { ...fill, color } })} />
               {fill.type !== "color" && <Swatch label="Renk 2" value={fill.color2} set={(color2) => put({ fillDef: { ...fill, color2 } })} />}
-              {fill.type === "gradient" && <Num label="Açı" min={-180} max={180} unit="°" v={fill.angle} set={(angle) => put({ fillDef: { ...fill, angle } })} />}
+              {fill.type === "gradient" && <Num label="Açı" min={-180} max={180} unit="°" v={fill.angle} set={(angle) => put({ fillDef: { ...fill, angle, from: undefined, to: undefined } })} />}
               {fill.type === "pattern" && (
                 <>
                   <Chips value={fill.pattern} set={(pattern) => put({ fillDef: { ...fill, pattern } })} options={[["dots", "Nokta"], ["stripes", "Çizgi"], ["checker", "Dama"], ["hatch", "Tarama"]]} />
