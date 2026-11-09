@@ -34,6 +34,7 @@ type Props = {
   eraseMode: "" | "layermask" | "vector"
   maskTool: MaskPaintTool
   setMaskTool: (t: MaskPaintTool) => void
+  colorBar?: { color: string; set: (hex: string | undefined) => void; canClear: boolean } | null
   textColor: string
   setTextColor: (c: string | undefined) => void
   penTool: PenTool
@@ -85,7 +86,7 @@ export function OptionsBar(p: Props) {
   if (!item && tab !== "") body = <Hint>Önce bir fotoğraf aç (Ctrl+O).</Hint>
   else if (tab === "brush") body = brushOpts(p.brush, p.setBrush, p.brushTool, BRUSH_MODES.find((t) => t.tool === p.brushTool)?.label)
   else if (tab === "retouch") body = brushOpts(p.retouchBrush, p.setRetouchBrush, p.retouchTool, RETOUCH_MODES.find((t) => t.tool === p.retouchTool)?.label)
-  else if (tab === "design" && item) {
+  else if ((tab === "design" || !tab) && item) {
     const [W, H] = canvasSize(item.geo, item.src) ?? [1080, 1350]
     const cur = p.layerSel.length === 1 ? item.layers?.find((l) => l.id === p.layerSel[0]) : undefined
     const entry = XFORM_MODES.find((t) => t.mode === p.xform)
@@ -106,6 +107,16 @@ export function OptionsBar(p: Props) {
             <Num slider={false} label="Açı" unit="°" min={-180} max={180} v={Math.round(cur.rot)} set={(rot) => p.putLayer(cur.id, { rot })} />
             <Num label="Opaklık" unit="%" min={0} max={100} v={pct(cur.opacity)} set={(x) => p.putLayer(cur.id, { opacity: x / 100 })} />
             <Sep />
+            {p.colorBar && (
+              <>
+                <label className="flex items-center gap-1 text-[11px] text-muted-foreground">Renk
+                  <span className="relative h-5 w-5 overflow-hidden rounded-sm border" style={{ background: p.colorBar.color }}>
+                    <input aria-label="Seçili nesnenin rengi" type="color" value={p.colorBar.color.toLowerCase()} onChange={(e) => p.colorBar!.set(e.target.value.toUpperCase())} className="absolute inset-0 cursor-pointer opacity-0" />
+                  </span>
+                </label>
+                <Sep />
+              </>
+            )}
           </>
         ) : null}
         <Hint>{entry?.hint}</Hint>

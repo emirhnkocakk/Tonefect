@@ -67,6 +67,7 @@ type Props = {
   setSliceSel?: (id: string | null) => void
   setSlices?: (s: Slice[]) => void
   designMode?: boolean
+  colorBar?: { color: string; set: (hex: string | undefined) => void; canClear: boolean } | null
   layerSel?: string[]
   setLayerSel?: (ids: string[]) => void
   setLayers?: (l: ImgLayer[]) => void
@@ -125,7 +126,7 @@ function PickOverlay({ image, onPick }: { image: string; onPick: (rgb: [number, 
   return <div className="absolute inset-0 z-40 cursor-crosshair rounded-xl" onPointerDown={click} />
 }
 
-export function Stage({ item, cfg, mode, intent, nav, pen, layerName, textTab, selected, setSelected, update, applyStyle, resetPosition, pickFiles, guides: guidesOn, wm, cropping, geoSrc, setGeo, perspEdit, lineMode, endLine, eraseMode, maskTool, putLayer, brushMode, brushTool, patchMode, filterEdit, pick, onPreview, source, setSource, armed, setArmed, onNeedSource, brush, setBrush, smoothing, onStroke, xform, onXformDone, sliceMode, sliceTool, sliceSel, setSliceSel, setSlices, designMode, layerSel, setLayerSel, setLayers, localMode, mask, maskShow, setMask, selTool }: Props) {
+export function Stage({ item, cfg, mode, intent, nav, pen, layerName, textTab, selected, setSelected, update, applyStyle, resetPosition, pickFiles, guides: guidesOn, wm, cropping, geoSrc, setGeo, perspEdit, lineMode, endLine, eraseMode, maskTool, putLayer, brushMode, brushTool, patchMode, filterEdit, pick, onPreview, source, setSource, armed, setArmed, onNeedSource, brush, setBrush, smoothing, onStroke, xform, onXformDone, sliceMode, sliceTool, sliceSel, setSliceSel, setSlices, colorBar, designMode, layerSel, setLayerSel, setLayers, localMode, mask, maskShow, setMask, selTool }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const stageRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef<Drag | null>(null)
@@ -623,7 +624,7 @@ export function Stage({ item, cfg, mode, intent, nav, pen, layerName, textTab, s
               <SliceOverlay slices={item.slices ?? []} tool={sliceTool ?? "draw"} sel={sliceSel ?? null} setSel={setSliceSel} onChange={setSlices} w={size.w} h={size.h} />
             )}
             {designMode && !holdOrig && setLayers && setLayerSel && (
-              <LayerOverlay layers={(item.layers ?? []).filter((l) => l.kind !== "adjust" && !l.locked)} sel={layerSel ?? []} setSel={setLayerSel} onChange={(next) => setLayers((item.layers ?? []).map((l) => next.find((n) => n.id === l.id) ?? l))} w={size.w} h={size.h} mode={xform ?? "move"} onDone={onXformDone} />
+              <LayerOverlay layers={(item.layers ?? []).filter((l) => l.kind !== "adjust" && !l.locked)} sel={layerSel ?? []} setSel={setLayerSel} onChange={(next) => setLayers((item.layers ?? []).map((l) => next.find((n) => n.id === l.id) ?? l))} w={size.w} h={size.h} mode={xform ?? "move"} onDone={onXformDone} colorBar={colorBar} />
             )}
             {designMode && !holdOrig && boxes.length > 0 && (() => {
               const bb = union()!

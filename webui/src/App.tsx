@@ -391,18 +391,23 @@ export default function App() {
     const id = fxLayer.id
     update((it) => ({ ...it, layers: (it.layers ?? []).map((l) => (l.id === id ? { ...l, fx: { ...l.fx, ...p } } : l)) }))
   }
-  // Ayarlamalar beyazı renklendiremez: nesneye doğrudan renk verir
-  const colorObject = (hex: string) => {
-    if (!fxLayer) return
-    const id = fxLayer.id
-    update((it) => ({ ...it, layers: (it.layers ?? []).map((l) => {
-      if (l.id !== id) return l
-      if (l.shapeDef) return { ...l, shapeDef: { ...l.shapeDef, color: hex } }
-      if (l.textDef) return { ...l, textDef: { ...l.textDef, color: hex } }
-      if (l.fillDef) return { ...l, fillDef: { ...l.fillDef, color: hex } }
-      return { ...l, styles: { ...l.styles, color: { ...l.styles?.color, on: true, color: hex, opacity: 100 } } }
-    }) }))
-  }
+  // Seçili nesnelere doğrudan renk: şekil ve metin kendi rengini, çizim ve görseller renk tonunu alır
+  const colorable = (item?.layers ?? []).filter((l) => layerSel.includes(l.id) && l.id !== BASE_ID && l.kind !== "adjust")
+  const colorIds = colorable.map((l) => l.id)
+  const colorObject = (hex: string | undefined) => update((it) => ({ ...it, layers: (it.layers ?? []).map((l) => {
+    if (!colorIds.includes(l.id)) return l
+    if (hex && l.shapeDef) return { ...l, shapeDef: { ...l.shapeDef, color: hex } }
+    if (hex && l.textDef) return { ...l, textDef: { ...l.textDef, color: hex } }
+    if (hex && l.fillDef) return { ...l, fillDef: { ...l.fillDef, color: hex } }
+    // eski sürümde verilen renk kaplaması yerini ton rengine bırakır
+    const styles = l.styles?.color?.on ? { ...l.styles, color: { ...l.styles.color, on: false } } : l.styles
+    return { ...l, tint: hex, styles }
+  }) }))
+  const objectColor = (() => {
+    const l = colorable[0]
+    return !l ? "#FFFFFF" : l.shapeDef?.color ?? l.textDef?.color ?? l.fillDef?.color ?? l.tint ?? (l.styles?.color?.on ? String(l.styles.color.color) : "#FFFFFF")
+  })()
+  const colorBar = colorable.length ? { color: objectColor, set: colorObject, canClear: colorable.some((l) => l.tint || l.styles?.color?.on) } : null
   const curFilter = tab === "fx" && !fxLayer ? item?.fx.filters?.find((f) => f.id === filterSel && !f.off) : undefined
   const setCurFilter = (p: Partial<FilterItem>) => update((it) => ({ ...it, fx: { ...it.fx, filters: (it.fx.filters ?? []).map((f) => (f.id === filterSel ? { ...f, ...p } : f)) } }))
   const [cloneSource, setCloneSource] = useState<CloneSource | null>(null)
@@ -1187,7 +1192,7 @@ export default function App() {
     const combo = comboOf(e)
     if (!combo) {
       const dir = ({ ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] } as Record<string, number[]>)[e.code]
-      if (!dir || tab !== "design" || !item || !layerSel.length) return
+      if (!dir || (tab !== "design" && tab) || !item || !layerSel.length) return
       e.preventDefault()
       const [W, H] = canvasSize(item.geo, item.src) ?? [1080, 1350]
       const n = e.shiftKey ? 10 : 1
@@ -1197,7 +1202,7 @@ export default function App() {
     if (/^\d$/.test(combo) && (tab === "brush" || tab === "retouch")) return (tab === "brush" ? setBrush : setRetouchBrush)({ opacity: (Number(combo) || 10) / 10 })
     const cmd = SHORTCUTS[combo]
     if (!cmd || (cmd === "copyFx" && window.getSelection()?.toString())) return
-    if (cmd === "layer:del" && tab !== "design" && tab !== "layers") return
+    if (cmd === "layer:del" && tab !== "design" && tab !== "layers" && tab) return
     if (cmd.startsWith("path:") && tab !== "paths") return
     e.preventDefault()
     command(cmd)
@@ -1358,7 +1363,7 @@ export default function App() {
     { label: "Seçim", items: selectMenu }, { label: "Filtre", items: filterMenu }, { label: "Görünüm", items: viewMenu }, { label: "Pencere", items: windowMenu }, { label: "Yardım", items: helpMenu },
   ]
   // ToolBox'ta hangi araç basılı görünecek
-  const currentTool = tab === "brush" ? `brush:tool:${brushTool}` : tab === "retouch" ? `retouch:tool:${retouchTool}` : tab === "select" ? `sel:${selTool.mode}` : tab === "design" ? (xform === "free" ? "xf:free" : "xf:move") : tab === "slice" ? `slice:${sliceTool}` : perspEdit ? "crop:persp" : tab === "crop" ? "tool:crop:ratio" : tab === "text" ? "tool:text" : tab === "paths" ? `pen:tool:${penTool}` : `tool:${tab}`
+  const currentTool = tab === "brush" ? `brush:tool:${brushTool}` : tab === "retouch" ? `retouch:tool:${retouchTool}` : tab === "select" ? `sel:${selTool.mode}` : tab === "design" || !tab ? (xform === "free" ? "xf:free" : "xf:move") : tab === "slice" ? `slice:${sliceTool}` : perspEdit ? "crop:persp" : tab === "crop" ? "tool:crop:ratio" : tab === "text" ? "tool:text" : tab === "paths" ? `pen:tool:${penTool}` : `tool:${tab}`
   const historySeq = tab === "history" ? [...hist.current.past, items, ...[...hist.current.future].reverse()] : []
   const history = {
     rows: historySeq.map((snap, i) => (i ? stepName(historySeq[i - 1], snap) : "Açılış")),
@@ -1479,7 +1484,7 @@ export default function App() {
           <OptionsBar
             tab={tab} item={item} run={command} brushTool={brushTool} brush={brush} setBrush={setBrush} retouchTool={retouchTool} retouchBrush={retouchBrush} setRetouchBrush={setRetouchBrush}
             cloneSource={cloneSource} armSource={armSource} selTool={selTool} setSelTool={setSelTool} xform={xform} setXform={setXform} layerSel={layerSel} putLayer={putLayer} setGeo={setGeo}
-            sliceTool={sliceTool} mode={mode} setMode={setMode} eraseMode={eraseMode} maskTool={maskTool} setMaskTool={setMaskTool} penTool={penTool} setPenTool={setPenTool} textColor={selected.length ? item?.styles[selected[0]]?.color ?? item?.textFx?.color ?? "#FFFFFF" : item?.textFx?.color ?? "#FFFFFF"} setTextColor={setTextColor}
+            sliceTool={sliceTool} mode={mode} setMode={setMode} eraseMode={eraseMode} maskTool={maskTool} setMaskTool={setMaskTool} penTool={penTool} setPenTool={setPenTool} colorBar={colorBar} textColor={selected.length ? item?.styles[selected[0]]?.color ?? item?.textFx?.color ?? "#FFFFFF" : item?.textFx?.color ?? "#FFFFFF"} setTextColor={setTextColor}
           />
         )}
         <div className="flex min-h-0 flex-1">
@@ -1500,7 +1505,7 @@ export default function App() {
               xform={xform} onXformDone={(a, b) => setLastXform(xformDelta(a, b))}
               pen={tab === "paths" ? { sel: pathSel, setSel: setPathSel, onChange: setPaths, tool: penTool } : null}
               sliceMode={tab === "slice"} sliceTool={sliceTool} sliceSel={sliceSel} setSliceSel={setSliceSel} setSlices={setSlices}
-              designMode={tab === "design"} layerSel={layerSel} setLayerSel={setLayerSel} setLayers={changeLayers}
+              colorBar={colorBar} designMode={tab === "design" || !tab} layerSel={layerSel} setLayerSel={setLayerSel} setLayers={changeLayers}
               localMode={tab === "paths" || tab === "local" || tab === "select" || tab === "slice" || tab === "brush" || tab === "retouch" || (tab === "erase" && !!eraseMode)} mask={curMask} maskShow={maskShow} setMask={setMask} selTool={selTool}
             />
             {showStrip && <Filmstrip items={items} currentId={currentId} select={setCurrentId} move={move} remove={removeItem} pickFiles={() => fileRef.current?.click()} uploading={uploading} pasteTo={clip ? pasteFx : undefined} exportOne={(id) => { const it = items.find((i) => i.id === id); if (it) generate(it) }} duplicate={duplicateItem} />}

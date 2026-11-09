@@ -1,4 +1,5 @@
 import { useRef, useState } from "react"
+import { RotateCcw } from "lucide-react"
 import { identityGrid, layerPt, layerUV, localDelta } from "@/lib/design"
 import type { ImgLayer, XformMode } from "@/types"
 
@@ -11,7 +12,11 @@ type Props = {
   h: number
   mode: XformMode
   onDone?: (before: ImgLayer, after: ImgLayer) => void // Dönüşümü Tekrarla için
+  colorBar?: { color: string; set: (hex: string | undefined) => void; canClear: boolean } | null
 }
+
+const QUICK = ["#E01010", "#F08C00", "#FFD500", "#2EA043", "#1E6FE0", "#7B2FFF", "#FFFFFF", "#000000"]
+const BAR_W = 262
 
 type Pt = [number, number]
 type Handle = { kind: "scale" | "rotate" | "corner" | "edgeSkew"; u: number; v: number }
@@ -28,7 +33,7 @@ const ZERO: Pt[] = [[0, 0], [0, 0], [0, 0], [0, 0]]
 const cornerIndex = (u: number, v: number) => CORNERS.findIndex((c) => c[0] === u && c[1] === v)
 
 /** Taşıma ve Dönüştürme: seçili araca göre tutamaçlar. Sonuç sunucuda çizilir, burada yalnızca kılavuzlar var. */
-export function LayerOverlay({ layers, sel, setSel, onChange, w, h, mode, onDone }: Props) {
+export function LayerOverlay({ layers, sel, setSel, onChange, w, h, mode, onDone, colorBar }: Props) {
   const ref = useRef<HTMLDivElement>(null)
   const drag = useRef<Drag | null>(null)
   const [guide, setGuide] = useState<{ x: boolean; y: boolean }>({ x: false, y: false })
@@ -191,6 +196,18 @@ export function LayerOverlay({ layers, sel, setSel, onChange, w, h, mode, onDone
   const pts = (ly: ImgLayer) => CORNERS.map(([u, v]) => pt(ly, u, v).join(",")).join(" ")
   const hStyle = { fill: "white", stroke: "rgba(0,0,0,0.45)", strokeWidth: 1, style: { cursor: "pointer" } }
 
+  // Tıklanan nesnenin hemen üstünde renk çubuğu
+  const picked = layers.filter((l) => sel.includes(l.id))
+  const bar = colorBar && picked.length > 0 ? (() => {
+    const all = picked.flatMap((l) => CORNERS.map(([u, v]) => pt(l, u, v)))
+    const xs = all.map((p) => p[0])
+    const ys = all.map((p) => p[1])
+    const left = Math.max(0, Math.min(w - BAR_W, (Math.min(...xs) + Math.max(...xs)) / 2 - BAR_W / 2))
+    const above = Math.min(...ys) - 44
+    const top = above >= 0 ? above : Math.min(h - 36, Math.max(...ys) + 10)
+    return { left, top: Math.max(0, top) }
+  })() : null
+
   return (
     <div
       ref={ref}
@@ -268,6 +285,16 @@ export function LayerOverlay({ layers, sel, setSel, onChange, w, h, mode, onDone
           )
         })}
       </svg>
+      {bar && colorBar && (
+        <div className="absolute z-10 flex items-center gap-1 rounded-md border bg-popover px-1.5 py-1 shadow-xl" style={{ left: bar.left, top: bar.top, width: BAR_W }} onPointerDown={(e) => e.stopPropagation()} onPointerUp={(e) => e.stopPropagation()} role="toolbar" aria-label="Nesne rengi">
+          <label className="relative h-6 w-6 shrink-0 cursor-pointer overflow-hidden rounded-sm border" style={{ background: colorBar.color }} title="Renk seç">
+            <input aria-label="Nesne rengi" type="color" value={colorBar.color.toLowerCase()} onChange={(e) => colorBar.set(e.target.value.toUpperCase())} className="absolute inset-0 cursor-pointer opacity-0" />
+          </label>
+          <span className="mx-0.5 h-4 w-px bg-border" />
+          {QUICK.map((c) => <button key={c} aria-label={`Renk ${c}`} onClick={() => colorBar.set(c)} className="h-5 w-5 shrink-0 rounded-full border border-foreground/30 transition-transform hover:scale-110" style={{ background: c }} />)}
+          {colorBar.canClear && <button aria-label="Rengi kaldır" title="Rengi Kaldır" onClick={() => colorBar.set(undefined)} className="ml-auto text-muted-foreground hover:text-foreground"><RotateCcw className="h-3.5 w-3.5" /></button>}
+        </div>
+      )}
     </div>
   )
 }

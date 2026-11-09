@@ -2652,6 +2652,20 @@ def _adjust_layer(img, ly, under):
     return Image.fromarray((np.clip(a, 0, 1) * 255 + 0.5).astype(np.uint8), "RGBA")
 
 
+def tint_layer(im, color):
+    """Nesneyi renklendirir. Duz nesne (cizim, logo) tamamen o renk olur; fotograftan alinan nesnede golge ve ayrinti korunur."""
+    a = np.asarray(im, np.float32) / 255.0
+    rgb, alpha = a[..., :3], a[..., 3]
+    c = np.array(hex_to_rgb(color), np.float32) / 255.0
+    seen = alpha > 0.5
+    lum = rgb @ looks.LUMA
+    if not seen.any() or float(lum[seen].std()) < 0.08:
+        out = np.broadcast_to(c, rgb.shape)
+    else:
+        out = c * np.clip(lum / max(float(np.percentile(lum[seen], 95)), 0.05), 0, 1)[..., None]
+    return Image.fromarray((np.dstack([out, alpha]) * 255 + 0.5).astype(np.uint8), "RGBA")
+
+
 LAYER_FX = None  # sunucu baglar: katmana ozel renk ve filtre (img, katman) -> img
 
 
@@ -2684,6 +2698,8 @@ def place_layers(base, layers, loader, source=None):
         im = src.resize((min(w, 8192), min(h, 8192)), Image.LANCZOS)
         if ly.get("paint"):
             im = apply_paint(im, im, ly["paint"])
+        if ly.get("tint"):
+            im = tint_layer(im, ly["tint"])
         if ly.get("flipH"):
             im = ImageOps.mirror(im)
         if ly.get("mask") or ly.get("vector") or ly.get("defringe"):

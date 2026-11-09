@@ -892,6 +892,8 @@ def clean_layer_extra(ly, kind):
         out["styles"] = st
     if isinstance(ly.get("fx"), dict):
         out.update(clean_layer_fx(ly["fx"]))
+    if isinstance(ly.get("tint"), str) and HEX_RE.fullmatch(ly["tint"]):
+        out["tint"] = ly["tint"]
     if kind:
         out["kind"] = kind
         out["ar"] = round(num(ly.get("ar"), 0.01, 50.0, 1.0), 4)

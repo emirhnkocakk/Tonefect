@@ -1,9 +1,9 @@
 ## What's new / Yenilikler
 
-- 🔤 **Text color** – set the color of the whole text from the Type panel or the options bar. With words selected, only those words change. New words keep the color.
-  / **Yazı rengi** – tüm yazının rengini Yazı panelinden ya da seçenekler çubuğundan ayarla. Kelime seçiliyse yalnızca onlar değişir. Sonradan yazılan kelimeler aynı renkte kalır.
-- 🎨 **Color an object in one click** – with an object selected, use "Color" at the top of the Adjustments or Filters panel to paint it any color, even if it is white.
-  / **Nesneyi tek tıkla renklendir** – bir nesne seçiliyken Ayarlamalar ya da Filtreler panelinin üstündeki "Renk Ver" ile onu istediğin renge boya, beyaz olsa bile.
+- 🎨 **Click an object, change its color** – click a drawing, shape, image or cut-out with the Move tool (V) or with no tool open. A color bar opens right on it with quick swatches, a custom color picker and a reset. Color is also in the options bar, and several selected objects change together.
+  / **Nesneye tıkla, rengini değiştir** – Taşı aracıyla (V) ya da hiçbir araç açık değilken çizime, şekle, görsele veya kesilmiş nesneye tıkla. Üstünde hazır renkler, renk seçici ve sıfırlama düğmesi olan bir renk çubuğu açılır. Renk seçeneği üst çubukta da var, birden fazla seçili nesne birlikte boyanır.
+- ✏️ **Any color, even from white or black** – drawings and flat objects become exactly the chosen color. Objects cut from a photo keep their shading and detail.
+  / **Beyazdan veya siyahtan da istediğin renge** – çizimler ve düz nesneler tam seçilen renk olur. Fotoğraftan kesilen nesnelerin gölgesi ve ayrıntısı korunur.
 
 Your existing projects and settings are kept.
 / Mevcut projelerin ve ayarların korunur.
